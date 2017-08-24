@@ -43,3 +43,18 @@ THE SOFTWARE IS PROVIDED ‘AS IS’, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 #### If you want to be awesome.
 - Proudly display the 'Powered by Octopress' credit in the footer.
 - [Add your site to the Wiki](https://github.com/imathis/octopress/wiki/Octopress-Sites/_edit) so we can watch the community grow.
+
+## Publishing Posts:
+
+```
+rake new_post["Create a ZFS Raidz1 Volume Pool on Ubuntu 16"]
+vim source/_posts/2017-08-24-create-a-zfs-raidz1-volume-pool-on-ubuntu-16.markdown
+
+rake generate
+rake deploy
+
+git add .
+git commit -m 'adding zfs post'
+git push origin source
+
+```

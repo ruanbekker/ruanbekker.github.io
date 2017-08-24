@@ -122,9 +122,7 @@ but
 
 ```
 $ curl http://foo.apps.domain.com/test/
-<html>
-Test Page
-</html>
+404 page not found
 ```
 
 

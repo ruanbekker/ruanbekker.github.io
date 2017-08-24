@@ -66,7 +66,7 @@ pool            199G  125K  198G   1% /pool
 
 See how Brett Kelly from 45 Drives tried to break a Storage Cluster with GlusterFS and ZFS:
 
-<center><iframe width="740" height="400" src="https://www.youtube.com/embed/A0wV4k58RIs" frameborder="0" allowfullscreen></iframe></center>
+<center><iframe width="740" height="400" src="https://www.youtube.com/embed/A0wV4k58RIs?color=white&theme=light"></iframe></center>
 
 
 Great ZFS Performance Comparison:

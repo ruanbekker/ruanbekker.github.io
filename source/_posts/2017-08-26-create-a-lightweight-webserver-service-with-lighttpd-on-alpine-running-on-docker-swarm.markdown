@@ -36,7 +36,7 @@ ADD htdocs /var/www/localhost/htdocs
 CMD ["lighttpd", "-D", "-f", "/etc/lighttpd/lighttpd.conf"]
 ```
 
-Then our `htdocs/index.html` which is based of bootstrap:
+Then our `htdocs/index.html` which is based off bootstrap:
 
 ```html index.html
 <!DOCTYPE html>

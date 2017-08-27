@@ -44,6 +44,10 @@ THE SOFTWARE IS PROVIDED ‘AS IS’, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 - Proudly display the 'Powered by Octopress' credit in the footer.
 - [Add your site to the Wiki](https://github.com/imathis/octopress/wiki/Octopress-Sites/_edit) so we can watch the community grow.
 
+## Useful Resources:
+
+- http://stefanalfbo.github.io/blog/2013/04/17/octopress-google-analytics-github-pages/
+
 ## Publishing Posts:
 
 ```

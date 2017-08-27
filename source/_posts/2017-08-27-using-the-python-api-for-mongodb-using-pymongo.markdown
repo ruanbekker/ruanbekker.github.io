@@ -39,7 +39,7 @@ From the python interpreter, connect to MongoDB:
 >>> mongo_host = secrets['mongodb']['HOSTNAME']
 >>> mongo_username = secrets['mongodb']['USERNAME']
 >>> mongo_password = secrets['mongodb']['PASSWORD']
->>> mongodb_client = MongoClient('mongodb://%s:%s@%s:28017/admin?authMechanism=SCRAM-SHA-1' % (mongo_username, mongo_password, mongo_host))
+>>> mongodb_client = MongoClient('mongodb://%s:%s@%s:27017/admin?authMechanism=SCRAM-SHA-1' % (mongo_username, mongo_password, mongo_host))
 ```
 
 Find the Database that you are connected to:

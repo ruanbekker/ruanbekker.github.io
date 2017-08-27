@@ -42,7 +42,7 @@ Create 3 MongoDB Instances, each instance listening on it's unique port.
 From MongoDB's Documentation:
 > "The --smallfiles and --oplogSize settings reduce the disk space that each mongod instance uses"
 
-```
+```bash
 $ mongod --port 27017 --dbpath /srv/mongodb/rs0-0 --replSet rs0 --smallfiles --oplogSize 128 --logpath /var/log/mongodb/rs0-0/server.log --fork
 $ mongod --port 27018 --dbpath /srv/mongodb/rs0-1 --replSet rs0 --smallfiles --oplogSize 128 --logpath /var/log/mongodb/rs0-1/server.log --fork
 $ mongod --port 27019 --dbpath /srv/mongodb/rs0-2 --replSet rs0 --smallfiles --oplogSize 128 --logpath /var/log/mongodb/rs0-2/server.log --fork
@@ -52,7 +52,7 @@ $ mongod --port 27019 --dbpath /srv/mongodb/rs0-2 --replSet rs0 --smallfiles --o
 
 Confirm that the processes are listening on the ports that we defined:
 
-```
+```bash
 $ netstat -tulpn
 Active Internet connections (only servers)
 Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
@@ -65,7 +65,7 @@ tcp        0      0 0.0.0.0:27019           0.0.0.0:*               LISTEN      
 
 Connect to our first MongoDB Instance, where we will setup the replica set:
 
-```
+```bash
 $ mongo --port 27017
 \>
 ```

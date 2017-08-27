@@ -182,7 +182,7 @@ Then our directory, `html`  that will consist our websites data, for a simple ex
 $word = "foo";
 echo "The word is: $word\n";
 ?>
-``
+```
 
 Then, following our `wrapper.sh` script that will start our `php-fpm5`, and `nginx` processes, and then monitor these processes, if one of the processes have to exit, the wrapper script will return a exit code, which will result the container to exit, if there is anything wrong with the service: 
 

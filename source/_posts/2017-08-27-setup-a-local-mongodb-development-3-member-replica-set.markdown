@@ -72,7 +72,7 @@ $ mongo --port 27017
 
 Create the Replica Set Configuration Object:
 
-```
+```bash
 > rsconf = {
              _id: "rs0",
              members: [
@@ -86,14 +86,14 @@ Create the Replica Set Configuration Object:
 
 Initiate the replica set configuration:
 
-```
+```bash
 > rs.initiate( rsconf )
 { "ok" : 1 }
 ```
 
 Display the Replica Configuration with `rs.conf()`:
 
-```
+```bash
 rs0:SECONDARY> rs.conf()
 {
         "_id" : "rs0",

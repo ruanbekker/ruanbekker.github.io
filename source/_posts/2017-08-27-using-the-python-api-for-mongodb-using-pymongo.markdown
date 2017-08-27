@@ -151,7 +151,7 @@ We can now verify that we have 2 collections in our database:
 [u'mycollection-2', u'mycollection']
 ```
 
-## Connecting to a existing Database:
+## Connecting to an existing Database:
 
 Let's connect to an existing database on our MongoDB Server:
 

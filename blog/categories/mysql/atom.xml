@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Mysql | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/mysql/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2017-08-31T19:41:14-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Setup HAProxy Load Balancer for MySQL Galera With IP Whitelisting and Backup Servers]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/08/31/setup-haproxy-load-balancer-for-mysql-galera-with-ip-whitelisting-and-backup-servers/"/>
+    <updated>2017-08-31T19:15:50-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/08/31/setup-haproxy-load-balancer-for-mysql-galera-with-ip-whitelisting-and-backup-servers</id>
+    <content type="html"><![CDATA[<p>Today we will setup a HAProxy Service for our 3 Node MySQL Galera Cluster</p>
+
+<h2>Our Setup:</h2>
+
+<ul>
+<li>3 Node Galera MySQL Cluster</li>
+<li>3 HAProxy Services (Each HAProxy Service Running on the MySQL Nodes)</li>
+<li>MySQL Listens on Port 3307</li>
+<li>HAProxy Listens on Port 3306 and Proxies through to 3307</li>
+</ul>
+
+
+<p>I have setup HAProxy on the same node as the MySQL Servers for my use case, but you can also setup HAProxy on a node outside the MySQL Host.</p>
+
+<p>So essentially our MySQL Galera Cluster is a Multi Master Setup, but for now we will only accept connections from Node-A, and have Node-B and Node-C as Backup servers. Should Node-A go down, HAProxy will route connections to Node-B, and if Node-B also goes down, connections will be routed to Node-C.</p>
+
+<p>If the Primary Node, which is Node-A recovers, connections will be restored to Node-A.</p>
+
+<h2>Security:</h2>
+
+<p>We use iptables to allow traffic between the nodes for port TCP/3307 and allow all traffic for Port TCP/3306, as HAProxy will allow the IP Based Access:</p>
+
+<pre><code class="bash Iptables for Each Node">$ iptables -I INPUT -s {Node-A} -p tcp --dport 3307 -j ACCEPT
+$ iptables -I INPUT -s {Node-B} -p tcp --dport 3307 -j ACCEPT
+$ iptables -I INPUT -s {Node-C} -p tcp --dport 3307 -j ACCEPT
+$ iptables -A INPUT -p tcp --dport 3306 -j ACCEPT
+$ iptables -A INPUT -p tcp --dport 3307 -j DROP
+</code></pre>
+
+<h2>HAProxy:</h2>
+
+<p>Installing HAProxy on Ubuntu:</p>
+
+<pre><code class="bash Install HAProxy">$ sudo apt update 
+$ sudo apt install haproxy -y
+</code></pre>
+
+<p>Configure HAProxy with a Port 3306 listener, specify your source addresses that you would like to be authorized to communicate with MySQL and then specify the servers to proxy the connections to our MySQL Galera Cluster, specifying 2 backup servers:</p>
+
+<pre><code class="bash /etc/haproxy/haproxy.cfg">global
+  log         127.0.0.1 local2
+  chroot      /var/lib/haproxy
+  pidfile     /var/run/haproxy.pid
+  maxconn     1020
+  user        haproxy
+  group       haproxy
+  daemon
+
+  stats socket /var/lib/haproxy/stats.sock mode 600 level admin
+  stats timeout 2m
+
+defaults
+  mode    tcp
+  log     global
+  option  dontlognull
+  option  redispatch
+  retries                   3
+  timeout queue             45s
+  timeout connect           5s
+  timeout client            1m
+  timeout server            1m
+  timeout check             10s
+  maxconn                   1020
+
+listen stats
+  bind    *:80
+  mode    http
+  stats   enable
+  stats   show-legends
+  stats   refresh           5s
+  stats   uri               /
+  stats   realm             Haproxy\ Statistics
+  stats   auth              admin:secret
+  stats   admin             if TRUE
+
+listen galera-lb
+  bind    *:3306
+  mode    tcp
+  acl     network_allowed src 10.10.1.0/24 10.32.15.2/32
+  tcp-request               content accept if network_allowed
+  tcp-request               content reject
+  default_backend           galera-cluster
+
+backend galera-cluster
+  balance roundrobin
+  server  scw-mysql-1 10.0.0.2:3307  check
+  server  scw-mysql-2 10.0.0.3:3307  check backup
+  server  scw-mysql-3 10.0.0.4:3307  check backup
+</code></pre>
+
+<p>Start HAProxy:</p>
+
+<pre><code class="bash Start HAProxy Service">$ sudo systemctl enable haproxy
+$ sudo systemctl restart haproxy
+</code></pre>
+
+<h2>Authorize HAProxy Hostnames to Connect to MySQL:</h2>
+
+<p>In this case we need to allow the Hostnames to be able to connect to mysql:</p>
+
+<pre><code class="sql">mysql&gt; GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'secrets' WITH GRANT OPTION;
+mysql&gt; FLUSH PRIVILEGES;
+</code></pre>
+]]></content>
+  </entry>
+  
+</feed>

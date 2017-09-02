@@ -1,4 +1,4 @@
-:---
+---
 layout: post
 title: "Setup a 3 Node MongoDB Replica Set on Ubuntu 16"
 date: 2017-09-02 19:29:10 -0400

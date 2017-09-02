@@ -1,0 +1,226 @@
+:---
+layout: post
+title: "Setup a 3 Node MongoDB Replica Set on Ubuntu 16"
+date: 2017-09-02 19:29:10 -0400
+comments: true
+categories: ["mongodb", "nosql", "databases", "cluster"]
+---
+
+Today we will setup a 3 Node Replica Set for MongoDB on Ubuntu 16. A Replica Set is a form of data replication, so that your data resides on more than one node for data durability. We will setup the 1st node as the primary node, the second as the secondary node and the 3rd node will act as an arbiter.
+
+The arbiter node can almost be mentioned as a voter node, as it will be set in place to prevent split brain. 
+
+## Resources:
+
+- https://eladnava.com/deploy-a-highly-available-mongodb-replica-set-on-aws/
+- https://stackoverflow.com/questions/38524150/mongodb-replica-set-with-simple-password-authentication (auth)
+- https://stackoverflow.com/questions/14789622/mongodb-keyfile-too-open-permissions
+
+
+## Installing MongoDB on our 3 Nodes:
+
+Our case, using Ubuntu 16.04, setting up our repository and installing mongodb from our repository:
+
+```bash
+$ sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 0C49F3730359A14518585931BC711F9BA15703C6
+$ echo "deb [ arch=amd64,arm64 ] http://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.4 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-3.4.list
+$ apt update
+$ apt install -y mongodb-org -y
+```
+
+Preparing our Directories:
+
+```bash
+$ mkdir -p /srv/mongodb/rs0-0 /srv/mongodb/rs0-1 /srv/mongodb/rs0-2
+$ mkdir -p /var/log/mongodb/rs0-0 /var/log/mongodb/rs0-1 /var/log/mongodb/rs0-2
+```
+
+Populating our MongoDB Configuration: 
+
+- MongoDB Prefers XFS File Systems when using WiredTiger.
+
+```bash
+$ cat > /etc/mongod.conf << EOF
+storage:
+  dbPath: /var/lib/mongodb
+  journal:
+    enabled: false
+
+storage:
+  mmapv1:
+    smallFiles: true
+
+systemLog:
+  destination: file
+  logAppend: true
+  path: /var/log/mongodb/mongod.log
+
+net:
+  port: 27017
+  bindIp: 0.0.0.0
+
+replication:
+  replSetName: rs0
+
+security:
+  authorization: enabled
+EOF
+```
+
+Enable MongoDB On Startup and Start MongoDB:
+
+```bash
+$ systemctl enable mongod
+$ systemctl restart mongod
+```
+
+## Setup MongoDB Replica Sets:
+
+In our setup we will have 3 nodes: (mongodb-1, mongodb-2, mongodb3) From our Primary Node, connect to MongoDB and inititalize our replica set:
+
+```bash
+$ mongo 
+MongoDB shell version v3.4.7
+connecting to: mongodb://127.0.0.1:27017
+MongoDB server version: 3.4.7
+> rs.initiate()
+{
+        "info2" : "no configuration specified. Using a default configuration for the set",
+        "me" : "mysql-1:27017",
+        "ok" : 1
+}
+```
+
+Next, add our 2 other MongoDB Nodes, remember `mongodb-3` is our arbiter node:
+
+```bash
+rs0:SECONDARY> rs.add("mongodb-2")
+{ "ok" : 1 }
+rs0:PRIMARY> rs.add("mongodb-3", true)
+{ "ok" : 1 }
+```
+
+Verify the Replica Set Status:
+
+```bash
+rs0:PRIMARY> rs.status()
+```
+```json
+{
+        "set" : "rs0",
+        "date" : ISODate("2017-08-27T13:17:42.469Z"),
+        "myState" : 1,
+        "term" : NumberLong(1),
+        "heartbeatIntervalMillis" : NumberLong(2000),
+        "optimes" : {
+                "lastCommittedOpTime" : {
+                        "ts" : Timestamp(0, 0),
+                        "t" : NumberLong(-1)
+                },
+                "appliedOpTime" : {
+                        "ts" : Timestamp(1503839853, 1),
+                        "t" : NumberLong(1)
+                },
+                "durableOpTime" : {
+                        "ts" : Timestamp(1503839722, 1),
+                        "t" : NumberLong(-1)
+                }
+        },
+        "members" : [
+                {
+                        "_id" : 0,
+                        "name" : "mysql-1:27017",
+                        "health" : 1,
+                        "state" : 1,
+                        "stateStr" : "PRIMARY",
+                        "uptime" : 422,
+                        "optime" : {
+                                "ts" : Timestamp(1503839853, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "optimeDate" : ISODate("2017-08-27T13:17:33Z"),
+                        "electionTime" : Timestamp(1503839723, 1),
+                        "electionDate" : ISODate("2017-08-27T13:15:23Z"),
+                        "configVersion" : 3,
+                        "self" : true
+                },
+                {
+                        "_id" : 1,
+                        "name" : "mongodb-2:27017",
+                        "health" : 1,
+                        "state" : 2,
+                        "stateStr" : "SECONDARY",
+                        "uptime" : 28,
+                        "optime" : {
+                                "ts" : Timestamp(1503839853, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "optimeDurable" : {
+                                "ts" : Timestamp(0, 0),
+                                "t" : NumberLong(-1)
+                        },
+                        "optimeDate" : ISODate("2017-08-27T13:17:33Z"),
+                        "optimeDurableDate" : ISODate("1970-01-01T00:00:00Z"),
+                        "lastHeartbeat" : ISODate("2017-08-27T13:17:41.707Z"),
+                        "lastHeartbeatRecv" : ISODate("2017-08-27T13:17:40.699Z"),
+                        "pingMs" : NumberLong(4),
+                        "syncingTo" : "mysql-1:27017",
+                        "configVersion" : 3
+                },
+                {
+                        "_id" : 2,
+                        "name" : "mongodb-3:27017",
+                        "health" : 1,
+                        "state" : 7,
+                        "stateStr" : "ARBITER",
+                        "uptime" : 8,
+                        "lastHeartbeat" : ISODate("2017-08-27T13:17:41.721Z"),
+                        "lastHeartbeatRecv" : ISODate("2017-08-27T13:17:38.749Z"),
+                        "pingMs" : NumberLong(2),
+                        "configVersion" : 3
+                }
+        ],
+        "ok" : 1
+}
+rs0:PRIMARY> exit
+bye
+```
+
+## Setup Auth:
+
+Setup Authentication on our MongoDB Database, we will create the user `adminuser` and setup the password to `secret`:
+
+```bash
+rs0:PRIMARY> use admin
+switched to db admin
+
+rs0:PRIMARY> db.createUser({user: "adminuser", pwd: "secret", roles:[{role: "root", db: "admin"}]})
+```
+```json
+Successfully added user: {
+        "user" : "adminuser",
+        "roles" : [
+                {
+                        "role" : "root",
+                        "db" : "admin"
+                }
+        ]
+}
+rs0:PRIMARY> exit
+```
+
+Restart MongoDB:
+
+```bash
+$ systemctl restart mongod
+```
+
+## Connect and Authenticate against MongoDB:
+
+Connect to your MongoDB Cluster with auth:
+
+```bash
+$ mongo --host mongodb.example.com --port 27017 -u <username> -p --authenticationDatabase admin
+```
+
+

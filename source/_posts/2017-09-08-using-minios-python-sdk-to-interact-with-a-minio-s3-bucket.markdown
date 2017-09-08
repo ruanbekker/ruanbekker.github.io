@@ -100,3 +100,9 @@ Remove the Bucket that we created:
 Minio has some great documentation, for more information on their SDK:
 
 - https://docs.minio.io/docs/python-client-api-reference
+
+<p>
+	<center>
+	<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
+	</center>
+</p>

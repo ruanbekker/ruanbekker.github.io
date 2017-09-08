@@ -83,6 +83,15 @@ Remove the objects from your Bucket, the list your bucket to verify that they ar
 >>> for obj in objects:
 ...     print(obj.object_name, obj.size)
 ...
+>>>
+```
+
+## Remove the Bucket:
+
+Remove the Bucket that we created:
+
+```python
+>>> client.remove_bucket('pythonbucket')
 >>> exit()
 ```
 

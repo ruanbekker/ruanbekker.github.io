@@ -106,7 +106,7 @@ Create the Java Web Application on Docker Swarm, specifiying our `Host`, and als
 
 ```bash
 $ docker service create \
---name u1t_pop \
+--name java_web \
 --label 'traefik.port=8080' \
 --label traefik.frontend.rule="Host:apps.domain.com; PathPrefix: /app/" \
 --network appnet \

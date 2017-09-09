@@ -34,8 +34,6 @@ address = ":8080"
 
 [entryPoints.http]
 address = ":80"
-#[entryPoints.http.redirect]
-#entryPoint = "https"
 
 [entryPoints.https]
 address = ":443"
@@ -51,7 +49,7 @@ OnHostRule = true
 
 [docker]
 endpoint = "unix:///var/run/docker.sock"
-domain = "apps.u1t.co.za"
+domain = "apps.domain.com"
 watch = true
 exposedbydefault = false
 ```
@@ -60,7 +58,7 @@ exposedbydefault = false
 
 Login to GitLab's Registry, build and push the image:
 
-```
+```bash
 $ docker login registry.gitlab.com
 $ docker build -t registry.gitlab.com/<user>/<repo>/traefik:latest .
 $ docker push registry.gitlab.com/<user>/<repo>/traefik:latest
@@ -70,8 +68,8 @@ $ docker push registry.gitlab.com/<user>/<repo>/traefik:latest
 
 Create the Traefik Proxy Service:
 
-```
-docker service create \
+```bash
+$ docker service create \
 --name traefik \
 --constraint 'node.role==manager' \
 --publish 80:80 \

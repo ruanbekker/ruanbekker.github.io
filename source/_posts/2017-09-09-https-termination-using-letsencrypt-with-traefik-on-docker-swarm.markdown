@@ -113,6 +113,8 @@ $ docker service create \
 --with-registry-auth registry.gitlab.com/<user>/<repo>/java_web:latest
 ```
 
+Now we should be able to access our Web Application on `https://apps.domain.com/app/`
+
 ## Resources:
 
 - https://gist.github.com/nknapp/20c7cd89f1f128b8425dd89cbad0b802

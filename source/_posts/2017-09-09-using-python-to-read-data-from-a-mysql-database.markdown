@@ -106,7 +106,6 @@ A great [blogpost](http://moderndata.plot.ly/graph-data-from-mysql-database-in-p
 - http://moderndata.plot.ly/graph-data-from-mysql-database-in-python/
 - https://stackoverflow.com/questions/11007627/python-variable-declaration
 
-<p>
 <center>
-<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
 </center>

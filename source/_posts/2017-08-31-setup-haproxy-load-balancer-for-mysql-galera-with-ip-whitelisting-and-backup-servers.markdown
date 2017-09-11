@@ -112,4 +112,11 @@ mysql> GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'secrets' WITH GR
 mysql> FLUSH PRIVILEGES;
 ```
 
+## Resources:
+
+- https://raymii.org/s/snippets/haproxy_restrict_specific_urls_to_specific_ip_addresses.html
+
+<center>
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>
 

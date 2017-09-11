@@ -71,6 +71,7 @@ Couch - 98.4713821411%
 ## Resources:
 
 - https://aws.amazon.com/rekognition/
+- https://gist.github.com/alexcasalboni/0f21a1889f09760f8981b643326730ff
 
 <center>
         <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>

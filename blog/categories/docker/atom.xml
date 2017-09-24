@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2017-09-24T06:51:16-04:00</updated>
+  <updated>2017-09-24T16:02:45-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,204 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Create a 3 Node Elasticsearch Stack With HAProxy on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/09/24/create-a-3-node-elasticsearch-stack-with-haproxy-on-docker-swarm/"/>
+    <updated>2017-09-24T15:40:19-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/09/24/create-a-3-node-elasticsearch-stack-with-haproxy-on-docker-swarm</id>
+    <content type="html"><![CDATA[<p>Tried out creating a 3 node elasticsearch stack on docker swarm using docker-compose, that sits behind a haproxy service.</p>
+
+<h2>Environment:</h2>
+
+<p>Images:</p>
+
+<ul>
+<li><a href="https://hub.docker.com/r/dockercloud/haproxy/">dockercloud/haproxy</a></li>
+<li><a href="https://github.com/ruanbekker/docker-elasticsearch">rbekker87/elasticsearch:master-5.6-alpine</a></li>
+</ul>
+
+
+<p>Stack:</p>
+
+<ul>
+<li>1 x haproxy</li>
+<li>1 x elasticsearch master (haproxy wont send requests to this one)</li>
+<li>2 x elasticsearch master/data</li>
+<li>1 x esnet overlay network</li>
+</ul>
+
+
+<h2>Defining our Stack</h2>
+
+<p>First we will create our compose file, which we will call <code>es-compose.yml</code>:</p>
+
+<pre><code class="yaml">version: '3'
+
+services:
+  es-master:
+    image: rbekker87/elasticsearch:master-5.6-alpine
+    networks:
+      - esnet
+    deploy:
+      replicas: 1
+
+  es-data-1:
+    image: rbekker87/elasticsearch:master-5.6-alpine
+    environment:
+     - SERVICE_PORTS=9200
+    networks:
+      - esnet
+    deploy:
+      replicas: 2
+
+  es-data-2:
+    image: rbekker87/elasticsearch:master-5.6-alpine
+    environment:
+     - SERVICE_PORTS=9200
+    networks:
+      - esnet
+    deploy:
+      replicas: 2
+
+  loadbalancer:
+    image: dockercloud/haproxy:latest
+    depends_on:
+      - es-data-1
+      - es-data-2
+    environment:
+      - BALANCE=leastconn
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 9200:80
+    networks:
+      - esnet
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  esnet:
+    driver: overlay
+</code></pre>
+
+<p>The above compose file defines that we want a overlay network, which we will associate with all our services, 3 elasticsearch services, haproxy service which will expose port 9200, then from haproxy it has a container port of 80, which sends to the backend <code>SERVICE_PORTS</code> of each elasticsearch service.</p>
+
+<p>We have only defined <code>SERVICE_PORTS=9200</code> on our es-data services, as I just want to proxy client connections to them.</p>
+
+<h2>Creating our Elasticsearch Stack</h2>
+
+<p>Now that we have our compose file ready, let&rsquo;s create our stack using <code>docker stack deploy</code>:</p>
+
+<pre><code class="bash Create the Stack">$ docker stack deploy -c es-compose.yml analytics
+
+Creating network analytics_esnet
+Creating service analytics_loadbalancer
+Creating service analytics_es-master
+Creating service analytics_es-data-1
+Creating service analytics_es-data-2
+</code></pre>
+
+<p>Let&rsquo;s have a look at our stack:</p>
+
+<pre><code class="bash Docker Stack Status ">$ docker stack ps analytics
+ID                  NAME                       IMAGE                                       NODE                  DESIRED STATE       CURRENT STATE            ERROR               PORTS
+4t3ukxl2kch3        analytics_loadbalancer.1   dockercloud/haproxy:latest                  scw-swarm-master-01   Running             Running 27 seconds ago
+jgbxtgqkg9jp        analytics_es-data-2.1      rbekker87/elasticsearch:master-5.6-alpine   scw-swarm-master-01   Running             Running 33 seconds ago
+x5cq6pm7u7mn        analytics_es-data-1.1      rbekker87/elasticsearch:master-5.6-alpine   scw-swarm-master-01   Running             Running 36 seconds ago
+5v22w1hvtdvm        analytics_es-master.1      rbekker87/elasticsearch:master-5.6-alpine   scw-swarm-master-01   Running             Running 38 seconds ago
+</code></pre>
+
+<p>View the logs of our haproxy service:</p>
+
+<pre><code class="bash HAProxy Service Logs">$ docker service logs -f analytics_loadbalancer
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:dockercloud/haproxy 1.6.7 is running outside Docker Cloud
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:Haproxy is running in SwarmMode, loading HAProxy definition through docker api
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:dockercloud/haproxy PID: 7
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:=&gt; Add task: Initial start - Swarm Mode
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:=&gt; Executing task: Initial start - Swarm Mode
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:==========BEGIN==========
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:Linked service: analytics_es-data-1, analytics_es-data-2, analytics_es-master
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:Linked container: analytics_es-data-1.1.u641c5bq5vkjklk8sb1scnnlc, analytics_es-data-2.1.ic9an6bzj6aejs0lx0vzfpia6, analytics_es-master.1.h4erlgwzit509p0zehzmozy3u
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:HAProxy configuration:
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | global
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   log 127.0.0.1 local0
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   log 127.0.0.1 local1 notice
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   log-send-hostname
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   maxconn 4096
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   pidfile /var/run/haproxy.pid
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   user haproxy
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   group haproxy
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   daemon
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   stats socket /var/run/haproxy.stats level admin
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   ssl-default-bind-options no-sslv3
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   ssl-default-bind-ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:AES128-GCM-SHA256:AES128-SHA256:AES128-SHA:AES256-GCM-SHA384:AES256-SHA256:AES256-SHA:DHE-DSS-AES128-SHA:DES-CBC3-SHA
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | defaults
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   balance leastconn
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   log global
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   mode http
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   option redispatch
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   option httplog
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   option dontlognull
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   option forwardfor
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   timeout connect 5000
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   timeout client 50000
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   timeout server 50000
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | listen stats
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   bind :1936
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   mode http
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   stats enable
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   timeout connect 10s
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   timeout client 1m
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   timeout server 1m
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   stats hide-version
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   stats realm Haproxy\ Statistics
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   stats uri /
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   stats auth stats:stats
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | frontend default_port_80
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   bind :80
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   reqadd X-Forwarded-Proto:\ http
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   maxconn 4096
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   default_backend default_service
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | backend default_service
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   server analytics_es-data-1.1.u641c5bq5vkjklk8sb1scnnlc 10.0.7.5:9200 check inter 2000 rise 2 fall 3
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    |   server analytics_es-data-2.1.ic9an6bzj6aejs0lx0vzfpia6 10.0.7.7:9200 check inter 2000 rise 2 fall 3
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:Launching HAProxy
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:HAProxy has been launched(PID: 10)
+analytics_loadbalancer.1.lcpgiz0ooeas@scw-swarm-master-01    | INFO:haproxy:===========END===========
+</code></pre>
+
+<h2>Testing Elasticsearch:</h2>
+
+<p>Do a GET request on our HAProxy&rsquo;s Expose port: 9200</p>
+
+<pre><code class="bash Test Elasticsearch on port 9200">$ curl -XGET http://127.0.0.1:9200
+{
+  "name" : "5306a0c2ee24",
+  "cluster_name" : "es-cluster",
+  "cluster_uuid" : "FUJmMekFQVq6zXofPCin2A",
+  "version" : {
+    "number" : "5.6.0",
+    "build_hash" : "781a835",
+    "build_date" : "2017-09-07T03:09:58.087Z",
+    "build_snapshot" : false,
+    "lucene_version" : "6.6.0"
+  },
+  "tagline" : "You Know, for Search"
+}
+</code></pre>
+
+<p>Have a look at the <code>/_cat/nodes</code> API:</p>
+
+<pre><code class="bash Get the Node Info">$  curl -XGET http://127.0.0.1:9200/_cat/nodes?v
+ip       heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.0.7.6           28          84  14    3.09    2.28     1.49 mdi       -      56c1b0aebc5f
+10.0.7.2           27          84  15    3.09    2.28     1.49 mdi       *      572c68bca904
+10.0.7.4           29          84  15    3.09    2.28     1.49 mdi       -      5306a0c2ee24
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup RocketChat on Docker Swarm]]></title>
@@ -398,90 +596,6 @@ download: s3://news3bucket/awsddb-1.png to ./file.png
     <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
 </center>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Create a Local Docker Swarm Cluster With Docker in Docker on Your Workstation]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/07/how-to-create-a-local-docker-swarm-cluster-with-docker-in-docker-on-your-workstation/"/>
-    <updated>2017-09-07T04:03:37-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/07/how-to-create-a-local-docker-swarm-cluster-with-docker-in-docker-on-your-workstation</id>
-    <content type="html"><![CDATA[<p>Creating a Docker Swarm Cluster, locally on your Workstation using Docker in Docker (DID) for testing Purposes:</p>
-
-<h2>Project Resources:</h2>
-
-<ul>
-<li><a href="https://hub.docker.com/_/docker/">Docker in Docker</a></li>
-<li><a href="https://docs.traefik.io/">Traefik</a></li>
-</ul>
-
-
-<h2>Create The Nodes:</h2>
-
-<p>Create the Docker containers that will act as our Docker nodes:</p>
-
-<pre><code class="bash">$ docker run --privileged --name docker-node1 -v /Users/ruan/docker/did/vols/node1:/var/lib/docker -d docker:dind --storage-driver=vfs
-$ docker run --privileged --name docker-node2 -v /Users/ruan/docker/did/vols/node2:/var/lib/docker -d docker:dind --storage-driver=vfs
-$ docker run --privileged --name docker-node3 -v /Users/ruan/docker/did/vols/node3:/var/lib/docker -d docker:dind --storage-driver=vfs
-</code></pre>
-
-<h2>Initialize the Swarm:</h2>
-
-<p>Log onto the manager node:</p>
-
-<pre><code class="bash">$ docker exec -it docker-node1 sh
-</code></pre>
-
-<p>Initialize the Swarm:</p>
-
-<pre><code class="bash">$ docker swarm init --advertise-addr eth0
-Swarm initialized: current node (17ydtkqdwxzwea2riadxj4zbw) is now a manager.
-
-To add a worker to this swarm, run the following command:
-
-    docker swarm join --token SWMTKN-1-4goolm8dvwictc7d39aonpcv6ca1pfj31q7irjga17o2srzf6f-b4k3hln6ogvjgmnbs1qxnjvj9 172.17.0.2:2377
-
-To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
-</code></pre>
-
-<p>Join the Worker Nodes to the Swarm:</p>
-
-<pre><code class="bash">$ docker exec -it docker-node2 sh
-/ # docker swarm join --token SWMTKN-1-4mvb68vefr3dogxr6omu3uq04r4gddftdbmfomxo9pefks9siu-3t7ua7k2xigl9rwgp4dwzcxm0 172.17.0.2:2377
-This node joined a swarm as a worker.
-</code></pre>
-
-<pre><code class="bash">$ docker exec -it docker-node3 sh
-/ # docker swarm join --token SWMTKN-1-4mvb68vefr3dogxr6omu3uq04r4gddftdbmfomxo9pefks9siu-3t7ua7k2xigl9rwgp4dwzcxm0 172.17.0.2:2377
-This node joined a swarm as a worker.
-</code></pre>
-
-<h2>List the Nodes:</h2>
-
-<p>Log onto the Manager node and list the nodes:</p>
-
-<pre><code class="bash">$ docker exec -it docker-node1 sh
-/ # docker node ls
-ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-1hnq4b4w87w6trobwye5ap4sh *   5657c28bf618        Ready               Active              Leader
-wglbb029g1kczttiaf5r6iavi     b2924bb8e555        Ready               Active
-xxr9kdqy49u2tx61w31ife90j     6622a06a1b3c        Ready               Active
-</code></pre>
-
-<h2>Traefik:</h2>
-
-<p>Creating a HTTP Reverse Proxy, using Traefik:</p>
-
-<pre><code class="bash">$ docker network create --driver overlay traefik-net
-$ docker service create \
---name traefik \
---constraint 'node.role==manager' \
---publish 80:80 \
---publish 8080:8080 \
---mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
---network traefik-net \
-traefik:camembert --docker --docker.swarmmode --docker.domain=ruanbekker.internal --docker.watch --logLevel=DEBUG --web
-</code></pre>
 ]]></content>
   </entry>
   

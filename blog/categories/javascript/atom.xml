@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Javascript | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/javascript/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2017-09-24T18:11:26-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Creating a Nodejs Hostname App With Docker Stacks on Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/09/24/creating-a-nodejs-hostname-app-with-docker-stacks-on-swarm/"/>
+    <updated>2017-09-24T17:52:51-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/09/24/creating-a-nodejs-hostname-app-with-docker-stacks-on-swarm</id>
+    <content type="html"><![CDATA[<p>Create a Nodejs Application that responds GET requests with its Hostname.</p>
+
+<p>Our nodejs application will sit beind a HAProxy Load Balancer, we are mounting the <code>docker.sock</code> from the host to the container, so as we scale our web application, our load balancer is aware of the changes, and scales as we scale our web application.</p>
+
+<h2>Creating the Application:</h2>
+
+<p>Our nodejs application:</p>
+
+<pre><code class="javascript app.js">var http = require('http');
+var os = require('os');
+http.createServer(function (req, res) {
+    res.writeHead(200, {'Content-Type': 'text/html'});
+    res.end(`My Hostname: ${os.hostname()}\n`);
+}).listen(8080);
+</code></pre>
+
+<p>Our Dockerfile:</p>
+
+<pre><code class="docker Dockerfile">FROM node:alpine
+ADD app.js /app.js
+CMD ["node", "/app.js"]
+</code></pre>
+
+<p>Build and Push to your registry, or you could use my image on Dockerhub: <a href="https://hub.docker.com/r/rbekker87/node-containername/">hub.docker.com/r/rbekker87/node-containername</a></p>
+
+<pre><code class="bash Build and Push">$ docker login
+$ docker build -t &lt;username&gt;/&lt;repo&gt;:&lt;tag&gt; .
+$ docker push  &lt;username&gt;/&lt;repo&gt;:&lt;tag&gt;
+</code></pre>
+
+<h2>Creating the Compose file</h2>
+
+<p>Create the compose file that will define our services:</p>
+
+<pre><code class="bash docker-compose.yml">version: '3'
+
+services:
+  node-app:
+    image: rbekker87/node-containername
+    networks:
+      - nodenet
+    environment:
+      - SERVICE_PORTS=8080
+    deploy:
+      replicas: 20
+      update_config:
+        parallelism: 5
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        window: 120s
+
+  loadbalancer:
+    image: dockercloud/haproxy:latest
+    depends_on:
+      - node-app
+    environment:
+      - BALANCE=leastconn
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 80:80
+    networks:
+      - nodenet
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  nodenet:
+    driver: overlay
+</code></pre>
+
+<h2>Create the Stack:</h2>
+
+<p>Deploy the Stack by specifying the compose file and name of our stack:</p>
+
+<pre><code class="bash Deploy our Stack">$ docker stack deploy -c docker-compose.yml node
+</code></pre>
+
+<p>List the Services in the Stack:</p>
+
+<pre><code class="bash List Services in our Stack">$ docker stack ls
+NAME                SERVICES
+node                2
+</code></pre>
+
+<p>List the Tasks in the Stack:</p>
+
+<pre><code class="bash Tasks in our Stack">$ docker stack ps node
+ID                  NAME                  IMAGE                                 NODE     DESIRED STATE       CURRENT STATE            ERROR               PORTS
+l5ryfaedzzaq        node_loadbalancer.1   dockercloud/haproxy:latest            dsm-01   Running             Running 40 minutes ago
+c8nrrcvek79h        node_node-app.5       rbekker87/node-containername:latest   dsm-01   Running             Running 40 minutes ago
+dqii18b2q5nn        node_node-app.10      rbekker87/node-containername:latest   dsm-01   Running             Running 40 minutes ago
+vkpw2rugy0ah        node_node-app.11      rbekker87/node-containername:latest   dsm-01   Running             Running 40 minutes ago
+mm88nvnvy5lg        node_node-app.12      rbekker87/node-containername:latest   dsm-01   Running             Running 40 minutes ago
+oyx8rfqc1xl2        node_node-app.16      rbekker87/node-containername:latest   dsm-01   Running             Running 41 minutes ago
+</code></pre>
+
+<h2>Test out our Application</h2>
+
+<p>Test out the Service:</p>
+
+<pre><code class="bash GET Requests">$ curl -XGET http://127.0.0.1/
+My Hostname: a6e34246e73b
+
+$ curl -XGET http://127.0.0.1/
+My Hostname: 5de71278be38
+
+$ curl -XGET http://127.0.0.1/
+My Hostname: e0b7316fdd51
+</code></pre>
+
+<h2>Scaling Out:</h2>
+
+<p>Scale our Application out to 30 replica&rsquo;s</p>
+
+<pre><code class="bash Scaling Up">$ docker service scale node-app=30
+</code></pre>
+
+<p>Scale our Application down to 10 replica&rsquo;s</p>
+
+<pre><code class="bash Scaling Down">$ docker service scale node-app=10
+</code></pre>
+
+<h2>Cleanup</h2>
+
+<p>Remove the Stack:</p>
+
+<pre><code class="bash Delete the Stack">$ docker stack rm node
+Removing service node_loadbalancer
+Removing service node_node-app
+Removing network node_nodenet
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://github.com/ruanbekker/docker-node-containername">https://github.com/ruanbekker/docker-node-containername</a></li>
+<li><a href="https://hub.docker.com/r/rbekker87/node-containername/">https://hub.docker.com/r/rbekker87/node-containername/</a></li>
+<li><a href="https://medium.com/@nirgn/load-balancing-applications-with-haproxy-and-docker-d719b7c5b231">Resource 1</a> + <a href="http://anokun7.github.io/microservices-demo/">Resource 2</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

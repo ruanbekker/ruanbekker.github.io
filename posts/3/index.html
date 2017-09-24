@@ -9,8 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Today we will setup a HAProxy Service for our 3 Node MySQL Galera Cluster Our Setup: 3 Node Galera MySQL Cluster
-3 HAProxy Services (Each HAProxy &hellip;">
+  <meta name="description" content="Today we will setup a 3 Node Replica Set for MongoDB on Ubuntu 16. A Replica Set is a form of data replication, so that your data resides on more &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +87,401 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/09/02/setup-a-3-node-mongodb-replica-set-on-ubuntu-16/">Setup a 3 Node MongoDB Replica Set on Ubuntu 16</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-09-02T19:29:10-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>2</span><span class='date-suffix'>nd</span>, <span class='date-year'>2017</span></span> <span class='time'>7:29 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>Today we will setup a 3 Node Replica Set for MongoDB on Ubuntu 16. A Replica Set is a form of data replication, so that your data resides on more than one node for data durability. We will setup the 1st node as the primary node, the second as the secondary node and the 3rd node will act as an arbiter.</p>
+
+<p>The arbiter node can almost be mentioned as a voter node, as it will be set in place to prevent split brain.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://eladnava.com/deploy-a-highly-available-mongodb-replica-set-on-aws/">https://eladnava.com/deploy-a-highly-available-mongodb-replica-set-on-aws/</a></li>
+<li><a href="https://stackoverflow.com/questions/38524150/mongodb-replica-set-with-simple-password-authentication">https://stackoverflow.com/questions/38524150/mongodb-replica-set-with-simple-password-authentication</a> (auth)</li>
+<li><a href="https://stackoverflow.com/questions/14789622/mongodb-keyfile-too-open-permissions">https://stackoverflow.com/questions/14789622/mongodb-keyfile-too-open-permissions</a></li>
+</ul>
+
+
+<h2>Installing MongoDB on our 3 Nodes:</h2>
+
+<p>Our case, using Ubuntu 16.04, setting up our repository and installing mongodb from our repository:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 0C49F3730359A14518585931BC711F9BA15703C6
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s2">&quot;deb [ arch=amd64,arm64 ] http://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.4 multiverse&quot;</span> <span class="p">|</span> sudo tee /etc/apt/sources.list.d/mongodb-org-3.4.list
+</span><span class='line'><span class="nv">$ </span>apt update
+</span><span class='line'><span class="nv">$ </span>apt install -y mongodb-org -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Preparing our Directories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p /srv/mongodb/rs0-0 /srv/mongodb/rs0-1 /srv/mongodb/rs0-2
+</span><span class='line'><span class="nv">$ </span>mkdir -p /var/log/mongodb/rs0-0 /var/log/mongodb/rs0-1 /var/log/mongodb/rs0-2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Populating our MongoDB Configuration:</p>
+
+<ul>
+<li>MongoDB Prefers XFS File Systems when using WiredTiger.</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; /etc/mongod.conf <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'><span class="s">storage:</span>
+</span><span class='line'><span class="s">  dbPath: /var/lib/mongodb</span>
+</span><span class='line'><span class="s">  journal:</span>
+</span><span class='line'><span class="s">    enabled: false</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">storage:</span>
+</span><span class='line'><span class="s">  mmapv1:</span>
+</span><span class='line'><span class="s">    smallFiles: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">systemLog:</span>
+</span><span class='line'><span class="s">  destination: file</span>
+</span><span class='line'><span class="s">  logAppend: true</span>
+</span><span class='line'><span class="s">  path: /var/log/mongodb/mongod.log</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">net:</span>
+</span><span class='line'><span class="s">  port: 27017</span>
+</span><span class='line'><span class="s">  bindIp: 0.0.0.0</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">replication:</span>
+</span><span class='line'><span class="s">  replSetName: rs0</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">security:</span>
+</span><span class='line'><span class="s">  authorization: enabled</span>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable MongoDB On Startup and Start MongoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>mongod
+</span><span class='line'><span class="nv">$ </span>systemctl restart mongod
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup MongoDB Replica Sets:</h2>
+
+<p>In our setup we will have 3 nodes: (mongodb-1, mongodb-2, mongodb3) From our Primary Node, connect to MongoDB and inititalize our replica set:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo
+</span><span class='line'>MongoDB shell version v3.4.7
+</span><span class='line'>connecting to: mongodb://127.0.0.1:27017
+</span><span class='line'>MongoDB server version: 3.4.7
+</span><span class='line'>&gt; rs.initiate<span class="o">()</span>
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;info2&quot;</span> : <span class="s2">&quot;no configuration specified. Using a default configuration for the set&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;me&quot;</span> : <span class="s2">&quot;mysql-1:27017&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;ok&quot;</span> : 1
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next, add our 2 other MongoDB Nodes, remember <code>mongodb-3</code> is our arbiter node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>rs0:SECONDARY&gt; rs.add<span class="o">(</span><span class="s2">&quot;mongodb-2&quot;</span><span class="o">)</span>
+</span><span class='line'><span class="o">{</span> <span class="s2">&quot;ok&quot;</span> : <span class="m">1</span> <span class="o">}</span>
+</span><span class='line'>rs0:PRIMARY&gt; rs.add<span class="o">(</span><span class="s2">&quot;mongodb-3&quot;</span>, <span class="nb">true</span><span class="o">)</span>
+</span><span class='line'><span class="o">{</span> <span class="s2">&quot;ok&quot;</span> : <span class="m">1</span> <span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify the Replica Set Status:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>rs0:PRIMARY&gt; rs.status<span class="o">()</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
+</span><span class='line'>        <span class="nt">&quot;set&quot;</span> <span class="p">:</span> <span class="s2">&quot;rs0&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;date&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:42.469Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;myState&quot;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;term&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">1</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;heartbeatIntervalMillis&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">2000</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;optimes&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                <span class="nt">&quot;lastCommittedOpTime&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;ts&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">0</span><span class="p">,</span> <span class="err">0),</span>
+</span><span class='line'>                        <span class="nt">&quot;t&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">-1</span><span class="err">)</span>
+</span><span class='line'>                <span class="p">},</span>
+</span><span class='line'>                <span class="nt">&quot;appliedOpTime&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;ts&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">1503839853</span><span class="p">,</span> <span class="err">1),</span>
+</span><span class='line'>                        <span class="nt">&quot;t&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">1</span><span class="err">)</span>
+</span><span class='line'>                <span class="p">},</span>
+</span><span class='line'>                <span class="nt">&quot;durableOpTime&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;ts&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">1503839722</span><span class="p">,</span> <span class="err">1),</span>
+</span><span class='line'>                        <span class="nt">&quot;t&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">-1</span><span class="err">)</span>
+</span><span class='line'>                <span class="p">}</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="nt">&quot;members&quot;</span> <span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>                <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;_id&quot;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;name&quot;</span> <span class="p">:</span> <span class="s2">&quot;mysql-1:27017&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;health&quot;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;state&quot;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;stateStr&quot;</span> <span class="p">:</span> <span class="s2">&quot;PRIMARY&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;uptime&quot;</span> <span class="p">:</span> <span class="mi">422</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;optime&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                                <span class="nt">&quot;ts&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">1503839853</span><span class="p">,</span> <span class="err">1),</span>
+</span><span class='line'>                                <span class="nt">&quot;t&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">1</span><span class="err">)</span>
+</span><span class='line'>                        <span class="p">},</span>
+</span><span class='line'>                        <span class="nt">&quot;optimeDate&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:33Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;electionTime&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">1503839723</span><span class="p">,</span> <span class="err">1),</span>
+</span><span class='line'>                        <span class="nt">&quot;electionDate&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:15:23Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;configVersion&quot;</span> <span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;self&quot;</span> <span class="p">:</span> <span class="kc">true</span>
+</span><span class='line'>                <span class="p">},</span>
+</span><span class='line'>                <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;_id&quot;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;name&quot;</span> <span class="p">:</span> <span class="s2">&quot;mongodb-2:27017&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;health&quot;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;state&quot;</span> <span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;stateStr&quot;</span> <span class="p">:</span> <span class="s2">&quot;SECONDARY&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;uptime&quot;</span> <span class="p">:</span> <span class="mi">28</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;optime&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                                <span class="nt">&quot;ts&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">1503839853</span><span class="p">,</span> <span class="err">1),</span>
+</span><span class='line'>                                <span class="nt">&quot;t&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">1</span><span class="err">)</span>
+</span><span class='line'>                        <span class="p">},</span>
+</span><span class='line'>                        <span class="nt">&quot;optimeDurable&quot;</span> <span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                                <span class="nt">&quot;ts&quot;</span> <span class="p">:</span> <span class="err">Timestamp(</span><span class="mi">0</span><span class="p">,</span> <span class="err">0),</span>
+</span><span class='line'>                                <span class="nt">&quot;t&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">-1</span><span class="err">)</span>
+</span><span class='line'>                        <span class="p">},</span>
+</span><span class='line'>                        <span class="nt">&quot;optimeDate&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:33Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;optimeDurableDate&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;1970-01-01T00:00:00Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;lastHeartbeat&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:41.707Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;lastHeartbeatRecv&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:40.699Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;pingMs&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">4</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;syncingTo&quot;</span> <span class="p">:</span> <span class="s2">&quot;mysql-1:27017&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;configVersion&quot;</span> <span class="p">:</span> <span class="mi">3</span>
+</span><span class='line'>                <span class="p">},</span>
+</span><span class='line'>                <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;_id&quot;</span> <span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;name&quot;</span> <span class="p">:</span> <span class="s2">&quot;mongodb-3:27017&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;health&quot;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;state&quot;</span> <span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;stateStr&quot;</span> <span class="p">:</span> <span class="s2">&quot;ARBITER&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;uptime&quot;</span> <span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;lastHeartbeat&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:41.721Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;lastHeartbeatRecv&quot;</span> <span class="p">:</span> <span class="err">ISODate(</span><span class="s2">&quot;2017-08-27T13:17:38.749Z&quot;</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;pingMs&quot;</span> <span class="p">:</span> <span class="err">NumberLong(</span><span class="mi">2</span><span class="err">)</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;configVersion&quot;</span> <span class="p">:</span> <span class="mi">3</span>
+</span><span class='line'>                <span class="p">}</span>
+</span><span class='line'>        <span class="p">],</span>
+</span><span class='line'>        <span class="nt">&quot;ok&quot;</span> <span class="p">:</span> <span class="mi">1</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'><span class="err">rs</span><span class="mi">0</span><span class="err">:PRIMARY&gt;</span> <span class="err">exit</span>
+</span><span class='line'><span class="err">bye</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup Auth:</h2>
+
+<p>Setup Authentication on our MongoDB Database, we will create the user <code>adminuser</code> and setup the password to <code>secret</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>rs0:PRIMARY&gt; use admin
+</span><span class='line'>switched to db admin
+</span><span class='line'>
+</span><span class='line'>rs0:PRIMARY&gt; db.createUser<span class="o">({</span>user: <span class="s2">&quot;adminuser&quot;</span>, <span class="nb">pwd</span>: <span class="s2">&quot;secret&quot;</span>, roles:<span class="o">[{</span>role: <span class="s2">&quot;root&quot;</span>, db: <span class="s2">&quot;admin&quot;</span><span class="o">}]})</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="err">Successfully</span> <span class="err">added</span> <span class="err">user:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="nt">&quot;user&quot;</span> <span class="p">:</span> <span class="s2">&quot;adminuser&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;roles&quot;</span> <span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>                <span class="p">{</span>
+</span><span class='line'>                        <span class="nt">&quot;role&quot;</span> <span class="p">:</span> <span class="s2">&quot;root&quot;</span><span class="p">,</span>
+</span><span class='line'>                        <span class="nt">&quot;db&quot;</span> <span class="p">:</span> <span class="s2">&quot;admin&quot;</span>
+</span><span class='line'>                <span class="p">}</span>
+</span><span class='line'>        <span class="p">]</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'><span class="err">rs</span><span class="mi">0</span><span class="err">:PRIMARY&gt;</span> <span class="err">exit</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart MongoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl restart mongod
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Connect and Authenticate against MongoDB:</h2>
+
+<p>Connect to your MongoDB Cluster with auth:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo --host mongodb.example.com --port <span class="m">27017</span> -u &lt;username&gt; -p --authenticationDatabase admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3602,311 +3996,6 @@ Next you can configure your Route 53 Hosted Zone, <code>elk.mydomain.com</code> 
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/08/24/modern-reverse-proxy-with-traefik-on-docker-swarm/">Modern Reverse Proxy With Traefik on Docker Swarm</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-08-24T19:00:33-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>7:00 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://dl.dropboxusercontent.com/u/31991539/images/traefik.png" alt="" /></p>
-
-<p><a href="https://traefik.io/">Traefik</a> is a modern load balancer and reverse proxy built for micro services.</p>
-
-<p>We will build 4 WebServices with Traefik, where we will go through the following scenarios:</p>
-
-<ul>
-<li>Hostname Based Routingi (With Path&rsquo;s and Without)</li>
-<li>Path Based Routing</li>
-</ul>
-
-
-<h2>Pre-Requisites:</h2>
-
-<p>From your DNS Provider add wildcard entries to the Docker Swarm Public IPs:</p>
-
-<ul>
-<li><code>apps.domain.com</code> -> A Record to each Docker Swarm Node</li>
-<li><code>*.apps.domain.com</code> => apps.doamin.com</li>
-</ul>
-
-
-<p>This will allow us to create web applications on the fly.</p>
-
-<h2>Static Website with Traefik:</h2>
-
-<p>Create Traefik Proxy:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>docker service create \
-</span><span class='line'>--name traefik \
-</span><span class='line'>--constraint 'node.role==manager' \
-</span><span class='line'>--publish 80:80 \
-</span><span class='line'>--publish 443:443 \
-</span><span class='line'>--publish 8080:8080 \
-</span><span class='line'>--mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-</span><span class='line'>--network appnet \
-</span><span class='line'>traefik:camembert \
-</span><span class='line'>--docker --docker.swarmmode  \
-</span><span class='line'>--docker.domain=apps.domain.com \
-</span><span class='line'>--docker.watch \
-</span><span class='line'>--logLevel=DEBUG \
-</span><span class='line'>--web</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Build a WebService with 2 Endpoints:</h2>
-
-<p>Our Website will have:</p>
-
-<ul>
-<li><code>/</code></li>
-<li><code>/test/</code></li>
-</ul>
-
-
-<p>Our <code>Dockerfile</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>FROM alpine:edge
-</span><span class='line'>
-</span><span class='line'>RUN apk update \
-</span><span class='line'>    && apk add lighttpd
-</span><span class='line'>
-</span><span class='line'>ADD htdocs /var/www/localhost/htdocs
-</span><span class='line'>
-</span><span class='line'>CMD ["lighttpd", "-D", "-f", "/etc/lighttpd/lighttpd.conf"]</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>htdocs</code> directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>find ./htdocs/
-</span><span class='line'>./htdocs/
-</span><span class='line'>./htdocs/index.html
-</span><span class='line'>./htdocs/test
-</span><span class='line'>./htdocs/test/index.html</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Building and Push the Image to a Registry of your choice:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>docker login registry.gitlab.com
-</span><span class='line'>docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/lighttpd:test
-</span><span class='line'>docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/lighttpd:test</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the 1st Service, No Hostname or Path based specified:</h2>
-
-<p>The Service will allow us to view <code>/</code> and <code>/test/</code> paths, and also enable us to use the service name as the subdomain, or the domain specified in the <code>traefik</code> service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>docker service create --name web1 --label 'traefik.port=80'  --network appnet --with-registry-auth registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/lighttpd:test</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Testing the service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://web1.apps.domain.com/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Root Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://web2.apps.domain.com/test/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Test Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>and</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://apps.domain.com/test/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Test Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>but</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://foo.apps.domain.com/test/
-</span><span class='line'>404 page not found</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the 2nd Service, Only 1 Path Based Routing:</h2>
-
-<p>This service will only allow us to view the <code>/test/</code> endpoint:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker service create --name website2 --label 'traefik.port=80' --label traefik.frontend.rule="Path: /test/" --network appnet --with-registry-auth registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/lighttpd:test</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Testing the Service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://web1.apps.domain.com/
-</span><span class='line'>404 page not found</span></code></pre></td></tr></table></div></figure>
-
-
-
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://web2.apps.domain.com/test/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Test Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Hostname Based and Path Based Routing:</h2>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker service create \
-</span><span class='line'>--name web3 \
-</span><span class='line'>--label 'traefik.port=80' \
-</span><span class='line'>--label traefik.frontend.rule="Host:apps.domain.com; Path: /test/" \
-</span><span class='line'>--network appnet \
-</span><span class='line'>--with-registry-auth registry.gitlab.com/rbekker87/docker/lighttpd:u1t-test</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Test the <code>/</code> endpoint, which should not work:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl  http://apps.domain.com/
-</span><span class='line'>404 page not found</span></code></pre></td></tr></table></div></figure>
-
-
-<p>and the <code>/test/</code> endpoint:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl  http://apps.domain.com/test/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Test Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Also, any other FQDN that is specified will not work as it does not match the <code>traefik.frontend.rule</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl  http://web3.apps.domain.com/
-</span><span class='line'>404 page not found</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Strictly Hostname Based Routing and not specifying any paths:</h2>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker service create \
-</span><span class='line'>--name web4 \
-</span><span class='line'>--label 'traefik.port=80' \
-</span><span class='line'>--label traefik.frontend.rule="Host:apps.domain.com" \
-</span><span class='line'>--network appnet \
-</span><span class='line'>--with-registry-auth registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/lighttpd:u1t-test</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Testing the Service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://apps.domain.com/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Root Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://apps.domain.com/test/
-</span><span class='line'>&lt;html&gt;
-</span><span class='line'>Test Page
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Anything specified other than that, will result in a 404 Response.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/4">&larr; Older</a>
@@ -3924,6 +4013,10 @@ Next you can configure your Route 53 Hosted Zone, <code>elk.mydomain.com</code> 
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2017/09/24/creating-a-nodejs-hostname-app-with-docker-stacks-on-swarm/">Creating a Nodejs Hostname App With Docker Stacks on Swarm</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2017/09/24/create-a-3-node-elasticsearch-stack-with-haproxy-on-docker-swarm/">Create a 3 Node Elasticsearch Stack With HAProxy on Docker Swarm</a>
       </li>
     
@@ -3937,10 +4030,6 @@ Next you can configure your Route 53 Hosted Zone, <code>elk.mydomain.com</code> 
     
       <li class="post">
         <a href="/blog/2017/09/18/using-the-python-sys-library-to-read-data-from-stdin/">Using the Python Sys Library to Read Data From Stdin</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2017/09/16/setup-a-postfix-relay-server-that-uses-ses-to-relay-outbound-mail/">Setup a Postfix Relay Server That Uses SES to Relay Outbound Mail</a>
       </li>
     
   </ul>

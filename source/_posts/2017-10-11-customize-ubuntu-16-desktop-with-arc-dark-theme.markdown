@@ -14,11 +14,11 @@ So I decided to use Ubuntu for a change.
 
 ## Customizations:
 
-For the customization, I am Ubuntu 16:
+For the Operating System, I am Ubuntu 16:
 
 - [Ubuntu 16.04 (Operating System)](https://www.ubuntu.com/download/desktop)
 
-Formy theme I am using Arc Dark:
+For my theme I am using Arc Dark:
 
 - [Arch Teme](https://github.com/horst3180/arc-theme) - [autoconf dependency required](https://askubuntu.com/questions/265471/autoreconf-not-found-error-during-making-qemu-1-4-0/490839)
 
@@ -145,7 +145,7 @@ And my Wallpaper:
 
 ## Other Preferred Applications:
 
-- [Docker](https://www.docker.com/docker-ubuntu)
+- [Docker](https://www.docker.com/docker-ubuntu) <-- Of course! :D
 - [LXD](https://linuxcontainers.org/lxd/getting-started-cli/)
 - [Cloud Storage: Dropbox](https://www.dropbox.com/)
 - [Text Editor: Sublime Text](https://www.sublimetext.com/)

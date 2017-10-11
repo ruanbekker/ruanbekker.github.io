@@ -8,7 +8,7 @@ categories: ["desktop", "linux", "ubuntu", "customization"]
 
 ![](https://i.snag.gy/g1ryLn.jpg)
 
-So I was running ApricityOS for quite some time, which is a Arch Distibution. But a couple of hours before PyConZa I was trying to do a update and found that they have stopped the project, as their update repositories were down.
+So I was running ApricityOS for quite some time, which is a Arch Distibution. But a couple of hours before PyConZa I was trying to do a update and found that their repositories were reporting 404 errors, and turns out they have stopped their project :( . I quite liked ApricityOS, as it's what you will expect when installing Arch with the basic applications and the numix icon/theme pack.
 
 So I decided to use Ubuntu for a change.
 
@@ -27,6 +27,8 @@ Formy theme I am using Arc Dark:
 Moka Icon pack for my Icons:
 
 - [Moka Icon Themes](https://snwh.org/moka/download)
+
+![](https://i.snag.gy/3JPi9W.jpg?nocache=1507753731895)
 
 Terminator for my terminal of choice:
 

@@ -3,7 +3,7 @@ layout: post
 title: "Using Python to build a Dictionary from data eg sports per person"
 date: 2017-10-14 14:53:48 -0400
 comments: true
-categories: ["python", "python-dicitionary", "python-list"i, "programming", "scripting"] 
+categories: ["python", "python-dicitionary", "python-list", "programming", "scripting"] 
 ---
 
 I had to achieve a way to provide data in key-value format, where I wanted to see what sports people like, eg: `{"ruan": ["rugby", "cricket"]}`

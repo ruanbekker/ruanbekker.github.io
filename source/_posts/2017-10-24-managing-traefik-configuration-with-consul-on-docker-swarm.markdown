@@ -3,16 +3,18 @@ layout: post
 title: "Managing Traefik Configuration with Consul on Docker Swarm"
 date: 2017-10-24 03:08:15 -0400
 comments: true
-categories: ["docker", "docker-swarm", "traefik", "consul", "configuration-management"] 
+categories: ["docker", "docker-swarm", "traefik", "consul", "configuration-management"]
 ---
 
-# Resources:
+Today we will Setup Consul with Traefik on Docker Swarm
+
+## Resources:
 
 - https://docs.traefik.io/user-guide/kv-config/
 
-# Create Consul in the Swarm:
+## Create Consul in the Swarm:
 
-Investigate using Consul with Traefik in Docker Swarm. 
+Investigate using Consul with Traefik in Docker Swarm.
 
 I have configured consul with constraints to be placed only on my one manager, as I was bind mounting the data directory to `/mnt`, as this was for testing on a small docker swarm cluster, but with Docker for AWS, we will use cloudstor with EFS, or GlusterFS, NFS for data persistency across any nodes.
 
@@ -870,3 +872,4 @@ $ docker service inspect apps_whoami5
     }
 }
 ```
+

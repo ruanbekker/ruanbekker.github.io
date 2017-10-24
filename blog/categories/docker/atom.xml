@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2017-10-22T06:01:56-04:00</updated>
+  <updated>2017-10-24T03:41:52-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,862 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Managing Traefik Configuration With Consul on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/10/24/managing-traefik-configuration-with-consul-on-docker-swarm/"/>
+    <updated>2017-10-24T03:08:15-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/10/24/managing-traefik-configuration-with-consul-on-docker-swarm</id>
+    <content type="html"><![CDATA[<h1>Resources:</h1>
+
+<ul>
+<li><a href="https://docs.traefik.io/user-guide/kv-config/">https://docs.traefik.io/user-guide/kv-config/</a></li>
+</ul>
+
+
+<h1>Create Consul in the Swarm:</h1>
+
+<p>Investigate using Consul with Traefik in Docker Swarm.</p>
+
+<p>I have configured consul with constraints to be placed only on my one manager, as I was bind mounting the data directory to <code>/mnt</code>, as this was for testing on a small docker swarm cluster, but with Docker for AWS, we will use cloudstor with EFS, or GlusterFS, NFS for data persistency across any nodes.</p>
+
+<h2>Create Compose Files:</h2>
+
+<ul>
+<li>consul.yml</li>
+<li>traefik.yml</li>
+<li>apps.yml</li>
+</ul>
+
+
+<p><code>consul.yml</code></p>
+
+<pre><code class="bash">$ cat &gt; consul.yml &lt;&lt; EOF
+version: '3.3'
+
+services:
+  consul:
+    image: progrium/consul
+    command: -server -bootstrap -log-level debug -ui-dir /ui
+    networks:
+      - appnet
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    volumes:
+      - type: bind
+        source: /mnt/consul
+        target: /data
+    ports:
+      - "8400:8400"
+      - "8500:8500"
+      - "8600:53/udp"
+
+networks:
+  appnet:
+    external: true
+
+EOF
+</code></pre>
+
+<p><code>traefik.yml</code></p>
+
+<pre><code class="bash">$ cat &gt; traefik.yml &lt;&lt; EOF
+version: '3.3'
+
+services:
+  traefik:
+    image: traefik
+    networks:
+      - appnet
+    command: --consul --consul.endpoint=consul:8500
+    ports:
+      - "80:80"
+      - "8080:8080"
+
+networks:
+  appnet:
+    external: true
+
+EOF
+</code></pre>
+
+<p><code>apps.yml</code></p>
+
+<pre><code class="bash">$ cat &gt; apps.yml &lt;&lt; EOF
+version: '3.3'
+
+services:
+  whoami1:
+    image: emilevauge/whoami
+    networks:
+      - appnet
+
+  whoami2:
+    image: emilevauge/whoami
+    networks:
+      - appnet
+
+  whoami3:
+    image: emilevauge/whoami
+    networks:
+      - appnet
+
+  whoami4:
+    image: emilevauge/whoami
+    networks:
+      - appnet
+
+  whoami5:
+    image: rbekker87/flask-containername
+    networks:
+      - appnet
+
+  whoami6:
+    image: rbekker87/flask-containername
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    external: true
+
+EOF
+</code></pre>
+
+<h2>Create Overlay Network and Deploy Stacks</h2>
+
+<p>Create the overlay network, and deploy the 3 stacks:</p>
+
+<pre><code class="bash">$ docker network create --driver=overlay appnet
+$ docker stack deploy --compose-file consul.yml kvstore
+$ docker stack deploy --compose-file traefik.yml proxy
+$ docker stack deploy --compose-file apps.yml apps
+</code></pre>
+
+<h2>Populate Configs and Push to Consul KV Store:</h2>
+
+<p>Config for Traefik:</p>
+
+<pre><code class="bash">$ cat &gt; create_traefik_config.sh &lt;&lt; EOF
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/loglevel -d 'DEBUG'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/defaultentrypoints/0 -d 'http'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/entrypoints/http/address -d ':80'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/consul/endpoint -d 'consul:8500'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/consul/watch -d 'true'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/consul/prefix -d 'traefik'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/web/address -d ':8081'
+EOF
+</code></pre>
+
+<p>Config for WhoAmI Web Apps:</p>
+
+<pre><code class="bash">$ cat &gt; create_whoami_config.sh &lt;&lt; EOF
+# backend-1
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend1/circuitbreaker/expression -d 'NetworkErrorRatio() &gt; 0.5'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend1/servers/server1/url -d 'http://whoami1:80'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend1/servers/server1/weight -d '10'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend1/servers/server2/url -d 'http://whoami2:80'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend1/servers/server2/weight -d '1'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend1/servers/server2/tags -d 'api,helloworld'
+
+# backend-2
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/maxconn/amount -d '10'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/maxconn/extractorfunc -d 'request.host'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/loadbalancer/method -d 'drr'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/servers/server1/url -d 'http://whoami3:80'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/servers/server1/weight -d '1'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/servers/server2/url -d 'http://whoami4:80'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/servers/server2/weight -d '2'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend2/servers/server2/tags -d 'web'
+
+# frontend-1
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend1/backend -d 'backend2'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend1/routes/test_1/rule -d 'Host:test.localhost'
+
+# frontend-2
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend2/backend -d 'backend1'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend2/passHostHeader -d 'true'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend2/priority -d '10'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend2/entrypoints -d 'http'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend2/routes/test_2/rule -d 'PathPrefix:/test'
+EOF
+</code></pre>
+
+<p>Config for Flask Container Name Web Apps:</p>
+
+<pre><code class="bash">$ cat &gt; create_flask_config.sh &lt;&lt; EOF
+# backends
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/amount -d '5'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/maxconn/extractorfunc -d 'request.host'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/loadbalancer/method -d 'drr'
+
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server1/url -d 'http://whoami5:5000'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server1/weight -d '1'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server1/tags -d 'flask'
+
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server2/url -d 'http://whoami6:5000'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server2/weight -d '2'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server2/tags -d 'flask'
+
+# frontend:
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend3/backend -d 'backend3'
+curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend3/routes/test_1/rule -d 'Host:flask.localhost'
+EOF
+</code></pre>
+
+<p>Push Configs to Consul:</p>
+
+<pre><code class="bash">$ sh create_traefik_config.sh
+$ sh create_whoami_config.sh
+$ sh create_flask_config.sh
+</code></pre>
+
+<h2>Testing Applications:</h2>
+
+<p>Test Frontend with Host Header: test.localhost</p>
+
+<pre><code class="bash">$ curl -H "Host:test.localhost" http://127.0.0.1:80
+Hostname: 88c29de3aeb0
+IP: 127.0.0.1
+IP: 10.0.0.6
+IP: 10.0.0.7
+IP: 172.18.0.3
+GET / HTTP/1.1
+Host: test.localhost
+User-Agent: curl/7.47.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 10.255.0.2
+X-Forwarded-Host: test.localhost
+X-Forwarded-Proto: http
+X-Forwarded-Server: 2f827d04fbfb
+</code></pre>
+
+<p>Test Frontend with PathPrefix: /test</p>
+
+<pre><code class="bash">$ curl http://127.0.0.1:80/test
+Hostname: 14bd4dc0ab00
+IP: 127.0.0.1
+IP: 10.0.0.12
+IP: 10.0.0.13
+IP: 172.18.0.4
+GET /test HTTP/1.1
+Host: 127.0.0.1
+User-Agent: curl/7.47.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 10.255.0.2
+X-Forwarded-Host: 127.0.0.1
+X-Forwarded-Proto: http
+X-Forwarded-Server: 2f827d04fbfb
+</code></pre>
+
+<p>Test with failure expected:</p>
+
+<pre><code class="bash">$ curl http://127.0.0.1:80
+404 page not found
+
+$ curl -H "Host:foo.localhost" http://127.0.0.1:80
+404 page not found
+</code></pre>
+
+<p>Change the frontend rule to <code>foo.localhost</code> and test again:</p>
+
+<pre><code class="bash">$ curl -XPUT http://127.0.0.1:8500/v1/kv/traefik/frontends/frontend1/routes/test_1/rule -d 'Host:foo.localhost'
+</code></pre>
+
+<p>Testing with <code>foo.localhost</code> :</p>
+
+<pre><code class="bash">$ curl -H "Host:foo.localhost" http://127.0.0.1:80
+Hostname: 88c29de3aeb0
+IP: 127.0.0.1
+IP: 10.0.0.6
+IP: 10.0.0.7
+IP: 172.18.0.3
+GET / HTTP/1.1
+Host: test.localhost
+User-Agent: curl/7.47.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 10.255.0.2
+X-Forwarded-Host: foo.localhost
+X-Forwarded-Proto: http
+X-Forwarded-Server: 2f827d04fbfb
+</code></pre>
+
+<p>Test Flask Web Apps, with RoundRobin + Weight:</p>
+
+<pre><code class="bash">$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: c94e41420ec7 , UUID: 8d536277-1041-4140-b28a-91630d69ab15
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: 786a3b15a32e , UUID: 50bb435f-dac3-4cb0-8ecf-250f13a4d7a5
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: c94e41420ec7 , UUID: 680ca88c-8048-4044-a31b-1e922545dc8c
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: c94e41420ec7 , UUID: 5506792c-04e5-4517-b58e-fad57b5d1da5
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: 786a3b15a32e , UUID: 930056e5-4667-4c2c-976b-246cf891a351
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: c94e41420ec7 , UUID: 7c757b50-0e3a-47e2-8636-ae0583802afb
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: c94e41420ec7 , UUID: 918bf337-1476-480c-aacb-72fc89392c45
+
+$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: 786a3b15a32e , UUID: 5c2c6a0e-f2ea-4d5f-a6ce-a7df2ef4886b
+</code></pre>
+
+<h2>Data Persistent Test:</h2>
+
+<p>List the Stacks:</p>
+
+<pre><code class="bash">$ docker stack ls
+NAME                SERVICES
+apps                6
+kvstore             1
+proxy               1
+</code></pre>
+
+<p>Kill the Consul Container to ensure data is persistent:</p>
+
+<pre><code class="bash">$ docker kill $(docker ps -f name=consul -q)
+</code></pre>
+
+<p>Verify that the replica has been fulfilled to its desired state:</p>
+
+<pre><code class="bash">$ docker stack ps kvstore
+ID                  NAME                   IMAGE                    NODE                DESIRED STATE       CURRENT STATE                ERROR                         PORTS
+j80kxxei6lyx        kvstore_consul.1       progrium/consul:latest   ip-10-1-4-51        Running             Running about a minute ago
+lsvww0z8g24c         \_ kvstore_consul.1   progrium/consul:latest   ip-10-1-4-51        Shutdown            Failed about a minute ago    "task: non-zero exit (137)"
+amkmsfodslwk         \_ kvstore_consul.1   progrium/consul:latest   ip-10-1-4-51        Shutdown            Shutdown 33 minutes ago
+</code></pre>
+
+<p>Read the Value of the Backend3 URL Key:</p>
+
+<pre><code class="bash">$ curl -XGET http://127.0.0.1:8500/v1/kv/traefik/backends/backend3/servers/server1/url?raw
+http://whoami5:5000
+</code></pre>
+
+<p>Test The Service:</p>
+
+<pre><code class="bash">$ curl -H "Host:flask.localhost" http://127.0.0.1:80
+Container Hostname: 786a3b15a32e , UUID: 4cf985e0-3f47-4320-ac38-42745b00ba1e
+</code></pre>
+
+<h2>Inspect Services:</h2>
+
+<p>Consul:</p>
+
+<pre><code class="bash">$ docker service inspect kvstore_consul
+[
+    {
+        "ID": "ppe2c1ld5eyvby6x62fr649z8",
+        "Version": {
+            "Index": 2097
+        },
+        "CreatedAt": "2017-10-03T12:40:27.342669337Z",
+        "UpdatedAt": "2017-10-03T12:55:22.93080059Z",
+        "Spec": {
+            "Name": "kvstore_consul",
+            "Labels": {
+                "com.docker.stack.image": "progrium/consul",
+                "com.docker.stack.namespace": "kvstore"
+            },
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Image": "progrium/consul:latest@sha256:8cc8023462905929df9a79ff67ee435a36848ce7a10f18d6d0faba9306b97274",
+                    "Labels": {
+                        "com.docker.stack.namespace": "kvstore"
+                    },
+                    "Args": [
+                        "-server",
+                        "-bootstrap",
+                        "-log-level",
+                        "debug",
+                        "-ui-dir",
+                        "/ui"
+                    ],
+                    "Privileges": {
+                        "CredentialSpec": null,
+                        "SELinuxContext": null
+                    },
+                    "Mounts": [
+                        {
+                            "Type": "bind",
+                            "Source": "/mnt/consul",
+                            "Target": "/data"
+                        }
+                    ],
+                    "StopGracePeriod": 10000000000,
+                    "DNSConfig": {}
+                },
+                "Resources": {},
+                "RestartPolicy": {
+                    "Condition": "any",
+                    "Delay": 5000000000,
+                    "MaxAttempts": 0
+                },
+                "Placement": {
+                    "Constraints": [
+                        "node.role == manager"
+                    ],
+                    "Platforms": [
+                        {
+                            "Architecture": "amd64",
+                            "OS": "linux"
+                        }
+                    ]
+                },
+                "Networks": [
+                    {
+                        "Target": "5q3puzw9pfxa5gokx2mx1kn9j",
+                        "Aliases": [
+                            "consul"
+                        ]
+                    }
+                ],
+                "ForceUpdate": 0,
+                "Runtime": "container"
+            },
+            "Mode": {
+                "Replicated": {
+                    "Replicas": 1
+                }
+            },
+            "UpdateConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "RollbackConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "EndpointSpec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8400,
+                        "PublishedPort": 8400,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8500,
+                        "PublishedPort": 8500,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "udp",
+                        "TargetPort": 53,
+                        "PublishedPort": 8600,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            }
+        },
+        "PreviousSpec": {
+            "Name": "kvstore_consul",
+            "Labels": {
+                "com.docker.stack.image": "progrium/consul",
+                "com.docker.stack.namespace": "kvstore"
+            },
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Image": "progrium/consul:latest@sha256:8cc8023462905929df9a79ff67ee435a36848ce7a10f18d6d0faba9306b97274",
+                    "Labels": {
+                        "com.docker.stack.namespace": "kvstore"
+                    },
+                    "Args": [
+                        "-server",
+                        "-bootstrap",
+                        "-log-level",
+                        "debug",
+                        "-ui-dir",
+                        "/ui"
+                    ],
+                    "Privileges": {
+                        "CredentialSpec": null,
+                        "SELinuxContext": null
+                    },
+                    "Mounts": [
+                        {
+                            "Type": "bind",
+                            "Source": "/mnt/consul",
+                            "Target": "/data"
+                        }
+                    ]
+                },
+                "Resources": {},
+                "Placement": {
+                    "Platforms": [
+                        {
+                            "Architecture": "amd64",
+                            "OS": "linux"
+                        }
+                    ]
+                },
+                "Networks": [
+                    {
+                        "Target": "5q3puzw9pfxa5gokx2mx1kn9j",
+                        "Aliases": [
+                            "consul"
+                        ]
+                    }
+                ],
+                "ForceUpdate": 0,
+                "Runtime": "container"
+            },
+            "Mode": {
+                "Replicated": {
+                    "Replicas": 1
+                }
+            },
+            "EndpointSpec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8400,
+                        "PublishedPort": 8400,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8500,
+                        "PublishedPort": 8500,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "udp",
+                        "TargetPort": 53,
+                        "PublishedPort": 8600,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            }
+        },
+        "Endpoint": {
+            "Spec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8400,
+                        "PublishedPort": 8400,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8500,
+                        "PublishedPort": 8500,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "udp",
+                        "TargetPort": 53,
+                        "PublishedPort": 8600,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            },
+            "Ports": [
+                {
+                    "Protocol": "tcp",
+                    "TargetPort": 8400,
+                    "PublishedPort": 8400,
+                    "PublishMode": "ingress"
+                },
+                {
+                    "Protocol": "tcp",
+                    "TargetPort": 8500,
+                    "PublishedPort": 8500,
+                    "PublishMode": "ingress"
+                },
+                {
+                    "Protocol": "udp",
+                    "TargetPort": 53,
+                    "PublishedPort": 8600,
+                    "PublishMode": "ingress"
+                }
+            ],
+            "VirtualIPs": [
+                {
+                    "NetworkID": "zz458844j2msbqa6a1g2es8re",
+                    "Addr": "10.255.0.5/16"
+                },
+                {
+                    "NetworkID": "5q3puzw9pfxa5gokx2mx1kn9j",
+                    "Addr": "10.0.0.2/24"
+                }
+            ]
+        },
+        "UpdateStatus": {
+            "State": "completed",
+            "StartedAt": "2017-10-03T12:55:09.724524449Z",
+            "CompletedAt": "2017-10-03T12:55:22.930760766Z",
+            "Message": "update completed"
+        }
+    }
+]
+</code></pre>
+
+<p>Traefik:</p>
+
+<pre><code class="bash">$ docker service inspect proxy_traefik
+[
+    {
+        "ID": "oqb0lyiprpwby9xkb4n1mn5kl",
+        "Version": {
+            "Index": 2037
+        },
+        "CreatedAt": "2017-10-03T12:40:37.696749025Z",
+        "UpdatedAt": "2017-10-03T12:40:37.698038856Z",
+        "Spec": {
+            "Name": "proxy_traefik",
+            "Labels": {
+                "com.docker.stack.image": "traefik",
+                "com.docker.stack.namespace": "proxy"
+            },
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Image": "traefik:latest@sha256:90697fb79a104520f350a3a1db6402584f473301ab6d1a71d264758b65fa232e",
+                    "Labels": {
+                        "com.docker.stack.namespace": "proxy"
+                    },
+                    "Args": [
+                        "--consul",
+                        "--consul.endpoint=consul:8500"
+                    ],
+                    "Privileges": {
+                        "CredentialSpec": null,
+                        "SELinuxContext": null
+                    },
+                    "StopGracePeriod": 10000000000,
+                    "DNSConfig": {}
+                },
+                "Resources": {},
+                "RestartPolicy": {
+                    "Condition": "any",
+                    "Delay": 5000000000,
+                    "MaxAttempts": 0
+                },
+                "Placement": {
+                    "Platforms": [
+                        {
+                            "Architecture": "amd64",
+                            "OS": "linux"
+                        },
+                        {
+                            "OS": "linux"
+                        },
+                        {
+                            "Architecture": "arm64",
+                            "OS": "linux"
+                        }
+                    ]
+                },
+                "Networks": [
+                    {
+                        "Target": "5q3puzw9pfxa5gokx2mx1kn9j",
+                        "Aliases": [
+                            "traefik"
+                        ]
+                    }
+                ],
+                "ForceUpdate": 0,
+                "Runtime": "container"
+            },
+            "Mode": {
+                "Replicated": {
+                    "Replicas": 1
+                }
+            },
+            "UpdateConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "RollbackConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "EndpointSpec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 80,
+                        "PublishedPort": 80,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8080,
+                        "PublishedPort": 8080,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            }
+        },
+        "Endpoint": {
+            "Spec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 80,
+                        "PublishedPort": 80,
+                        "PublishMode": "ingress"
+                    },
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 8080,
+                        "PublishedPort": 8080,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            },
+            "Ports": [
+                {
+                    "Protocol": "tcp",
+                    "TargetPort": 80,
+                    "PublishedPort": 80,
+                    "PublishMode": "ingress"
+                },
+                {
+                    "Protocol": "tcp",
+                    "TargetPort": 8080,
+                    "PublishedPort": 8080,
+                    "PublishMode": "ingress"
+                }
+            ],
+            "VirtualIPs": [
+                {
+                    "NetworkID": "zz458844j2msbqa6a1g2es8re",
+                    "Addr": "10.255.0.7/16"
+                },
+                {
+                    "NetworkID": "5q3puzw9pfxa5gokx2mx1kn9j",
+                    "Addr": "10.0.0.4/24"
+                }
+            ]
+        }
+    }
+]
+</code></pre>
+
+<p>Flask App:</p>
+
+<pre><code class="bash">$ docker service inspect apps_whoami5
+[
+    {
+        "ID": "hy0443u03j8pygaegdorsrjot",
+        "Version": {
+            "Index": 2052
+        },
+        "CreatedAt": "2017-10-03T12:41:06.582341297Z",
+        "UpdatedAt": "2017-10-03T12:41:06.583398389Z",
+        "Spec": {
+            "Name": "apps_whoami5",
+            "Labels": {
+                "com.docker.stack.image": "rbekker87/flask-containername",
+                "com.docker.stack.namespace": "apps"
+            },
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Image": "rbekker87/flask-containername:latest@sha256:fa4dc5905a10130d4309ffbc877155b9f61956980dc51ee2eaa16ac4255bcc2b",
+                    "Labels": {
+                        "com.docker.stack.namespace": "apps"
+                    },
+                    "Privileges": {
+                        "CredentialSpec": null,
+                        "SELinuxContext": null
+                    },
+                    "StopGracePeriod": 10000000000,
+                    "DNSConfig": {}
+                },
+                "Resources": {},
+                "RestartPolicy": {
+                    "Condition": "any",
+                    "Delay": 5000000000,
+                    "MaxAttempts": 0
+                },
+                "Placement": {
+                    "Platforms": [
+                        {
+                            "Architecture": "amd64",
+                            "OS": "linux"
+                        }
+                    ]
+                },
+                "Networks": [
+                    {
+                        "Target": "5q3puzw9pfxa5gokx2mx1kn9j",
+                        "Aliases": [
+                            "whoami5"
+                        ]
+                    }
+                ],
+                "ForceUpdate": 0,
+                "Runtime": "container"
+            },
+            "Mode": {
+                "Replicated": {
+                    "Replicas": 1
+                }
+            },
+            "UpdateConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "RollbackConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "EndpointSpec": {
+                "Mode": "vip"
+            }
+        },
+        "Endpoint": {
+            "Spec": {
+                "Mode": "vip"
+            },
+            "VirtualIPs": [
+                {
+                    "NetworkID": "5q3puzw9pfxa5gokx2mx1kn9j",
+                    "Addr": "10.0.0.8/24"
+                }
+            ]
+        }
+    }
+}
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Creating a Nodejs Hostname App With Docker Stacks on Swarm]]></title>
@@ -570,71 +1426,6 @@ $ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/java_web:latest
 
 <center>
         <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run Kibana on Docker Swarm With Traefik]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/09/run-kibana-on-docker-swarm-with-traefik/"/>
-    <updated>2017-09-09T18:33:12-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/09/run-kibana-on-docker-swarm-with-traefik</id>
-    <content type="html"><![CDATA[<p>We will create a Kibana Service on Docker Swarm, that will sit behind a Traefik Reverse Proxy.</p>
-
-<h2>Create the Overlay Network:</h2>
-
-<pre><code class="bash">$ docker network create --driver overlay appnet
-</code></pre>
-
-<h2>Create the Traefik Service:</h2>
-
-<pre><code class="bash">docker service create \
---name traefik \
---constraint 'node.role==manager' \
---publish 80:80 \
---publish 443:443 \
---publish 8080:8080 \
---mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
---network appnet \
-traefik:camembert \
---docker --docker.swarmmode  \
---docker.domain=apps.domain.com \
---docker.watch \
---logLevel=DEBUG \
---web
-</code></pre>
-
-<h2>Set DNS:</h2>
-
-<p>Set a wildcard <code>*.apps.domain.com</code> to resolve to <code>apps.domain.com</code>, where <code>apps.domain.com</code> resolves to your swarm addresses</p>
-
-<h2>Create Kibana:</h2>
-
-<p>Create a Kibana Service and set the <code>ELASTICSEARCH_URL</code> to your External Elasticsearch Endpoint, take note that it uses port <code>9200</code> by default.</p>
-
-<pre><code class="bash">$ docker service create \
---name kibana \
---label 'traefik.port=5601' \
---network appnet \
---env KIBANA_ELASTICSEARCH_URL=elasticsearch.domain.com \
-bitnami/kibana
-</code></pre>
-
-<h2>Access Kibana:</h2>
-
-<p>Your Kibana endpoint will be available at: <code>http://kibana.apps.domain.com</code></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://github.com/bitnami/bitnami-docker-kibana">https://github.com/bitnami/bitnami-docker-kibana</a></li>
-<li><a href="https://docs.traefik.io/">https://docs.traefik.io/</a></li>
-</ul>
-
-
-<center>
-    <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
 </center>
 
 ]]></content>

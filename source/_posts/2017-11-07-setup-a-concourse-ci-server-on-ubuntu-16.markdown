@@ -234,6 +234,8 @@ jobs:
           echo "============="
 ```
 
+Applying the configuration to our pipeline:
+
 ```bash
 $ fly -t ci set-pipeline -p yeeehaa -c hello-world.yml
 jobs:
@@ -310,3 +312,5 @@ $ fly -t ci containers
 handle                                worker            pipeline     job         build #  build id  type   name           attempt
 36982955-54fd-4c1b-57b8-216486c58db8  ip-172-31-12-134  yeeehaa      my-job      2        729       task   say-hello      n/a
 ```
+
+

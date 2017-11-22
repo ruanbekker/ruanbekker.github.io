@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Mariadb | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/mariadb/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2017-11-22T18:25:38-05:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 3 Node Galera MariaDB Cluster on Ubuntu 16]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/11/22/setup-a-3-node-galera-mariadb-cluster-on-ubuntu-16/"/>
+    <updated>2017-11-22T18:17:14-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/11/22/setup-a-3-node-galera-mariadb-cluster-on-ubuntu-16</id>
+    <content type="html"><![CDATA[<p>Today we will setup a 3-Node Galera MariaDB Cluster which is a Multi Master MySQL/MariaDB Cluster on Ubuntu 16.04</p>
+
+<h2>Our Server Details:</h2>
+
+<pre><code class="bash">172.31.11.174     mysql-1
+172.31.13.206     mysql-2
+172.31.6.93       mysql-3
+</code></pre>
+
+<h2>Update Repo Index and Upgrade:</h2>
+
+<p>Update the repository indexes and install the needed packages:</p>
+
+<pre><code class="bash">$ sudo apt update &amp;&amp; sudo apt upgrade -y
+</code></pre>
+
+<p>Install the needed repository and packages:</p>
+
+<pre><code class="bash">$ apt install software-properties-common -y
+$ apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 0xF1656F24C74CD1D8
+$ add-apt-repository 'deb [arch=amd64,i386,ppc64el] http://mirror.lstn.net/mariadb/repo/10.1/ubuntu xenial main'
+$ apt update
+$ apt install mariadb-server rsync -y
+</code></pre>
+
+<h2>Configuration:</h2>
+
+<pre><code class="bash">cat &gt; /etc/mysql/conf.d/galera.cnf &lt;&lt; EOF
+[mysqld]
+binlog_format=ROW
+default-storage-engine=innodb
+innodb_autoinc_lock_mode=2
+bind-address=0.0.0.0
+
+# Galera Provider Configuration
+wsrep_on=ON
+wsrep_provider=/usr/lib/galera/libgalera_smm.so
+
+# Galera Cluster Configuration
+wsrep_cluster_name="my-galera-cluster"
+wsrep_cluster_address="gcomm://172.31.11.174,172.31.13.206,172.31.6.93"
+# Galera Synchronization Configuration
+wsrep_sst_method=rsync
+
+# Galera Node Configuration
+wsrep_node_address="172.31.11.174"
+wsrep_node_name="mysql-1"
+EOF
+</code></pre>
+
+<p>Comment out bind-address, so that MariaDB process is reachable from other nodes, by default it wont be in the config, but just to make sure, if it is uncommented, comment the config:</p>
+
+<pre><code class="bash /etc/mysql/my.cnf"># bind-address = 127.0.0.1
+</code></pre>
+
+<p>Stop the MariaDB Process:</p>
+
+<pre><code class="bash">$ systemctl stop mariadb
+</code></pre>
+
+<p>Note: Repeat the above steps on all 3 nodes.</p>
+
+<h2>Initialize the Cluster:</h2>
+
+<p>On the First Node, Initialize the Galera Cluster:</p>
+
+<pre><code class="bash">$ /usr/bin/galera_new_cluster
+$ systemctl enable mariadb
+</code></pre>
+
+<p>Check how many nodes are active in the Cluster:</p>
+
+<pre><code class="mysql">$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size';"
+Enter password:
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 1     |
++--------------------+-------+
+</code></pre>
+
+<h2>Node-2: Start and Enable MariaDB</h2>
+
+<pre><code class="bash">$ systemctl start mariadb
+$ systemctl enable mariadb
+</code></pre>
+
+<p>Verify that the Node has checked in with the Cluster:</p>
+
+<pre><code class="mysql">$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size';"
+Enter password:
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 2     |
++--------------------+-------+
+</code></pre>
+
+<h2>Node-3: Start and Enable MariaDB</h2>
+
+<pre><code class="bash">$ systemctl start mariadb
+$ systemctl enable mariadb
+</code></pre>
+
+<p>Verify that the Node has checked in with the Cluster:</p>
+
+<pre><code class="mysql">$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size';"
+Enter password:
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 3     |
++--------------------+-------+
+</code></pre>
+
+<h2>Create a Database, Table and Record:</h2>
+
+<p>Write some data to the table, then reboot the node, in this example on node-1, then logon to node-2 check the number of nodes that&rsquo;s active in the cluster, which should be 2, then at the same time, look if the data is replicated:</p>
+
+<h2>Node-1: Writing the Data to Our Galera Cluster</h2>
+
+<pre><code class="mysql">MariaDB [(none)]&gt; create database test;
+MariaDB [(none)]&gt; use test;
+MariaDB [test]&gt;   create database test;
+MariaDB [test]&gt;   create table foo (name VARCHAR(20));
+MariaDB [test]&gt;   insert into foo values('ruan');
+MariaDB [test]&gt;   select * from foo;
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+
+<p>Now that our data is in our database, reboot the node, logon to node-2 and check if the data is replicated:</p>
+
+<pre><code class="mysql">$ mysql -u root -p
+MariaDB [(none)]&gt; use test;
+MariaDB [test]&gt;   select * from foo;
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+
+<p>While the one node is rebooting, check how many nodes are checked into our cluster:</p>
+
+<pre><code class="mysql">$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size';"
+Enter password:
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 2     |
++--------------------+-------+
+</code></pre>
+
+<p>Our data is replicated, and after waiting for a couple of seconds, we retry our command to see if the rebooted node checked into the cluster:</p>
+
+<pre><code class="mysql">$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size';"
+Enter password:
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 3     |
++--------------------+-------+
+</code></pre>
+
+<p>We can confirm that the node that was rebooted, has checked in with the cluster again.</p>
+
+<h2>Firewall Rules opened while testing:</h2>
+
+<p>TCP: <code>3306, 4567, 4568, 4444</code>
+UDP: <code>4567</code></p>
+]]></content>
+  </entry>
+  
+</feed>

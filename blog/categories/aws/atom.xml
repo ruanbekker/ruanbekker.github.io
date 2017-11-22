@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Aws | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/aws/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2017-11-22T17:45:40-05:00</updated>
+  <updated>2017-11-22T18:11:39-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,205 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Delete Old Items With Amazons DynamoDB TTL Feature]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature/"/>
+    <updated>2017-11-22T17:47:31-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature</id>
+    <content type="html"><![CDATA[<p>As you may know a DynamoDB Table&rsquo;s Partition Splits on 2 factors, Read/Write Capacity Units and when Storage goes over 10GB.</p>
+
+<h2>Automatically Deleting Old Data in DynamoDB:</h2>
+
+<p>With the TTL Feature in DynamoDB, we can enable TTL on a Attribute on our Table, the attributes value needs to have an epoc time value, more specifically, when the current time is the same as the value of on of the items attribute value, that item will be expired, which will be deleted.</p>
+
+<h2>What we will be doing:</h2>
+
+<ul>
+<li>Use Boto3 in Python</li>
+<li>Create DynamoDB Table: &lsquo;session-table&rsquo;</li>
+<li>Set TTL Attribute on &lsquo;ExpirationTime&rsquo;, so whenever the epoch time is equals to the AttributeValue it will delete the item</li>
+<li>Do one PUT Item with 48 Hours expiry Date from the Write</li>
+<li>Do 240 PUT Items with 24 Hours expiry Date from the Write</li>
+<li>Verify after 24 hours if only one item is in our table.</li>
+</ul>
+
+
+<h2>Pre-Requisites:</h2>
+
+<p>Install the AWS CLI, Boto3 and configure your credentials, so that boto3 can read from your credential provider:</p>
+
+<pre><code class="bash">$ pip install awscli
+$ pip install boto3
+$ aws configure
+AWS Access Key ID [****************XYZ]: 
+AWS Secret Access Key [****************xyz]: 
+Default region name [eu-west-1]: 
+Default output format [json]: 
+</code></pre>
+
+<h2>Create the Table:</h2>
+
+<pre><code class="python">$ python
+
+import boto3
+session = boto3.Session(region_name='eu-west-1', profile_name='default')
+dynamodb = session.resource('dynamodb')
+table = dynamodb.create_table(
+    TableName='session-table',
+    KeySchema=[
+        {
+            'AttributeName': 'sessionid', 
+            'KeyType': 'HASH'
+        }
+    ], 
+    AttributeDefinitions=[
+        {
+            'AttributeName': 'sessionid', 
+            'AttributeType': 'S'
+        } 
+    ], 
+    ProvisionedThroughput={
+        'ReadCapacityUnits': 2, 
+        'WriteCapacityUnits': 2
+    }
+)
+</code></pre>
+
+<p>From the Console, enable TTL and set the TTL Attribute on <code>ExpirationTime</code></p>
+
+<h2>Write Data to DynamoDB</h2>
+
+<p>We have 2 functions that will write the current epoch time to the <code>CreationTime</code> attribute and <code>ExpirationTime</code> will have the current time plus the 24 hours in seconds, which will be used for the 240 items that will be written using the for loop and the other function with the 48 hours of seconds, which will be a single write item.</p>
+
+<p>Then we will just write random data to the session data attribute:</p>
+
+<pre><code class="python">import boto3
+import time
+import random
+from uuid import uuid4
+
+names = ['james', 'john', 'steve', 'peter', 'frank', 'steven', 'jonathan', 'stephen', 'will', 'adam', 'william']
+retailer = ['shoprite', 'edgars', 'pnp', 'bestbuy', 'ok', 'grocer-a', 'amazon', 'seveneleven', 'shop-a']
+
+session = boto3.Session(region_name='eu-west-1', profile_name='dev')
+ddb = session.resource('dynamodb')
+client = ddb.Table('session-table')
+
+def current_time():
+    int(time.time())
+
+def current_time():
+    return int(time.time())
+
+def expiration_time():
+    return int(time.time()) + 86400
+
+def 48h_expiration_time():
+    return int(time.time()) + 172800
+
+# expiry on 48 hours
+client.put_item(
+    Item={
+        'sessionid': str(uuid4()),
+        'CreationTime': current_time(),
+        'ExpirationTime': 48h_expiration_time(),
+        'SessionData': {
+            'Name': random.choice(names),
+            'Retailer': random.choice(retailer),
+            'TimeOfTransaction': current_time(),
+            'Amount': random.randint(100,9000)
+        }
+    }
+)
+
+# expiry on 24 hours
+for x in xrange(240):
+    time.sleep(1)
+    client.put_item(
+        Item={
+            'sessionid': str(uuid4()),
+            'CreationTime': current_time(),
+            'ExpirationTime': expiration_time(),
+            'SessionData': {
+                'Name': random.choice(names),
+                'Retailer': random.choice(retailer),
+                'TimeOfTransaction': current_time(),
+                'Amount': random.randint(100,9000)
+            }
+        }
+    )
+</code></pre>
+
+<h2>Verify:</h2>
+
+<p>Verify after 24 hours if the item with the 48 hour expiration time is still in our table:</p>
+
+<pre><code class="python">client.get_item( Key={'sessionid': '69c2a472-f70e-4d72-b25f-e27573696b0c'} )['Item']
+
+{
+    u'ExpirationTime': Decimal('1510672221'),
+    u'CreationTime': Decimal('1510585821'),
+    u'sessionid': u'69c2a472-f70e-4d72-b25f-e27573696b0c',
+    u'SessionData': {
+        u'Amount': Decimal('3553'),
+        u'Retailer': u'amazon',
+        u'TimeOfTransaction': Decimal('1510585821'),
+        u'Name': u'steve'
+    }
+}
+</code></pre>
+
+<p>Which we can see is still there, when doing a GET item on one of our 24 hour expired items, we can see that its no longer there:</p>
+
+<pre><code class="python">client.get_item( Key={'sessionid': '70b9fc8c-19c4-49d3-bf63-046e992335af'} )['Item']
+
+Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+KeyError: 'Item'
+</code></pre>
+
+<p>Doing a SCAN operation, we should see one item:</p>
+
+<pre><code class="python">import json
+r = client.scan(TableName='session-table', Limit=10, Select='COUNT', ReturnConsumedCapacity='TOTAL')
+
+print(json.dumps(r, indent=4))
+{
+    "Count": 1,
+    "ScannedCount": 1,
+    "ConsumedCapacity": {
+        "CapacityUnits": 0.5,
+        "TableName": "session-table"
+    },
+    "ResponseMetadata": {
+        "RetryAttempts": 0,
+        "HTTPStatusCode": 200,
+        "RequestId": "",
+        "HTTPHeaders": {
+            "x-amzn-requestid": "",
+            "content-length": "107",
+            "server": "Server",
+            "connection": "keep-alive",
+            "x-amz-crc32": "2228370918",
+            "date": "Tue, 14 Nov 2017 12:02:31 GMT",
+            "content-type": "application/x-amz-json-1.0"
+        }
+    }
+}
+</code></pre>
+
+<p>So we can confirm that the TTL feature expires the data based on the epoch value we provide our item.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/">https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/</a></li>
+<li><a href="http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html">http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Installing Elastalert for Elasticsearch on Amazon Linux]]></title>
@@ -328,201 +527,6 @@ Jul 18 11:29:06 ip-10-1-4-250 postfix/qmgr[4392]: 9FDCB469AA: removed
 </code></pre>
 
 <p>If your output looks more or less like the snippet from above, your mail should be working fine.</p>
-
-<center>
-<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
-</center>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Nginx Reverse Proxy for Elasticsearch and Kibana 5 on AWS]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/16/nginx-reverse-proxy-for-elasticsearch-and-kibana-5-on-aws/"/>
-    <updated>2017-09-16T17:24:32-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/16/nginx-reverse-proxy-for-elasticsearch-and-kibana-5-on-aws</id>
-    <content type="html"><![CDATA[<p>As up untill today, there&rsquo;s currently no VPC Support for Amazon&rsquo;s Elasticsearch Service.</p>
-
-<p>So for scenarios where you would like to allow private network traffic to Elasticsearch is impossible straight out of the box as Amazon&rsquo;s Elasticsearch Services, only sees Public Internet Traffic.</p>
-
-<p>We will setup 2 configs, one for Kibana and one for Elasticsearch, each one having its own FQDN:</p>
-
-<ul>
-<li>Kibana: <code>http://kibana.domain.com</code></li>
-<li>Elasticsearch: <code>http://elasticsearch.domain.com</code></li>
-</ul>
-
-
-<h2>Workaround:</h2>
-
-<p>There&rsquo;s a couple of workarounds, which includes:</p>
-
-<ul>
-<li>Nginx Reverse Proxy</li>
-<li>NAT Gateway</li>
-<li>Allow IAM Users/Roles</li>
-</ul>
-
-
-<p>Today we will tackle the Nginx Reverse Proxy Route.</p>
-
-<p>The benefit of this, would be to associate an EIP to the Nginx EC2 Instnace, then whitelist your EIP with Elasticsearch, so the only traffic that will be accepted will be the traffic that is coming from the Nginx Instance. We will also apply an additional layer of security, in this case we will use HTTP Basic Authentication, then also authorize network sources on a Security Group level.</p>
-
-<h2>Installing Nginx:</h2>
-
-<p>In this case I am using Ubuntu 16.04, so we will need to install <code>nginx</code> and <code>apache2-utils</code> for creating the Basic HTTP Auth accounts.</p>
-
-<pre><code class="bash">$ apt update &amp;&amp; apt upgrade -y
-$ apt install nginx apache2-utils -y
-</code></pre>
-
-<h2>Configure Nginx:</h2>
-
-<p>Our main config: <code>/etc/nginx/nginx.conf</code>:</p>
-
-<pre><code class="bash /etc/nginx/nginx.conf">user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-error_log /var/log/nginx/error.log;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-
-    # Basic Settings
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    server_names_hash_bucket_size 128;
-
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    # Logging Settings
-        log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-                      '$status $body_bytes_sent "$http_referer" '
-                      '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log /var/log/nginx/access.log main;
-
-    # Gzip Settings
-    gzip on;
-    gzip_disable "msie6";
-
-    # Elasticsearch and Kibana Configs
-    include /etc/nginx/conf.d/elasticsearch.conf;
-    include /etc/nginx/conf.d/kibana.conf;
-}
-</code></pre>
-
-<p>Our <code>/etc/nginx/conf.d/elasticsearch.conf</code> configuration:</p>
-
-<pre><code class="bash /etc/nginx/conf.d/elasticsearch.conf">server {
-
-  listen 80;
-  server_name elasticsearch.domain.com;
-
-  # error logging
-  error_log /var/log/nginx/elasticsearch_error.log;
-
-  # authentication: elasticsearch
-  auth_basic "Elasticsearch Auth";
-  auth_basic_user_file /etc/nginx/.secrets_elasticsearch;
-
-  location / {
-
-    proxy_http_version 1.1;
-    proxy_set_header Host https://search-elasticsearch-name.eu-west-1.es.amazonaws.com;
-    proxy_set_header X-Real-IP &lt;ELASTIC-IP&gt;;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header Authorization "";
-
-    proxy_pass https://search-elasticsearch-name.eu-west-1.es.amazonaws.com/;
-    proxy_redirect https://search-elasticsearch-name.eu-west-1.es.amazonaws.com/ http://&lt;ELASTIC-IP&gt;/;
-
-  }
-
-  # ELB Health Checks
-  location /status {
-    root /usr/share/nginx/html/;
-  }
-
-}
-</code></pre>
-
-<p>Our <code>/etc/nginx/conf.d/kibana.conf</code> configuration:</p>
-
-<pre><code class="bash /etc/nginx/conf.d/kibana.conf">server {
-
-  listen 80;
-  server_name kibana.domain.com;
-
-  # error logging
-  error_log /var/log/nginx/kibana_error.log;
-
-  # authentication: kibana
-  auth_basic "Kibana Auth";
-  auth_basic_user_file /etc/nginx/.secrets_kibana;
-
-  location / {
-
-    proxy_http_version 1.1;
-    proxy_set_header Host https://search.elasticsearch-name.eu-west-1.es.amazonaws.com;
-    proxy_set_header X-Real-IP &lt;ELASTIC-IP&gt;;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header Authorization "";
-
-    proxy_pass https://search.elasticsearch-name.eu-west-1.es.amazonaws.com/_plugin/kibana/;
-    proxy_redirect https://search.elasticsearch-name.eu-west-1.es.amazonaws.com/_plugin/kibana/ http://&lt;ELASTIC-IP&gt;/kibana/;
-
-  }
-
-      location ~ (/app/kibana|/app/timelion|/bundles|/es_admin|/plugins|/api|/ui|/elasticsearch) {
-         proxy_pass              https://search.elasticsearch-name.eu-west-1.es.amazonaws.com;
-         proxy_set_header        Host $host;
-         proxy_set_header        X-Real-IP $remote_addr;
-         proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-         proxy_set_header        X-Forwarded-Proto $scheme;
-         proxy_set_header        X-Forwarded-Host $http_host;
-         proxy_set_header    Authorization  "";
-    }
-}
-</code></pre>
-
-<p>Once you have replaced the elasticsearch endpoint and your EPI values, we can go ahead and create the auth accounts.</p>
-
-<h2>Create User Accounts for HTTP Basic Auth</h2>
-
-<p>Create the 2 accounts for authentication on kibana and elasticsearch:</p>
-
-<pre><code class="bash">$ htpasswd -c /etc/nginx/.secrets_elasticsearch elasticsearch-admin
-$ htpasswd -c /etc/nginx/.secrets_kibana kibana-admin
-</code></pre>
-
-<h2>Restart Nginx:</h2>
-
-<p>Restart and enable Nginx on boot:</p>
-
-<pre><code class="bash">$ systemctl enable nginx
-$ systemctl restart nginx
-</code></pre>
-
-<p>Once your Nginx Service is running, you should be able to access Kibana and Elasticsearch using the credentials that you created.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.nginx.com/blog/tcp-load-balancing-udp-load-balancing-nginx-tips-tricks/">https://www.nginx.com/blog/tcp-load-balancing-udp-load-balancing-nginx-tips-tricks/</a></li>
-<li><a href="https://www.elastic.co/blog/playing-http-tricks-nginx">https://www.elastic.co/blog/playing-http-tricks-nginx</a></li>
-<li><a href="https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/">https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/</a></li>
-</ul>
-
 
 <center>
 <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 

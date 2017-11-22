@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Dynamodb | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/dynamodb/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2017-11-22T18:11:39-05:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Delete Old Items With Amazons DynamoDB TTL Feature]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature/"/>
+    <updated>2017-11-22T17:47:31-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature</id>
+    <content type="html"><![CDATA[<p>As you may know a DynamoDB Table&rsquo;s Partition Splits on 2 factors, Read/Write Capacity Units and when Storage goes over 10GB.</p>
+
+<h2>Automatically Deleting Old Data in DynamoDB:</h2>
+
+<p>With the TTL Feature in DynamoDB, we can enable TTL on a Attribute on our Table, the attributes value needs to have an epoc time value, more specifically, when the current time is the same as the value of on of the items attribute value, that item will be expired, which will be deleted.</p>
+
+<h2>What we will be doing:</h2>
+
+<ul>
+<li>Use Boto3 in Python</li>
+<li>Create DynamoDB Table: &lsquo;session-table&rsquo;</li>
+<li>Set TTL Attribute on &lsquo;ExpirationTime&rsquo;, so whenever the epoch time is equals to the AttributeValue it will delete the item</li>
+<li>Do one PUT Item with 48 Hours expiry Date from the Write</li>
+<li>Do 240 PUT Items with 24 Hours expiry Date from the Write</li>
+<li>Verify after 24 hours if only one item is in our table.</li>
+</ul>
+
+
+<h2>Pre-Requisites:</h2>
+
+<p>Install the AWS CLI, Boto3 and configure your credentials, so that boto3 can read from your credential provider:</p>
+
+<pre><code class="bash">$ pip install awscli
+$ pip install boto3
+$ aws configure
+AWS Access Key ID [****************XYZ]: 
+AWS Secret Access Key [****************xyz]: 
+Default region name [eu-west-1]: 
+Default output format [json]: 
+</code></pre>
+
+<h2>Create the Table:</h2>
+
+<pre><code class="python">$ python
+
+import boto3
+session = boto3.Session(region_name='eu-west-1', profile_name='default')
+dynamodb = session.resource('dynamodb')
+table = dynamodb.create_table(
+    TableName='session-table',
+    KeySchema=[
+        {
+            'AttributeName': 'sessionid', 
+            'KeyType': 'HASH'
+        }
+    ], 
+    AttributeDefinitions=[
+        {
+            'AttributeName': 'sessionid', 
+            'AttributeType': 'S'
+        } 
+    ], 
+    ProvisionedThroughput={
+        'ReadCapacityUnits': 2, 
+        'WriteCapacityUnits': 2
+    }
+)
+</code></pre>
+
+<p>From the Console, enable TTL and set the TTL Attribute on <code>ExpirationTime</code></p>
+
+<h2>Write Data to DynamoDB</h2>
+
+<p>We have 2 functions that will write the current epoch time to the <code>CreationTime</code> attribute and <code>ExpirationTime</code> will have the current time plus the 24 hours in seconds, which will be used for the 240 items that will be written using the for loop and the other function with the 48 hours of seconds, which will be a single write item.</p>
+
+<p>Then we will just write random data to the session data attribute:</p>
+
+<pre><code class="python">import boto3
+import time
+import random
+from uuid import uuid4
+
+names = ['james', 'john', 'steve', 'peter', 'frank', 'steven', 'jonathan', 'stephen', 'will', 'adam', 'william']
+retailer = ['shoprite', 'edgars', 'pnp', 'bestbuy', 'ok', 'grocer-a', 'amazon', 'seveneleven', 'shop-a']
+
+session = boto3.Session(region_name='eu-west-1', profile_name='dev')
+ddb = session.resource('dynamodb')
+client = ddb.Table('session-table')
+
+def current_time():
+    int(time.time())
+
+def current_time():
+    return int(time.time())
+
+def expiration_time():
+    return int(time.time()) + 86400
+
+def 48h_expiration_time():
+    return int(time.time()) + 172800
+
+# expiry on 48 hours
+client.put_item(
+    Item={
+        'sessionid': str(uuid4()),
+        'CreationTime': current_time(),
+        'ExpirationTime': 48h_expiration_time(),
+        'SessionData': {
+            'Name': random.choice(names),
+            'Retailer': random.choice(retailer),
+            'TimeOfTransaction': current_time(),
+            'Amount': random.randint(100,9000)
+        }
+    }
+)
+
+# expiry on 24 hours
+for x in xrange(240):
+    time.sleep(1)
+    client.put_item(
+        Item={
+            'sessionid': str(uuid4()),
+            'CreationTime': current_time(),
+            'ExpirationTime': expiration_time(),
+            'SessionData': {
+                'Name': random.choice(names),
+                'Retailer': random.choice(retailer),
+                'TimeOfTransaction': current_time(),
+                'Amount': random.randint(100,9000)
+            }
+        }
+    )
+</code></pre>
+
+<h2>Verify:</h2>
+
+<p>Verify after 24 hours if the item with the 48 hour expiration time is still in our table:</p>
+
+<pre><code class="python">client.get_item( Key={'sessionid': '69c2a472-f70e-4d72-b25f-e27573696b0c'} )['Item']
+
+{
+    u'ExpirationTime': Decimal('1510672221'),
+    u'CreationTime': Decimal('1510585821'),
+    u'sessionid': u'69c2a472-f70e-4d72-b25f-e27573696b0c',
+    u'SessionData': {
+        u'Amount': Decimal('3553'),
+        u'Retailer': u'amazon',
+        u'TimeOfTransaction': Decimal('1510585821'),
+        u'Name': u'steve'
+    }
+}
+</code></pre>
+
+<p>Which we can see is still there, when doing a GET item on one of our 24 hour expired items, we can see that its no longer there:</p>
+
+<pre><code class="python">client.get_item( Key={'sessionid': '70b9fc8c-19c4-49d3-bf63-046e992335af'} )['Item']
+
+Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+KeyError: 'Item'
+</code></pre>
+
+<p>Doing a SCAN operation, we should see one item:</p>
+
+<pre><code class="python">import json
+r = client.scan(TableName='session-table', Limit=10, Select='COUNT', ReturnConsumedCapacity='TOTAL')
+
+print(json.dumps(r, indent=4))
+{
+    "Count": 1,
+    "ScannedCount": 1,
+    "ConsumedCapacity": {
+        "CapacityUnits": 0.5,
+        "TableName": "session-table"
+    },
+    "ResponseMetadata": {
+        "RetryAttempts": 0,
+        "HTTPStatusCode": 200,
+        "RequestId": "",
+        "HTTPHeaders": {
+            "x-amzn-requestid": "",
+            "content-length": "107",
+            "server": "Server",
+            "connection": "keep-alive",
+            "x-amz-crc32": "2228370918",
+            "date": "Tue, 14 Nov 2017 12:02:31 GMT",
+            "content-type": "application/x-amz-json-1.0"
+        }
+    }
+}
+</code></pre>
+
+<p>So we can confirm that the TTL feature expires the data based on the epoch value we provide our item.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/">https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/</a></li>
+<li><a href="http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html">http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

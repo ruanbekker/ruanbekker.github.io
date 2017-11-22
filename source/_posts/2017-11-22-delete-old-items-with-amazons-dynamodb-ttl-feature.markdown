@@ -6,6 +6,8 @@ comments: true
 categories: ["aws", "dynamodb", "nosql", "python"] 
 ---
 
+![](http://obj-cache.cloud.ruanbekker.com/dynamodb.png)
+
 As you may know a DynamoDB Table's Partition Splits on 2 factors, Read/Write Capacity Units and when Storage goes over 10GB. 
 
 ## Automatically Deleting Old Data in DynamoDB:

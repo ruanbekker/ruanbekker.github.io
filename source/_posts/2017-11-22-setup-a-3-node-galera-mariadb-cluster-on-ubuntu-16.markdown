@@ -6,6 +6,8 @@ comments: true
 categories: ["mariadb", "mysql", "galera", "clustering", "ubuntu"]
 ---
 
+![](https://i.snag.gy/lpT6Du.jpg)
+
 Today we will setup a 3-Node Galera MariaDB Cluster which is a Multi Master MySQL/MariaDB Cluster on Ubuntu 16.04
 
 ## Our Server Details:

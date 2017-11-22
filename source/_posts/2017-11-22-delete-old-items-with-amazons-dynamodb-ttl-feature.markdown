@@ -193,6 +193,12 @@ print(json.dumps(r, indent=4))
 
 So we can confirm that the TTL feature expires the data based on the epoch value we provide our item.
 
+## Delete the Table:
+
+```python
+client.delete(TableName='session-table')
+```
+
 ## Resources:
 
 - https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/

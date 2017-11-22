@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Restore | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/restore/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2017-11-22T09:08:15-05:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Using Elasticdump to Backup Elasticsearch Indexes to JSON]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/11/22/using-elasticdump-to-backup-elasticsearch-indexes-to-json/"/>
+    <updated>2017-11-22T08:35:28-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/11/22/using-elasticdump-to-backup-elasticsearch-indexes-to-json</id>
+    <content type="html"><![CDATA[<p>We will use Elasticdump to dump data from Elasticsearch to json files on disk, then delete the index, then restore data back to elasticsearch</p>
+
+<h2>Install Elasticdump:</h2>
+
+<pre><code class="bash">$ docker run -it node:alpine sh
+$ npm install elasticdump -g
+</code></pre>
+
+<h2>Create a Index:</h2>
+
+<pre><code class="bash">$ curl -XPUT http://10.79.2.193:9200/test-index
+{"acknowledged":true}
+</code></pre>
+
+<p>Ingest Some Data into the Index:</p>
+
+<pre><code class="bash">$ curl -XPUT http://10.79.2.193:9200/test-index/docs/doc1 -d '{"name": "ruan", "age": 30}'
+{"_index":"test-index","_type":"docs","_id":"doc1","_version":1,"_shards":{"total":2,"successful":1,"failed":0},"created":true}
+
+$ curl -XPUT http://10.79.2.193:9200/test-index/docs/doc2 -d '{"name": "stefan", "age": 29}'
+{"_index":"test-index","_type":"docs","_id":"doc2","_version":1,"_shards":{"total":2,"successful":1,"failed":0},"created":true}
+</code></pre>
+
+<h2>Elasticdump to dump the ata</h2>
+
+<p>First dump the mappings:</p>
+
+<pre><code class="bash">$ elasticdump --input=http://10.79.2.193:9200/test-index --output=/opt/backup/elasticsearch/es_test-index_mapping.json --type=mapping
+Mon, 26 Jun 2017 14:15:34 GMT | starting dump
+Mon, 26 Jun 2017 14:15:34 GMT | got 1 objects from source elasticsearch (offset: 0)
+Mon, 26 Jun 2017 14:15:34 GMT | sent 1 objects to destination file, wrote 1
+Mon, 26 Jun 2017 14:15:34 GMT | got 0 objects from source elasticsearch (offset: 1)
+Mon, 26 Jun 2017 14:15:34 GMT | Total Writes: 1
+Mon, 26 Jun 2017 14:15:34 GMT | dump complete
+</code></pre>
+
+<p>Then dump the data:</p>
+
+<pre><code class="bash">$ elasticdump --input=http://10.79.2.193:9200/test-index --output=/opt/backup/elasticsearch/es_test-index.json --type=data
+Mon, 26 Jun 2017 14:15:43 GMT | starting dump
+Mon, 26 Jun 2017 14:15:43 GMT | got 2 objects from source elasticsearch (offset: 0)
+Mon, 26 Jun 2017 14:15:43 GMT | sent 2 objects to destination file, wrote 2
+Mon, 26 Jun 2017 14:15:43 GMT | got 0 objects from source elasticsearch (offset: 2)
+Mon, 26 Jun 2017 14:15:43 GMT | Total Writes: 2
+Mon, 26 Jun 2017 14:15:43 GMT | dump complete
+</code></pre>
+
+<p>Preview the Metadata</p>
+
+<pre><code class="bash">$ cat /opt/backup/elasticsearch/es_test-index_mapping.json | python -m json.tool
+{
+    "test-index": {
+        "mappings": {
+            "docs": {
+                "properties": {
+                    "age": {
+                        "type": "long"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}
+</code></pre>
+
+<p>Preview the Data</p>
+
+<pre><code class="bash">$ cat /opt/backup/elasticsearch/es_test-index.json | jq
+{
+  "_index": "test-index",
+  "_type": "docs",
+  "_id": "doc1",
+  "_score": 1,
+  "_source": {
+    "name": "ruan",
+    "age": 30
+  }
+}
+{
+  "_index": "test-index",
+  "_type": "docs",
+  "_id": "doc2",
+  "_score": 1,
+  "_source": {
+    "name": "stefan",
+    "age": 29
+  }
+}
+</code></pre>
+
+<h2>Restore The Data</h2>
+
+<p>Let&rsquo;s test the restoring part, go ahead and delete The index:</p>
+
+<pre><code class="bash">$ curl -XDELETE http://10.79.2.193:9200/test-index
+{"acknowledged":true}
+</code></pre>
+
+<p>Restore the Index by Importing the Mapping:</p>
+
+<pre><code class="bash">$ elasticdump --input=/opt/backup/elasticsearch/es_test-index_mapping.json --output=http://10.79.2.193:9200/test-index --type=mapping
+Mon, 26 Jun 2017 14:51:48 GMT | starting dump
+Mon, 26 Jun 2017 14:51:48 GMT | got 1 objects from source file (offset: 0)
+Mon, 26 Jun 2017 14:51:48 GMT | sent 1 objects to destination elasticsearch, wrote 1
+Mon, 26 Jun 2017 14:51:48 GMT | got 0 objects from source file (offset: 1)
+Mon, 26 Jun 2017 14:51:48 GMT | Total Writes: 1
+Mon, 26 Jun 2017 14:51:48 GMT | dump complete
+</code></pre>
+
+<p>Verify to see if the Index Exist:</p>
+
+<pre><code class="bash">$ curl -s -XGET http://10.79.2.193:9200/_cat/indices?v | grep -E '(docs.count|test)'
+health status index                     pri rep docs.count docs.deleted store.size pri.store.size
+yellow open   test-index                  5   1          0            0       650b           650b
+</code></pre>
+
+<h2>Restore the Data for the Index:</h2>
+
+<p>Use elasticdump to restore the data from json to elasticsearch:</p>
+
+<pre><code class="bash">$ elasticdump --input=/opt/backup/elasticsearch/es_test-index.json --output=http://10.79.2.193:9200/test-index --type=data
+Mon, 26 Jun 2017 14:53:56 GMT | starting dump
+Mon, 26 Jun 2017 14:53:56 GMT | got 2 objects from source file (offset: 0)
+Mon, 26 Jun 2017 14:53:56 GMT | sent 2 objects to destination elasticsearch, wrote 2
+Mon, 26 Jun 2017 14:53:56 GMT | got 0 objects from source file (offset: 2)
+Mon, 26 Jun 2017 14:53:56 GMT | Total Writes: 2
+Mon, 26 Jun 2017 14:53:56 GMT | dump complete
+</code></pre>
+
+<p>Verify to see if the Documents was Ingested:</p>
+
+<pre><code class="bash">$ curl -s -XGET http://10.79.2.193:9200/_cat/indices?v | grep -E '(docs.count|test)'
+health status index                     pri rep docs.count docs.deleted store.size pri.store.size
+yellow open   test-index                  5   1          2            0       650b           650b
+</code></pre>
+
+<p>Preview the Data from Elasticsearch:</p>
+
+<pre><code class="bash">$ curl -s -XGET http://10.79.2.193:9200/test-index/_search?pretty
+
+{
+  "took" : 3,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 2,
+    "max_score" : 1.0,
+    "hits" : [ {
+      "_index" : "test-index",
+      "_type" : "docs",
+      "_id" : "doc1",
+      "_score" : 1.0,
+      "_source" : {
+        "name" : "ruan",
+        "age" : 30
+      }
+    }, {
+      "_index" : "test-index",
+      "_type" : "docs",
+      "_id" : "doc2",
+      "_score" : 1.0,
+      "_source" : {
+        "name" : "stefan",
+        "age" : 29
+      }
+    } ]
+  }
+}
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.npmjs.com/package/elasticdump">https://www.npmjs.com/package/elasticdump</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

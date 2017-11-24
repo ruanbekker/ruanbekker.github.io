@@ -12,6 +12,10 @@ From one of my previous posts, we went through the steps to setup a [Concourse C
 
 Today we will setup a basic pipeline that executes 2 jobs, one using a alpine container that runs a couple of shell commands, and the other job will be using a Golang container to build and execute a golang app. I will also be experimenting with auto trigger, that will trigger the pipeline to run its jobs every 60 seconds.
 
+Our Pipeline will look like the following:
+
+![](https://i.snag.gy/D0oO4M.jpg)
+
 ## Our Pipeline Definition:
 
 ```yml bash-and-golang.yml
@@ -147,14 +151,18 @@ unpaused 'bash-and-golang'
 
 ## Trigger
 
-Trigger your first job:
+Trigger your first job, which will be the Alpine job:
+
+![](https://i.snag.gy/x7ksQO.jpg?nocache=1511567544851)
 
 ```bash
 $ fly -t ci trigger-job --job bash-and-golang/my-alpine-job
 started bash-and-golang/my-alpine-job #2
 ```
 
-Trigger your second job:
+Trigger your second job, which will be the Golang job:
+
+![](https://i.snag.gy/07nDiZ.jpg)
 
 ```bash
 $ fly -t ci trigger-job --job bash-and-golang/my-golang-job

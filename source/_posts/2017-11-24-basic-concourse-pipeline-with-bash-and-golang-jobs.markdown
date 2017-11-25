@@ -153,21 +153,21 @@ unpaused 'bash-and-golang'
 
 Trigger your first job, which will be the Alpine job:
 
-![](https://i.snag.gy/x7ksQO.jpg?nocache=1511567544851)
-
 ```bash
 $ fly -t ci trigger-job --job bash-and-golang/my-alpine-job
 started bash-and-golang/my-alpine-job #2
 ```
 
-Trigger your second job, which will be the Golang job:
+![](https://i.snag.gy/x7ksQO.jpg?nocache=1511567544851)
 
-![](https://i.snag.gy/07nDiZ.jpg)
+Trigger your second job, which will be the Golang job:
 
 ```bash
 $ fly -t ci trigger-job --job bash-and-golang/my-golang-job
 started bash-and-golang/my-golang-job #2
 ```
+
+![](https://i.snag.gy/07nDiZ.jpg)
 
 Remember, we can also monitor the output from the shell:
 

@@ -17,6 +17,10 @@ Concourse is a Pipeline Based Continious Integration system written in Go
 - https://concourse.ci/hello-world.html
 - https://github.com/starkandwayne/concourse-tutorial
 
+## What is Concourse CI:
+
+Concourse CI is a Continious Integration Platform. Concourse enables you to construct pipelines with a yaml configuration that can consist out of 3 core concepts, tasks, resources, and jobs that compose them. For more information about this have a look at their [docs](https://concourse.ci/concepts.html)
+
 ## What will we be doing today
 
 We will setup a Concourse Server on Ubuntu 16.04 and run the traditional `Hello, World` pipeline

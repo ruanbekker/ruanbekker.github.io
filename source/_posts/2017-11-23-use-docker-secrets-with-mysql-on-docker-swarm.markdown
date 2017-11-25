@@ -6,6 +6,8 @@ comments: true
 categories: ["docker", "docker-swarm", "docker-secrets", "docker-compose", "mysql"] 
 ---
 
+![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+
 Today we will use Docker Secrets, more specifically store our MySQL Passwords in Secrets, which will be passed to our containers, so that we don't use clear text passwords in our Compose files.
 
 ## What is Docker Secrets:

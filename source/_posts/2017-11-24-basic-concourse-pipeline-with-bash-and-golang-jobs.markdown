@@ -6,6 +6,8 @@ comments: true
 categories: ["concourse", "devops", "ci", "golang"] 
 ---
 
+![](https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495)
+
 From one of my previous posts, we went through the steps to setup a [Concourse CI Server on Ubuntu](http://blog.ruanbekker.com/blog/2017/11/07/setup-a-concourse-ci-server-on-ubuntu-16/) .
 
 ## What are we doing today?

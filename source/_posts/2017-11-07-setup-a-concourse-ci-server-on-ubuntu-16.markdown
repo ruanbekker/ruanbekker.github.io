@@ -6,7 +6,7 @@ comments: true
 categories: ["devops", "ci", "concourse", "automation", "ubuntu"] 
 ---
 
-[](https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495)
+![](https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495)
 
 Concourse is a Pipeline Based Continious Integration system written in Go
 

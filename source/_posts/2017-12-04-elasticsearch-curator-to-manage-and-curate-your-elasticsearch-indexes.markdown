@@ -6,6 +6,8 @@ comments: true
 categories: ["elasticsearch", "curator"] 
 ---
 
+![](http://obj-cache.cloud.ruanbekker.com/elasticsearch-2.jpg)
+
 Elasticsearch Curator helps you to manage and curate your Elasticsearch Indices. I will show how to use the Curator in the following ways:
 
 - Create Indexes

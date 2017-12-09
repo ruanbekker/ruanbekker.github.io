@@ -8,8 +8,6 @@ categories: ["systemd", "linux"]
 
 I was busy setting up a `docker-volume-netshare` plugin to use NFS Volumes for Docker, which relies on the `nfs-utils/nfs-common` package, and when trying to start the service, I found that the `nfs-common` service is `masked`:
 
-## Unmasking a Service in SystemD:
-
 ```bash
 $ sudo systemctl start docker-volume-netshare.service
 Failed to start docker-volume-netshare.service: Unit nfs-common.service is masked.

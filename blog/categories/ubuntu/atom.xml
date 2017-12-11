@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Ubuntu | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/ubuntu/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2017-12-10T18:28:32-05:00</updated>
+  <updated>2017-12-11T09:35:13-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,150 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 3 Node Kubernetes Cluster on Ubuntu]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2017/12/11/setup-a-3-node-kubernetes-cluster-on-ubuntu/"/>
+    <updated>2017-12-11T09:31:47-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2017/12/11/setup-a-3-node-kubernetes-cluster-on-ubuntu</id>
+    <content type="html"><![CDATA[<p><img src="https://kumorilabs.com/img/blog/kubernetes-logo.png" alt="" /></p>
+
+<p>Setup a 3 Node Kubernetes Cluster on Ubuntu 16.04</p>
+
+<h2>What is Kubernetes?</h2>
+
+<p>As referenced from their <a href="https://kubernetes.io/">website</a>:</p>
+
+<ul>
+<li>&ldquo;Kubernetes is an open-source system for automating deployment, scaling, and management of containerized applications.&rdquo;</li>
+</ul>
+
+
+<h2>Our Setup:</h2>
+
+<p>For this setup I will be using 3 AWS EC2 Instances with Ubuntu 16.04. One node will act as the master node, and the other 2 nodes, will act as nodes, previously named minions.</p>
+
+<p>We will deploy Kubernetes on all 3 nodes, the master will be the node where we will initialize our cluster, deploy our weave network, applications and we will execute the join command on the worker nodes to join the master to form the cluster.</p>
+
+<h2>Deploy Kubernetes: Master</h2>
+
+<p>The following commands will be used to install Kubernetes, it will be executed with root permissions:</p>
+
+<pre><code class="bash">$ apt update &amp;&amp; sudo apt upgrade -y
+$ sudo apt install docker.io apt-transport-https -qy
+$ sudo apt update
+$ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+$ sudo su -c 'echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" &gt; /etc/apt/sources.list.d/app' root
+$ apt update
+$ sudo apt install kubelet kubeadm kubernetes-cni -y
+</code></pre>
+
+<p>Now we would like to set up the master by initializing the cluster:</p>
+
+<pre><code class="bash">$ sudo kubeadm init --kubernetes-version stable-1.8
+</code></pre>
+
+<p>The output will provide you with instructions to setup the configurations for the master node, and provide you with a join token for your worker nodes, remember to make not of this token string, as we will need it later for our worker nodes. As your normal user, run the following to setup the config:</p>
+
+<p>Remember to not run this as root, and as the normal user:</p>
+
+<pre><code class="bash">$ mkdir -p $HOME/.kube
+$ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+$ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+</code></pre>
+
+<p>Now we need to deploy a network for our pods:</p>
+
+<pre><code class="bash">$ kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+</code></pre>
+
+<p>Lets confirm if all our resources are in its desired state, a small snippet of the output will look like the one below:</p>
+
+<pre><code class="bash">$ kubectl get all -n kube-system
+
+...
+NAME                                          READY     STATUS    RESTARTS   AGE
+po/etcd-ip-172-31-40-211                      1/1       Running   0          6h
+po/kube-apiserver-ip-172-31-40-211            1/1       Running   0          6h
+</code></pre>
+
+<p>Once all of the resources are in its desired state, we can head along to our worker nodes, to join them to the cluster</p>
+
+<h2>Deploy Kubernetes: Worker Nodes</h2>
+
+<p>As I have 2 worker nodes, we will need to deploy the following on both of our worker nodes, first to deploy Kubernetes on our nodes with root permission:</p>
+
+<pre><code class="bash">$ apt update &amp;&amp; sudo apt upgrade -y
+$ sudo apt install docker.io apt-transport-https -qy
+$ sudo apt update
+$ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+$ sudo su -c 'echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" &gt; /etc/apt/sources.list.d/app' root
+$ apt update
+$ sudo apt install kubelet kubeadm kubernetes-cni -y
+</code></pre>
+
+<p>Once Kubernetes is installed, join the Master node by executing the join command:</p>
+
+<pre><code class="bash">$ sudo kubeadm join --token 49abf7.247d663db97f8504 172.31.40.211:6443 --discovery-token-ca-cert-hash sha256:3a3b301cfbac0995c69a0115989ea384230470d6836ae0e13e71dbdf15ffbb48
+</code></pre>
+
+<p>Do the 2 steps on the other node, then head back to the master node.</p>
+
+<h2>Verifying if All Nodes are Checked In</h2>
+
+<p>To verify if all nodes are available and reachable in the cluster:</p>
+
+<pre><code class="bash">$ kubectl get nodes
+NAME               STATUS    ROLES     AGE       VERSION
+ip-172-31-36-68    Ready     &lt;none&gt;    6h        v1.8.5
+ip-172-31-40-211   Ready     master    6h        v1.8.5
+ip-172-31-44-80    Ready     &lt;none&gt;    6h        v1.8.5
+</code></pre>
+
+<h2>Deploy Services to Kubernetes:</h2>
+
+<p>Kubernetes has Awesome Examples on their <a href="https://github.com/kubernetes/kubernetes/tree/master/examples">Github Repository</a>.</p>
+
+<p>Since the awesomeness of <a href="https://github.com/openfaas">OpenFaas</a>, I will deploy OpenFaas on Kubernetes:</p>
+
+<pre><code class="bash">$ git clone https://github.com/openfaas/faas-netes
+$ cd faas-netes
+$ kubectl apply -f faas.yml,monitoring.yml,rbac.yml
+</code></pre>
+
+<p>Give it about a minute or so, then you should see the pods running in their desired state:</p>
+
+<pre><code class="bash">$ kubectl get pods
+NAME                           READY     STATUS    RESTARTS   AGE
+alertmanager-77b4b476b-zxtcz   1/1       Running   0          4h
+crypto-7d8b7f999c-7l85k        1/1       Running   0          1h
+faas-netesd-64fb9b4dfb-hc8gh   1/1       Running   0          4h
+gateway-69c9d949f-q57zh        1/1       Running   0          4h
+prometheus-7fbfd8bfb8-d4cft    1/1       Running   0          4h
+</code></pre>
+
+<p>When we have the desired state, head over to the OpenFaas Gateway WebUI: <code>http://master-public-ip:31112/ui/</code>, select &ldquo;Deploy New Function&rdquo;, you can use your own function or select one from the store.</p>
+
+<p>I am going to use Figlet from the store, once the pod has been deployed, select the function, enter any text into the request body and select invoke. I have used my name and surname, and turns out into:</p>
+
+<pre><code class="bash"> ____                      ____       _    _             
+|  _ \ _   _  __ _ _ __   | __ )  ___| | _| | _____ _ __ 
+| |_) | | | |/ _` | '_ \  |  _ \ / _ \ |/ / |/ / _ \ '__|
+|  _ &lt;| |_| | (_| | | | | | |_) |  __/   &lt;|   &lt;  __/ |   
+|_| \_\\__,_|\__,_|_| |_| |____/ \___|_|\_\_|\_\___|_|   
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/">Kubernetes Overview</a></li>
+<li><a href="https://kubernetes.io/docs/concepts/">Kubernetes Concepts</a></li>
+<li><a href="https://blog.alexellis.io/tag/kubernetes/">Kubernetes Blogs</a></li>
+<li><a href="https://blog.alexellis.io/tag/openfaas/">OpenFaas Blogs</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a 3 Node Galera MariaDB Cluster on Ubuntu 16]]></title>
@@ -789,77 +933,6 @@ force_color_prompt=yes
 
 
 <p>I will update this page as I&rsquo;m getting new apps or modifications</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Create a ZFS Raidz1 Volume Pool on Ubuntu 16]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/08/24/create-a-zfs-raidz1-volume-pool-on-ubuntu-16/"/>
-    <updated>2017-08-24T09:16:34-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/08/24/create-a-zfs-raidz1-volume-pool-on-ubuntu-16</id>
-    <content type="html"><![CDATA[<p>Setting up ZFS Volume Pool on Ubuntu 16.04</p>
-
-<h2>Installation</h2>
-
-<pre><code>$ sudo apt-get install zfsutils-linux -y
-</code></pre>
-
-<h2>Creating the ZFS Storage Pool</h2>
-
-<p>We will create a RAIDZ(1) Volume which is like Raid5 with Single Parity, so we can lose one of the Physical Disks before Raid failure.</p>
-
-<p>Let&rsquo;s first have a look at our disks that we have on our server:</p>
-
-<pre><code>$ lsblk
-NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
-xvda    202:0    0   8G  0 disk
-└─xvda1 202:1    0   8G  0 part /
-xvdf    202:80   0 100G  0 disk 
-xvdg    202:80   0 100G  0 disk 
-</code></pre>
-
-<p>So we will be creating the volume consisting of <code>/dev/xvdf</code> and <code>/dev/xvdg</code> and we will name our pool: <code>storage-pool</code></p>
-
-<pre><code>$ zpool create storage-pool raidz1 xvdf xvdg -f
-</code></pre>
-
-<h2>Listing Pools</h2>
-
-<pre><code>$ zpool list
-NAME           SIZE  ALLOC   FREE  EXPANDSZ   FRAG    CAP  DEDUP  HEALTH  ALTROOT
-storage-pool   199G   125K   199G         -     0%     0%  1.00x  ONLINE  -
-</code></pre>
-
-<p>We can also list the volume with <code>zfs</code>:</p>
-
-<pre><code>$ zfs list
-NAME            USED  AVAIL  REFER  MOUNTPOINT
-storage-pool    125K  199G   19K    /storage-pool
-</code></pre>
-
-<h2>Mounting the Volume:</h2>
-
-<p>You will find that the volume is already mounted:</p>
-
-<pre><code>$ df -h
-Filesystem      Size  Used Avail Use% Mounted on
-/dev/xvda1      7.7G  1.1G  6.7G  14% /
-pool            199G  125K  198G   1% /pool
-</code></pre>
-
-<h2>Resources:</h2>
-
-<p>See how Brett Kelly from 45 Drives tried to break a Storage Cluster with GlusterFS and ZFS:</p>
-
-<center><iframe width="740" height="400" src="https://www.youtube.com/embed/A0wV4k58RIs" frameborder="1" allowfullscreen></iframe></center>
-
-
-<p>Great ZFS Performance Comparison:</p>
-
-<ul>
-<li><a href="https://calomel.org/zfs_raid_speed_capacity.html">https://calomel.org/zfs_raid_speed_capacity.html</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

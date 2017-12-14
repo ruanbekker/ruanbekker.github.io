@@ -72,7 +72,7 @@ def pie():
     return render_template('pie_chart.html', title='Bitcoin Monthly Price in USD', max=17000, set=zip(values, labels, colors))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80)
+    app.run(host='0.0.0.0', port=8080)
 ```
 
 ## Populating the HTML Static Content:
@@ -81,7 +81,7 @@ As we are using `render_template` we need to populate our html files in our `tem
 
 - `templates/bar_chart.html` :
 
-```
+```bash
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -145,7 +145,7 @@ As we are using `render_template` we need to populate our html files in our `tem
 
 - `templates/line_chart.html`:
 
-```
+```bash
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -221,7 +221,7 @@ As we are using `render_template` we need to populate our html files in our `tem
 
 - `templates/pie_chart.html`:
 
-```
+```bash
 <!DOCTYPE html>
 <html lang="en">
 <head>

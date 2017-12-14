@@ -5,6 +5,7 @@ date: 2017-12-14 02:28:51 -0500
 comments: true
 categories: ["python", "flask", "charts", "graphs", "chartjs"] 
 ---
+![](https://thumbsplus.tutsplus.com/uploads/users/1251/posts/28278/preview_image/chartjs-tutsplus.jpg)
 
 I am a big sucker for Charts and Graphs, and today I found one awesome library called [Chart.js](http://www.chartjs.org/), which we will use with Python Flask Web Framework, to graph our data.
 

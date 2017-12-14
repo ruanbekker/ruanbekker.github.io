@@ -81,7 +81,7 @@ As we are using `render_template` we need to populate our html files in our `tem
 
 - `templates/bar_chart.html` :
 
-```html
+```
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -101,7 +101,7 @@ As we are using `render_template` we need to populate our html files in our `tem
       var barData = {
         labels : [
           {% for item in labels %}
-            {{ item }}
+           "{{ item }}",
           {% endfor %}
 	],
 
@@ -111,7 +111,7 @@ As we are using `render_template` we need to populate our html files in our `tem
           pointColor: "rgba(151,187,205,1)",
           data : [
             {% for item in values %}
-               {{item}}
+               "{{item}}",
               {% endfor %}
 	    ]
           }
@@ -145,7 +145,7 @@ As we are using `render_template` we need to populate our html files in our `tem
 
 - `templates/line_chart.html`:
 
-```html
+```
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -221,7 +221,7 @@ As we are using `render_template` we need to populate our html files in our `tem
 
 - `templates/pie_chart.html`:
 
-```html
+```
 <!DOCTYPE html>
 <html lang="en">
 <head>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Iam | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/iam/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-01-23T10:23:31-05:00</updated>
+  <updated>2018-01-30T10:03:45-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,259 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Authenticate to Your AWS MySQL RDS Instance via IAM]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/01/30/authenticate-to-your-aws-mysql-rds-instance-via-iam/"/>
+    <updated>2018-01-30T10:02:05-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/01/30/authenticate-to-your-aws-mysql-rds-instance-via-iam</id>
+    <content type="html"><![CDATA[<p>On Amazon Web Services with RDS for MySQL or Aurora with MySQL compatibility, you can authenticate to your Database instance or cluster using IAM for database authentication. The benefit of using this authentication method is that you don&rsquo;t need to use a password when you connect to your database, but you use your authentication token instead</p>
+
+<ul>
+<li>More info from their <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.html">docs</a></li>
+</ul>
+
+
+<h2>What we will be doing today:</h2>
+
+<p>We will do the following:</p>
+
+<ul>
+<li>Create RDS MySQL Database</li>
+<li>Create IAM Policy that allows a user to connect via a MySQL User</li>
+<li>Create IAM User and associate IAM Policy</li>
+<li>Configure the new user credentials in the awscli credential provider</li>
+<li>Bash script to generate the auth token and authenticate to RDS via Token instead of password</li>
+</ul>
+
+
+<h2>Create the RDS Database:</h2>
+
+<p>In this tutorial I will spin up a <code>db.t2.micro</code> in <code>eu-west-1</code> with <code>IAMDatabaseAuthentication Enabled</code>:</p>
+
+<pre><code class="bash">aws rds create-db-instance \
+    --db-instance-identifier rbtest \
+    --db-instance-class db.t2.micro \
+    --engine MySQL \
+    --allocated-storage 20 \
+    --master-username dbadmin \
+    --master-user-password mysuperpassword \
+    --region eu-west-1 \
+    --enable-iam-database-authentication 
+</code></pre>
+
+<p>Give it some time to spin up, then get your database endpoint:</p>
+
+<pre><code class="bash">$ aws rds describe-db-instances --db-instance-identifier rbtest | jq -r ".DBInstances[].Endpoint.Address"
+rbtest.abcdefgh.eu-west-1.rds.amazonaws.com
+</code></pre>
+
+<p>If you need to have SSL Enabled, get the bundled certificate as described in the <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html">Using SSL with RDS</a> docs.</p>
+
+<pre><code class="bash">wget -O /tmp/rds.pem https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
+</code></pre>
+
+<h2>Create the Database Account:</h2>
+
+<p>Create the database account on the MySQL RDS instance as described from their <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.DBAccounts.html">docs</a>. IAM handles the authentication via AWSAuthenticationPlugin, therefore we do not need to set passwords on the database.</p>
+
+<p>Connect to the database:</p>
+
+<pre><code class="bash">$ mysql -u dbadmin -h rbtest.abcdefgh.eu-west-1.rds.amazonaws.com -p
+</code></pre>
+
+<p>Create the database:</p>
+
+<pre><code class="sql">mysql&gt; CREATE USER mydbaccount IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+mysql&gt; FLUSH PRIVILEGES;
+</code></pre>
+
+<h2>Creating the Databases and Granting Permissions</h2>
+
+<p>While you are on the database, create 2 databases (<code>db1</code> and <code>db2</code>) with some tables, which we will use for our user to have read only access to, and create one database (<code>db3</code>) which the user will not have access to:</p>
+
+<pre><code class="sql">mysql&gt; create database db1;
+mysql&gt; create database db2;
+
+mysql&gt; use db1;
+mysql&gt; create table foo (name VARCHAR(20), age INT);
+mysql&gt; insert into foo values('ruan', 31);
+mysql&gt; insert into foo values('james', 32);
+
+mysql&gt; use db2;
+mysql&gt; create table foo (location VARCHAR(255));
+mysql&gt; insert into foo values('south africa');
+mysql&gt; insert into foo values('new zealand');
+mysql&gt; insert into foo values('australia');
+
+mysql&gt; grant select on db1.* to 'mydbuser';
+mysql&gt; grant select on db2.* to 'mydbuser';
+
+mysql&gt; create database db3;
+mysql&gt; use db3;
+mysql&gt; create table foo (passwords VARCHAR(255));
+mysql&gt; insert into foo values('superpassword');
+mysql&gt; insert into foo values('sekret');
+
+mysql&gt; flush privileges;
+</code></pre>
+
+<h2>IAM Permissions to allow our user to authenticate to our RDS.</h2>
+
+<p>First to create the user and configure awscli tools. My default profile has administrative access, so we will create our db user in its own profile and configure our awscli tools with its new access key and secret key:</p>
+
+<pre><code class="bash">$ aws configure --profile dbuser
+AWS Access Key ID [None]: xxxxxxxxxxxxx
+AWS Secret Access Key [None]: xxxxxxxxxxxxxxxxxx
+Default region name [None]: eu-west-1
+Default output format [None]: json
+</code></pre>
+
+<p>Now we need to create a IAM policy to allow our user to authenticate to our RDS Instance via IAM, which we will associate with our Users account.</p>
+
+<p>We need the AWS Account ID, the Database Identifier Resource ID, and the User Account that we created on MySQL.</p>
+
+<p>To get the DB ResourceId:</p>
+
+<pre><code class="bash">$ aws rds describe-db-instances --db-instance-identifier rbtest | jq -r ".DBInstances[].DbiResourceId
+db-123456789ABCDEFGH
+</code></pre>
+
+<p>Create the IAM Policy and associate it with the new user account:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.IAMPolicy.html">More info from the Docs</a>:</li>
+</ul>
+
+
+<pre><code class="json">{
+   "Version": "2012-10-17",
+   "Statement": [
+      {
+         "Sid": "RDSIAMAUTH",
+         "Effect": "Allow",
+         "Action": [
+             "rds-db:connect"
+         ],
+         "Resource": [
+             "arn:aws:rds-db:eu-west-1:123456789012:dbuser:db-123456789ABCDEFGH/mydbaccount"
+         ]
+      }
+   ]
+}
+</code></pre>
+
+<p>The bash script will get the authentication token which will be used as the password. Note that the authentication token will expire after 15 minutes after creation. The <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.html">docs</a></p>
+
+<pre><code class="bash">#!/bin/bash
+db_endpoint="rbtest.abcdefgh.eu-west-1.rds.amazonaws.com"
+auth_token="$(aws --profile dbuser rds generate-db-auth-token --hostname $RDSHOST --port 3306 --username mydbaccount )"
+mysql --host=$db_endpoint --port=3306 --enable-cleartext-plugin --user=mydbaccount --password=$auth_token
+</code></pre>
+
+<h2>Testing it out:</h2>
+
+<p>Now that our policies are in place, credentials from the credential provider has been set and our bash script is setup, lets connect to our database:</p>
+
+<pre><code class="bash">./conn-mysql.sh
+
+mysql&gt; show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| db1                |
+| db2                |
++--------------------+
+3 rows in set (0.16 sec)
+
+mysql&gt; select * from db2.foo;
++--------------+
+| location     |
++--------------+
+| south africa |
+| new zealand  |
+| australia    |
++--------------+
+
+mysql&gt; select * from db3.foo;
+ERROR 1044 (42000): Access denied for user 'mydbaccount'@'*' to database 'db3'
+
+mysql&gt; create database test123;
+ERROR 1044 (42000): Access denied for user 'mydbaccount'@'%' to database 'test123'
+</code></pre>
+
+<p>Changing the IAM Policy to revoke access:</p>
+
+<pre><code class="bash">./conn-mysql.sh
+mysql: [Warning] Using a password on the command line interface can be insecure.
+ERROR 1045 (28000): Access denied for user 'mydbaccount'@'10.0.0.10' (using password: YES)
+</code></pre>
+
+<h2>Creating a MySQL Client Wrapper Script:</h2>
+
+<p>Using bash we can create a wrapper script so we can connect to our database like the following:</p>
+
+<pre><code class="bash">$ mysql-iam prod rbtest.eu-west-1.amazonaws.com mydbaccount
+mysql&gt;
+</code></pre>
+
+<p>Here is the script:</p>
+
+<pre><code class="bash">#!/usr/bin/env bash
+
+# Wrapper MySQL Client for IAM Based Authentication for MySQL and Amazon Aurora on RDS
+# Read: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html
+# Usage: [app] [aws_profile] [rds_endpoint] [rds_mysql_username]
+
+command_exists() {
+  type "$1" &amp;&gt; /dev/null ;
+}
+
+check_required_parameters() {
+  aws_profile="$1"
+  rds_hostname="$2"
+  rds_username="$3"
+  if ! [[ -n "$aws_profile" &amp;&amp; -n "$rds_username" &amp;&amp; -n "$rds_username" ]]
+    then
+      echo "Error: Missing Parameters"
+      echo "Expected: $0 aws_profile_name rds_endpoint_name rds_db_username"
+      echo "Usage: $0 prod dbname.eu-west-1.amazonaws.com dba"
+      exit 1
+  fi
+}
+
+get_auth_token() {
+  aws_bin=$(which aws | head -1)
+  auth_token="$($aws_bin --profile $aws_profile rds generate-db-auth-token --hostname $rds_hostname --port 3306 --username $rds_username )"
+}
+
+connect_to_rds() {
+  mysql_bin=$(which mysql | head -1)
+  $mysql_bin --host=$rds_hostname --port=3306 --enable-cleartext-plugin --user=$rds_username --password=$auth_token
+}
+
+if [ "$1" == "help" ] 
+  then
+    echo "Help"
+    echo "Expected: $0 aws_profile_name rds_endpoint_name rds_db_username"
+    echo "Usage: $0 prod dbname.eu-west-1.amazonaws.com dba_user"
+    exit 0
+fi
+
+if command_exists aws &amp;&amp; command_exists mysql 
+then
+  check_required_parameters $1 $2 $3
+  get_auth_token
+  connect_to_rds
+else
+  echo "Error: Make sure aws-cli and mysql client is installed"
+fi
+</code></pre>
+
+<p>For more information on this, have a look at the <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html">docs</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[AWS: IAM S3 Policy for Cyberduck to Allow Listing Buckets and Access to One Bucket]]></title>

@@ -43,3 +43,14 @@ Name: Ruan, Surname: Bekker, UserName: ruan.bekker, Email Address: ruan.bekker@d
 ```
 
 From here on you can build up for example an email function that you can pass the values to your function to get a specific job done.
+
+## Update: Capitalize from One String
+
+Today, I had to capitalize the name and surname that was linked to one variable:
+
+```python
+>>> user = 'james.bond'
+>>> username = ' '.join(map(str, [x.capitalize() for x in user.split(".")]))
+>>> print(username)
+James Bond
+```

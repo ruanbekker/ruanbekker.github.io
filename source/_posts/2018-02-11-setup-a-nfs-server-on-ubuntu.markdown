@@ -6,6 +6,8 @@ comments: true
 categories: ["storage", "nfs", "ubuntu", "networking"] 
 ---
 
+![](https://i.snag.gy/3sUALo.jpg)
+
 Quick post on how to setup a NFS Server on Ubuntu and how to setup the client to interact with the NFS Server.
 
 ## Setup the Dependencies:

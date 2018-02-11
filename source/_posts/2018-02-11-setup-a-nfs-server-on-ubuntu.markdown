@@ -70,3 +70,6 @@ $ df -h
 ```
 
 Now you shoule be able to write to your NFS Volume from your client.
+
+Sources:
+- [1](https://www.digitalocean.com/community/tutorials/how-to-set-up-an-nfs-mount-on-ubuntu-16-04) [2](https://gist.github.com/deviantony/557984d62e867e6f505577b207db6ffc%)

@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-01-30T10:03:45-05:00</updated>
+  <updated>2018-02-11T16:47:16-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,437 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Site to Site IPsec VPN With Strongswan and PreShared Key Authentication]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/02/11/setup-a-site-to-site-ipsec-vpn-with-strongswan-and-preshared-key-authentication/"/>
+    <updated>2018-02-11T16:09:37-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/02/11/setup-a-site-to-site-ipsec-vpn-with-strongswan-and-preshared-key-authentication</id>
+    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/sWn8zc.jpg" alt="" /></p>
+
+<p>Today we will setup a Site to Site ipsec VPN with Strongswan, which will be configured with PreShared Key Authentication.</p>
+
+<p>After our tunnels are established, we will be able to reach the private ips over the vpn tunnels.</p>
+
+<h2>Get the Dependencies:</h2>
+
+<p>Update your repository indexes and install strongswan:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install strongswan -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the following kernel parameters:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt;&gt; /etc/sysctl.conf <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'><span class="s">echo net.ipv4.ip_forward = 1 </span>
+</span><span class='line'><span class="s">net.ipv4.conf.all.accept_redirects = 0 </span>
+</span><span class='line'><span class="s">net.ipv4.conf.all.send_redirects = 0</span>
+</span><span class='line'><span class="s">EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>sysctl -p /etc/sysctl.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Generate Preshared Key:</h2>
+
+<p>We will need a preshared key that both servers will use:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>openssl rand -base64 64
+</span><span class='line'>87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Details of our 2 Sites:</h2>
+
+<p>Site A:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Location: Paris, France
+</span><span class='line'>External IP: 51.15.139.201
+</span><span class='line'>Internal IP: 10.10.27.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Site B:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Location: Amsterdam, Netherlands
+</span><span class='line'>External IP: 51.15.44.48
+</span><span class='line'>Internal IP: 10.9.141.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Site A:</h2>
+
+<p>We will setup our VPN Gateway in Site A (Paris), first to setup the <code>/etc/ipsec.secrets</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ipsec.secrets
+</span><span class='line'><span class="c"># source      destination</span>
+</span><span class='line'>51.15.139.201 51.15.44.48 : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now to setup our VPN configuration in <code>/etc/ipsec.conf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/ipsec.conf
+</span><span class='line'><span class="c"># basic configuration</span>
+</span><span class='line'>config setup
+</span><span class='line'>        <span class="nv">charondebug</span><span class="o">=</span><span class="s2">&quot;all&quot;</span>
+</span><span class='line'>        <span class="nv">uniqueids</span><span class="o">=</span>yes
+</span><span class='line'>        <span class="nv">strictcrlpolicy</span><span class="o">=</span>no
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to amsterdam datacenter</span>
+</span><span class='line'>conn paris-to-amsterdam
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.10.27.1/24
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.44.48
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.9.141.1/24
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Firewall Rules:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo iptables -t nat -A POSTROUTING -s 10.9.141.0/24 -d 10.10.27.0/24 -j MASQUERADE
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Site B:</h2>
+
+<p>We will setup our VPN Gateway in Site B (Amsterdam), setup the <code>/etc/ipsec.secrets</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ipsec.secrets
+</span><span class='line'>51.15.44.48 51.15.139.201 : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next to setup our VPN Configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/ipsec.conf
+</span><span class='line'><span class="c"># basic configuration</span>
+</span><span class='line'>config setup
+</span><span class='line'>        <span class="nv">charondebug</span><span class="o">=</span><span class="s2">&quot;all&quot;</span>
+</span><span class='line'>        <span class="nv">uniqueids</span><span class="o">=</span>yes
+</span><span class='line'>        <span class="nv">strictcrlpolicy</span><span class="o">=</span>no
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to paris datacenter</span>
+</span><span class='line'>conn amsterdam-to-paris
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.44.48
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.9.141.1/24
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.10.27.1/24
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Firewall Rules:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo iptables -t nat -A POSTROUTING -s 10.10.27.0/24 -d 10.9.41.0/24 -J MASQUERADE
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Start the VPN:</h2>
+
+<p>Start the VPN on both ends:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec restart
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get the status of the tunnel, in this case we are logged onto our Site A (Paris) Server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec status
+</span><span class='line'>Security Associations <span class="o">(</span><span class="m">1</span> up, <span class="m">0</span> connecting<span class="o">)</span>:
+</span><span class='line'>paris-to-amsterdam<span class="o">[</span>2<span class="o">]</span>: ESTABLISHED <span class="m">14</span> minutes ago, 10.10.27.161<span class="o">[</span>51.15.139.201<span class="o">]</span>...51.15.44.48<span class="o">[</span>51.15.44.48<span class="o">]</span>
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>1<span class="o">}</span>:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c8c868ee_i c9d58dbd_o
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>1<span class="o">}</span>:   10.10.27.1/24 <span class="o">===</span> 10.9.141.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test if we can see the remote end on its private range:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ping 10.9.141.97
+</span><span class='line'>PING 10.9.141.97 <span class="o">(</span>10.9.141.97<span class="o">)</span> 56<span class="o">(</span>84<span class="o">)</span> bytes of data.
+</span><span class='line'><span class="m">64</span> bytes from 10.9.141.97: <span class="nv">icmp_seq</span><span class="o">=</span><span class="m">1</span> <span class="nv">ttl</span><span class="o">=</span><span class="m">64</span> <span class="nb">time</span><span class="o">=</span>14.6 ms
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the service to start on boot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>strongswan
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then your VPN should be setup correctly.</p>
+
+<h2>Other useful commands:</h2>
+
+<p>Start / Stop / Status:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec up connection-name
+</span><span class='line'><span class="nv">$ </span>sudo ipsec down connection-name
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>sudo ipsec restart
+</span><span class='line'><span class="nv">$ </span>sudo ipsec status
+</span><span class='line'><span class="nv">$ </span>sudo ipsec statusall
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get the Policies and States of the IPsec Tunnel:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ip xfrm state
+</span><span class='line'><span class="nv">$ </span>sudo ip xfrm policy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload the secrets, while the service is running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec rereadsecrets
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check if traffic flows through the tunnel:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo tcpdump esp
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Adding more connections to your config:</h2>
+
+<p>If you have to add another site to your config, the example of the <code>ipsec.secrets</code> will look like:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ipsec.secrets
+</span><span class='line'>51.15.139.201 51.15.44.48 : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span><span class='line'>51.15.139.201 51.15.87.41  : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And the <code>ipsec.conf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/ipsec.conf
+</span><span class='line'><span class="c"># basic configuration</span>
+</span><span class='line'>config setup
+</span><span class='line'>        <span class="nv">charondebug</span><span class="o">=</span><span class="s2">&quot;all&quot;</span>
+</span><span class='line'>        <span class="nv">uniqueids</span><span class="o">=</span>yes
+</span><span class='line'>        <span class="nv">strictcrlpolicy</span><span class="o">=</span>no
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to amsterdam datacenter</span>
+</span><span class='line'>conn paris-to-amsterdam
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.10.27.161/32
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.44.48
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.9.141.97/32
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to frankfurt datacenter</span>
+</span><span class='line'>conn paris-to-frankfurt
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.10.27.1/24
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.87.41
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.9.137.1/24
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Just remember to configure the config on the Frankfurt VPN Gateway, and the example of the status output will look like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec status
+</span><span class='line'>Security Associations <span class="o">(</span><span class="m">2</span> up, <span class="m">0</span> connecting<span class="o">)</span>:
+</span><span class='line'>paris-to-frankfurt<span class="o">[</span>2<span class="o">]</span>: ESTABLISHED <span class="m">102</span> seconds ago, 10.10.27.161<span class="o">[</span>51.15.139.201<span class="o">]</span>...51.15.87.41<span class="o">[</span>51.15.87.41<span class="o">]</span>
+</span><span class='line'>paris-to-frankfurt<span class="o">{</span>1<span class="o">}</span>:  INSTALLED, TUNNEL, reqid 2, ESP in UDP SPIs: cbc62a1f_i c95b8f78_o
+</span><span class='line'>paris-to-frankfurt<span class="o">{</span>1<span class="o">}</span>:   10.10.27.1/24 <span class="o">===</span> 10.9.137.1/24
+</span><span class='line'>paris-to-amsterdam<span class="o">[</span>1<span class="o">]</span>: ESTABLISHED <span class="m">102</span> seconds ago, 10.10.27.161<span class="o">[</span>51.15.139.201<span class="o">]</span>...51.15.44.48<span class="o">[</span>51.15.44.48<span class="o">]</span>
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>2<span class="o">}</span>:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c7b36756_i cc54053c_o
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>2<span class="o">}</span>:   10.10.27.1/24 <span class="o">===</span> 10.9.141.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Authenticate to Your AWS MySQL RDS Instance via IAM]]></title>
@@ -4318,152 +4749,6 @@ UDP: <code>4567</code></p>
 
 <ul>
 <li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using Elasticsearch Curator to Reindex Data]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/11/22/using-elasticsearch-curator-to-reindex-data/"/>
-    <updated>2017-11-22T09:09:28-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/11/22/using-elasticsearch-curator-to-reindex-data</id>
-    <content type="html"><![CDATA[<p>Today I was using Elasticsearch Curator to reindex indices that was created on a daily basis, to reindex all the data to one index. I used this route as the old data will not be accessed frequently.</p>
-
-<h2>Install Elasticsearch Curator</h2>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -it python:2.7-alpine sh
-</span><span class='line'><span class="nv">$ </span>pip install elasticsearch-curator
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create Configs:</h2>
-
-<p>Create the curator config:</p>
-
-<figure class='code'><figcaption><span>config.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="c1"># Remember, leave a key empty if there is no value.  None will be a string,</span>
-</span><span class='line'><span class="c1"># not a Python &quot;NoneType&quot;</span>
-</span><span class='line'><span class="l-Scalar-Plain">client</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">hosts</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">es.endpoint.com</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">use_ssl</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">True</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">ssl_no_validate</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">http_auth</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">admin:pass</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">timeout</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">30</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">master_only</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">loglevel</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">INFO</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">logfile</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">logformat</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">blacklist</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;urllib3&#39;</span><span class="p-Indicator">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the action config:</p>
-
-<figure class='code'><figcaption><span>action-reindex.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="c1"># Remember, leave a key empty if there is no value.  None will be a string,</span>
-</span><span class='line'><span class="c1"># not a Python &quot;NoneType&quot;</span>
-</span><span class='line'><span class="c1">#</span>
-</span><span class='line'><span class="c1"># Also remember that all examples have &#39;disable_action&#39; set to True.  If you</span>
-</span><span class='line'><span class="c1"># want to use this action as a template, be sure to set this to False after</span>
-</span><span class='line'><span class="c1"># copying it.</span>
-</span><span class='line'><span class="l-Scalar-Plain">actions</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">1</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">description</span><span class="p-Indicator">:</span> <span class="s">&quot;Reindex</span><span class="nv"> </span><span class="s">index-2017.10.{30,31}</span><span class="nv"> </span><span class="s">into</span><span class="nv"> </span><span class="s">new-index-2017.10&quot;</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">action</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">reindex</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">options</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">disable_action</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">wait_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">9</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">max_wait</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-1</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">request_body</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">index</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;index-2017.10.*&#39;</span><span class="p-Indicator">]</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">dest</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">index</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">new-index-2017.10</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">filters</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">filtertype</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">none</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the Elasticsearch Index:</h2>
-
-<p>Create the Index where we will reindex the data to:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPUT http://es.endpoint.com/new-index-2017.10 -d <span class="s1">&#39;{&quot;settings&quot;: {&quot;number_of_shards&quot;: 5, &quot;number_of_replicas&quot;: 1}}&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Run the Curator:</h2>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curator --config curator.yml action-reindex.yml
-</span><span class='line'>
-</span><span class='line'>2017-11-22 14:18:15,138 INFO      Task <span class="s2">&quot;reindex from [index-2017.10.*] to [index-2017.10]&quot;</span> with task_id <span class="s2">&quot;Za-sn0z3Q9-75xCMRwJ3-A:15782886&quot;</span> has been running <span class="k">for</span> 928.948195354 seconds
-</span><span class='line'>2017-11-22 14:18:24,152 INFO      GET https://es.endpoint.com:443/_tasks/Za-sn0z3Q9-75xCMRwJ3-A%3A15782886 <span class="o">[</span>status:200 request:0.005s<span class="o">]</span>
-</span><span class='line'>2017-11-22 14:18:24,153 INFO      Task <span class="s2">&quot;reindex from [index-2017.10.*] to [new-index-2017.10]&quot;</span> with task_id <span class="s2">&quot;Za-sn0z3Q9-75xCMRwJ3-A:15782886&quot;</span> has been running <span class="k">for</span> 937.962740393 seconds
-</span><span class='line'>2017-11-22 14:22:23,171 INFO      Action ID: 1, <span class="s2">&quot;reindex&quot;</span> completed.
-</span><span class='line'>2017-11-22 14:22:23,171 INFO      Job completed.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.elastic.co/guide/en/elasticsearch/client/curator/current/index.html">https://www.elastic.co/guide/en/elasticsearch/client/curator/current/index.html</a></li>
-<li><a href="https://qbox.io/blog/logstash-elasticsearch-curator-data-retention">https://qbox.io/blog/logstash-elasticsearch-curator-data-retention</a></li>
 </ul>
 
 ]]></content>

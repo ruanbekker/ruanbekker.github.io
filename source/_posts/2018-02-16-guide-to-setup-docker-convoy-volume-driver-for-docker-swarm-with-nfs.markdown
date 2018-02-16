@@ -8,7 +8,7 @@ categories: ["docker", "docker-swarm", "nfs", "storage", "convoy"]
 
 ![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
 
-In this post we will setup Rancher's Convoy Storage Plugin with NFS, to provide data persistence in Docker Swarm.
+In this post we will setup [Rancher's Convoy Storage Plugin](https://github.com/rancher/convoy) with NFS, to provide data persistence in Docker Swarm.
 
 ## The Overview:
 

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-02-11T17:51:16-05:00</updated>
+  <updated>2018-02-16T09:14:52-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,338 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Guide to Setup Docker Convoy Volume Driver for Docker Swarm With NFS]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/02/16/guide-to-setup-docker-convoy-volume-driver-for-docker-swarm-with-nfs/"/>
+    <updated>2018-02-16T08:51:59-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/02/16/guide-to-setup-docker-convoy-volume-driver-for-docker-swarm-with-nfs</id>
+    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
+
+<p>In this post we will setup Rancher&rsquo;s Convoy Storage Plugin with NFS, to provide data persistence in Docker Swarm.</p>
+
+<h2>The Overview:</h2>
+
+<p>This essentially means that we will have a NFS Volume, when the service gets created on Docker Swarm, the cluster creates these volumes with path mapping, so when a container gets spawned, restarted, scaled etc, the container that gets started on the new node will be aware of the volume, and will get the data that its expecting.</p>
+
+<p>Its also good to note that our NFS Server will be a single point of failure, therefore its also good to look at a Distributed Volume like <a href="https://sysadmins.co.za/tag/glusterfs">GlusterFS</a>, <a href="https://sysadmins.co.za/tag/xtreemfs/">XtreemFS</a>, <a href="">Ceph</a>, etc.</p>
+
+<ul>
+<li>NFS Server (10.8.133.83)</li>
+<li>Rancher Convoy Plugin on Each Docker Node in the Swarm (10.8.133.83, 10.8.166.19, 10.8.142.195)</li>
+</ul>
+
+
+<h2>Setup NFS:</h2>
+
+<p>Setup the NFS Server</p>
+
+<pre><code class="bash">$ sudo apt-get install nfs-kernel-server nfs-common -y
+$ mkdir /vol
+$ chown -R nobody:nogroup /vol
+$ echo '/vol 10.8.133.83(rw,sync,no_subtree_check) 10.8.166.19(rw,sync,no_subtree_check) 10.8.142.195(rw,sync,no_subtree_check)' &gt;&gt; /etc/exports
+$ sudo systemctl restart nfs-kernel-server
+$ sudo systemctl enable nfs-kernel-server
+</code></pre>
+
+<p>Setup the NFS Clients on each Docker Node:</p>
+
+<pre><code class="bash">$ sudo apt-get install nfs-common -y
+$ mount 10.8.133.83:/vol /mnt
+$ umount /mnt
+$ df -h
+</code></pre>
+
+<p>If you can see tht the volume is mounted, unmount it and add it to the <code>fstab</code> so the volume can be mounted on boot:</p>
+
+<pre><code class="bash">$ sudo bash -c "echo '10.8.133.83:/vol /mnt nfs auto,nofail,noatime,nolock,intr,tcp,actimeo=1800 0 0' &gt;&gt; /etc/fstab"
+$ sudo mount -a
+</code></pre>
+
+<h2>Install Rancher Convoy Plugin:</h2>
+
+<pre><code class="bash">$ cd /tmp
+$ wget https://github.com/rancher/convoy/releases/download/v0.5.0/convoy.tar.gz
+$ tar xzf convoy.tar.gz
+$ sudo cp convoy/convoy convoy/convoy-pdata_tools /usr/local/bin/
+$ sudo mkdir -p /etc/docker/plugins/
+$ sudo bash -c 'echo "unix:///var/run/convoy/convoy.sock" &gt; /etc/docker/plugins/convoy.spec'
+</code></pre>
+
+<h2>Create the init script:</h2>
+
+<p>Thanks to <a href="https://gist.github.com/deviantony/557984d62e867e6f505577b207db6ffc">deviantony</a></p>
+
+<pre><code class="bash">#!/bin/sh
+### BEGIN INIT INFO
+# Provides:
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Start daemon at boot time
+# Description:       Enable service provided by daemon.
+### END INIT INFO
+
+dir="/usr/local/bin"
+cmd="convoy daemon --drivers vfs --driver-opts vfs.path=/mnt/docker/volumes"
+user="root"
+name="convoy"
+
+pid_file="/var/run/$name.pid"
+stdout_log="/var/log/$name.log"
+stderr_log="/var/log/$name.err"
+
+get_pid() {
+    cat "$pid_file"
+}
+
+is_running() {
+    [ -f "$pid_file" ] &amp;&amp; ps `get_pid` &gt; /dev/null 2&gt;&amp;1
+}
+
+case "$1" in
+    start)
+    if is_running; then
+        echo "Already started"
+    else
+        echo "Starting $name"
+        cd "$dir"
+        if [ -z "$user" ]; then
+            sudo $cmd &gt;&gt; "$stdout_log" 2&gt;&gt; "$stderr_log" &amp;
+        else
+            sudo -u "$user" $cmd &gt;&gt; "$stdout_log" 2&gt;&gt; "$stderr_log" &amp;
+        fi
+        echo $! &gt; "$pid_file"
+        if ! is_running; then
+            echo "Unable to start, see $stdout_log and $stderr_log"
+            exit 1
+        fi
+    fi
+    ;;
+    stop)
+    if is_running; then
+        echo -n "Stopping $name.."
+        kill `get_pid`
+        for i in {1..10}
+        do
+            if ! is_running; then
+                break
+            fi
+
+            echo -n "."
+            sleep 1
+        done
+        echo
+
+        if is_running; then
+            echo "Not stopped; may still be shutting down or shutdown may have failed"
+            exit 1
+        else
+            echo "Stopped"
+            if [ -f "$pid_file" ]; then
+                rm "$pid_file"
+            fi
+        fi
+    else
+        echo "Not running"
+    fi
+    ;;
+    restart)
+    $0 stop
+    if is_running; then
+        echo "Unable to stop, will not attempt to start"
+        exit 1
+    fi
+    $0 start
+    ;;
+    status)
+    if is_running; then
+        echo "Running"
+    else
+        echo "Stopped"
+        exit 1
+    fi
+    ;;
+    *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
+</code></pre>
+
+<h2>Externally Managed Convoy Volumes</h2>
+
+<p>One thing to note is that, after your delete a volume, you will still need to delete the directory from the path where its hosted, as the application does not do that by itself.</p>
+
+<p>Creating the Volume Before hand:</p>
+
+<pre><code class="bash">$ convoy create test1
+test1
+
+$ docker volume ls
+DRIVER              VOLUME NAME
+convoy              test1
+
+$ cat /mnt/docker/volumes/config/vfs_volume_test1.json
+{"Name":"test1","Size":0,"Path":"/mnt/docker/volumes/test1","MountPoint":"","PrepareForVM":false,"CreatedTime":"Mon Feb 05 13:07:05 +0000 2018","Snapshots":{}}
+</code></pre>
+
+<p>Viewing the volume from another node:</p>
+
+<pre><code class="bash">$ docker volume ls
+DRIVER              VOLUME NAME
+convoy              test1
+</code></pre>
+
+<h2>Creating a Test Service:</h2>
+
+<p>Create a test service to test the data persistence, our docker-compose.yml:</p>
+
+<pre><code class="bash">version: '3.4'
+
+volumes:
+  test1:
+    external: true
+
+networks:
+  appnet:
+    external: true
+
+services:
+  test:
+    image: alpine:edge
+    command: sh -c "ping 127.0.0.1"
+    volumes:
+      - test1:/data
+    networks:
+      - appnet
+</code></pre>
+
+<p>Creating the Overlay Network and Deploying the Stack:</p>
+
+<pre><code class="bash">$ docker network create -d overlay appnet
+$ docker stack deploy -c docker-compose.yml apps
+Creating service apps_test
+</code></pre>
+
+<p>Write data to the volume in the container:</p>
+
+<pre><code>$ docker exec -it apps_test.1.iojo7fpw8jirqjs3iu8qr7qpe sh
+/ # echo "ok" &gt; /data/file.txt
+/ # cat /data/file.txt
+ok
+</code></pre>
+
+<p>Scale the service:</p>
+
+<pre><code class="bash">$ docker service scale apps_test=2
+apps_test scaled to 2
+</code></pre>
+
+<p>Inspect to see if the new replica is on another node:</p>
+
+<pre><code class="bash">$ docker service ps apps_test
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE               ERROR                         PORTS
+myrq2pc3z26z        apps_test.1         alpine:edge         scw-docker-1        Running             Running 45 seconds ago
+ny8t97l2q00c         \_ apps_test.1     alpine:edge         scw-docker-1        Shutdown            Failed 51 seconds ago       "task: non-zero exit (137)"
+iojo7fpw8jir         \_ apps_test.1     alpine:edge         scw-docker-1        Shutdown            Failed about a minute ago   "task: non-zero exit (137)"
+tt0nuusvgeki        apps_test.2         alpine:edge         scw-docker-2        Running             Running 15 seconds ago
+</code></pre>
+
+<p>Logon to the new container and test if the data is persisted:</p>
+
+<pre><code class="bash">$ docker exec -it apps_test.2.tt0nuusvgekirw1c5myu720ga sh
+/ # cat /data/file.txt
+ok
+</code></pre>
+
+<p>Delete the Stack and Redeploy and have a look at the data we created earlier, and you will notice the data is persisted:</p>
+
+<pre><code class="bash">$ docker stack rm apps
+$ docker stack deploy -c docker-compose.yml apps
+$ docker exec -it apps_test.1.la4w2sbuu8cmv6xamwxl7n0ip cat /data/file.txt
+ok
+$ docker stack rm apps
+</code></pre>
+
+<h2>Create Volume via Compose:</h2>
+
+<p>You can also create the volume on service/stack creation level, so you dont need to create the volume before hand, the compose file:</p>
+
+<pre><code class="yml">version: '3.4'
+
+volumes:
+  test2:
+    driver: convoy
+    driver_opts:
+      size: 10
+
+networks:
+  appnet:
+    external: true
+
+services:
+  test:
+    image: alpine:edge
+    command: sh -c "ping 127.0.0.1"
+    volumes:
+      - test2:/data
+    networks:
+      - appnet
+</code></pre>
+
+<p>Deploy the Stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c docker-compose-new.yml apps
+Creating service apps_test
+</code></pre>
+
+<p>List the volumes and you will notice that the volume was created:</p>
+
+<pre><code class="bash">$ docker volume ls
+DRIVER              VOLUME NAME
+convoy              apps_test2
+convoy              test1
+</code></pre>
+
+<p>Lets inspect the volume, to see more details about it:</p>
+
+<pre><code class="bash">docker volume inspect apps_test2
+[
+    {
+        "CreatedAt": "0001-01-01T00:00:00Z",
+        "Driver": "convoy",
+        "Labels": {
+            "com.docker.stack.namespace": "apps"
+        },
+        "Mountpoint": "/mnt/docker/volumes/apps_test2",
+        "Name": "apps_test2",
+        "Options": {
+            "size": "10"
+        },
+        "Scope": "local"
+    }
+]
+</code></pre>
+
+<p>As mentioned earlier, if you delete the volume, you need to delete the data directories as well</p>
+
+<pre><code class="bash">$ docker volume rm test1
+test1
+
+$ ls /mnt/docker/volumes/
+apps_test2  config  test1
+
+$ rm -rf /mnt/docker/volumes/test1
+</code></pre>
+
+<p>More info about the project:
+- <a href="https://github.com/rancher/convoy">https://github.com/rancher/convoy</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Using Hive for Small Datasets on My Mac Using Docker]]></title>
@@ -730,217 +1062,6 @@ Removing mysql_debug-client_1 ... done
 Removing mysql_db_1           ... done
 Removing mysql_adminer_1      ... done
 Network docknet is external, skipping
-</code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Running Java Web Applications on Tomcat With Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/10/24/running-java-web-applications-on-tomcat-with-docker-swarm/"/>
-    <updated>2017-10-24T09:37:38-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/10/24/running-java-web-applications-on-tomcat-with-docker-swarm</id>
-    <content type="html"><![CDATA[<p>From <a href="https://sysadmins.co.za/running-java-web-applications-on-docker-with-payara-micro/?referral=blog.ruanbekker.com?category=java">this post</a> we used Payara Micro to Setup a Web Application, and a full example was provided on how to create a <code>war</code> file that will be used for the deployment.</p>
-
-<p>Today we will be using Tomcat to deploy the same application. The official repository can be found on <a href="https://hub.docker.com/_/tomcat/">hub.docker.com/_/tomcat</a> .</p>
-
-<h2>Our Dockerfile for our Own Tomcat Image:</h2>
-
-<p>The <code>Dockerfile</code> is modified a bit (CATALINA_OPTS) to be able to pass <code>JVM</code> environment variables, but if you would like to use the standard image you can skip this and just use the image from their repository.</p>
-
-<pre><code class="bash">FROM openjdk:8-jre-alpine
-
-ENV CATALINA_HOME /usr/local/tomcat
-ENV PATH $CATALINA_HOME/bin:$PATH
-RUN mkdir -p "$CATALINA_HOME"
-WORKDIR $CATALINA_HOME
-ENV CATALINA_OPTS -Xmx768m -Xms512m -XX:PermSize=256m -XX:MaxPermSize=512m -XX:ReservedCodeCacheSize=64m -XX:+UseG1GC -XX:+CMSClassUnloadingEnabled -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps
-# let "Tomcat Native" live somewhere isolated
-ENV TOMCAT_NATIVE_LIBDIR $CATALINA_HOME/native-jni-lib
-ENV LD_LIBRARY_PATH ${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$TOMCAT_NATIVE_LIBDIR
-
-RUN apk add --no-cache gnupg
-
-# see https://www.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/KEYS
-# see also "update.sh" (https://github.com/docker-library/tomcat/blob/master/update.sh)
-ENV GPG_KEYS 05AB33110949707C93A279E3D3EFE6B686867BA6 07E48665A34DCAFAE522E5E6266191C37C037D42 47309207D818FFD8DCD3F83F1931D684307A10A5 541FBE7D8F78B25E055DDEE13C370389288584E7 61B832AC2F1C5A90F0F9B00A1C506407564C17A3 713DA88BE50911535FE716F5208B0AB1D63011C7 79F7026C690BAA50B92CD8B66A3AD3F4F22C4FED 9BA44C2621385CB966EBA586F72C284D731FABEE A27677289986DB50844682F8ACB77FC2E86E29AC A9C5DF4D22E99998D9875A5110C01C5A2F6059E7 DCFD35E0BF8CA7344752DE8B6FB21E8933C60243 F3A04C595DB5B6A5F1ECA43E3B7BBB100D811BBE F7DA48BB64BCB84ECBA7EE6935CD23C10D498E23
-RUN set -ex; \
-    for key in $GPG_KEYS; do \
-        gpg --keyserver ha.pool.sks-keyservers.net --recv-keys "$key"; \
-    done
-
-ENV TOMCAT_MAJOR 8
-ENV TOMCAT_VERSION 8.5.23
-ENV TOMCAT_SHA1 1ba27c1bb86ab9c8404e98068800f90bd662523c
-
-ENV TOMCAT_TGZ_URLS \
-# https://issues.apache.org/jira/browse/INFRA-8753?focusedCommentId=14735394#comment-14735394
-    https://www.apache.org/dyn/closer.cgi?action=download&amp;filename=tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz \
-# if the version is outdated, we might have to pull from the dist/archive :/
-    https://www-us.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz \
-    https://www.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz \
-    https://archive.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz
-
-ENV TOMCAT_ASC_URLS \
-    https://www.apache.org/dyn/closer.cgi?action=download&amp;filename=tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz.asc \
-# not all the mirrors actually carry the .asc files :'(
-    https://www-us.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz.asc \
-    https://www.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz.asc \
-    https://archive.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz.asc
-
-RUN set -eux; \
-    \
-    apk add --no-cache --virtual .fetch-deps \
-        ca-certificates \
-        openssl \
-    ; \
-    \
-    success=; \
-    for url in $TOMCAT_TGZ_URLS; do \
-        if wget -O tomcat.tar.gz "$url"; then \
-            success=1; \
-            break; \
-        fi; \
-    done; \
-    [ -n "$success" ]; \
-    \
-    echo "$TOMCAT_SHA1 *tomcat.tar.gz" | sha1sum -c -; \
-    \
-    success=; \
-    for url in $TOMCAT_ASC_URLS; do \
-        if wget -O tomcat.tar.gz.asc "$url"; then \
-            success=1; \
-            break; \
-        fi; \
-    done; \
-    [ -n "$success" ]; \
-    \
-    gpg --batch --verify tomcat.tar.gz.asc tomcat.tar.gz; \
-    tar -xvf tomcat.tar.gz --strip-components=1; \
-    rm bin/*.bat; \
-    rm tomcat.tar.gz*; \
-    \
-    nativeBuildDir="$(mktemp -d)"; \
-    tar -xvf bin/tomcat-native.tar.gz -C "$nativeBuildDir" --strip-components=1; \
-    apk add --no-cache --virtual .native-build-deps \
-        apr-dev \
-        coreutils \
-        dpkg-dev dpkg \
-        gcc \
-        libc-dev \
-        make \
-        "openjdk${JAVA_VERSION%%[-~bu]*}"="$JAVA_ALPINE_VERSION" \
-        openssl-dev \
-    ; \
-    ( \
-        export CATALINA_HOME="$PWD"; \
-        cd "$nativeBuildDir/native"; \
-        gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
-        ./configure \
-            --build="$gnuArch" \
-            --libdir="$TOMCAT_NATIVE_LIBDIR" \
-            --prefix="$CATALINA_HOME" \
-            --with-apr="$(which apr-1-config)" \
-            --with-java-home="$(docker-java-home)" \
-            --with-ssl=yes; \
-        make -j "$(nproc)"; \
-        make install; \
-    ); \
-    runDeps="$( \
-        scanelf --needed --nobanner --format '%n#p' --recursive "$TOMCAT_NATIVE_LIBDIR" \
-            | tr ',' '\n' \
-            | sort -u \
-            | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
-    )"; \
-    apk add --virtual .tomcat-native-rundeps $runDeps; \
-    apk del .fetch-deps .native-build-deps; \
-    rm -rf "$nativeBuildDir"; \
-    rm bin/tomcat-native.tar.gz; \
-    \
-# sh removes env vars it doesn't support (ones with periods)
-# https://github.com/docker-library/tomcat/issues/77
-    apk add --no-cache bash; \
-    find ./bin/ -name '*.sh' -exec sed -ri 's|^#!/bin/sh$|#!/usr/bin/env bash|' '{}' +
-
-# verify Tomcat Native is working properly
-RUN set -e \
-    &amp;&amp; nativeLines="$(catalina.sh configtest 2&gt;&amp;1)" \
-    &amp;&amp; nativeLines="$(echo "$nativeLines" | grep 'Apache Tomcat Native')" \
-    &amp;&amp; nativeLines="$(echo "$nativeLines" | sort -u)" \
-    &amp;&amp; if ! echo "$nativeLines" | grep 'INFO: Loaded APR based Apache Tomcat Native library' &gt;&amp;2; then \
-        echo &gt;&amp;2 "$nativeLines"; \
-        exit 1; \
-    fi
-
-EXPOSE 8080
-CMD ["catalina.sh", "run"]
-</code></pre>
-
-<h2>Building our Image and Pusing to our Registry:</h2>
-
-<pre><code class="bash">$ docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-$ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-</code></pre>
-
-<h2>Dockerfile for our Application:</h2>
-
-<p>Now that we have built our image for Tomcat, we can write our <code>Dockerfile</code> for our application, note that the <code>hello.war</code> file also needs to be in the same working directory, unless written otherwise:</p>
-
-<pre><code class="docker">FROM registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-COPY hello.war /usr/local/tomcat/webapps/hello.war
-</code></pre>
-
-<h2>Setup the Compose file for our Stack:</h2>
-
-<p>We will use docker stack to deploy our application, note that I have <a href="https://sysadmins.co.za/traefik-a-modern-http-reverse-proxy-and-load-balancer-for-microservices-such-as-docker/">Traefik</a> that acts as my reverse proxy.</p>
-
-<p>Below, our <code>app.yml</code> compose file:</p>
-
-<pre><code class="yml">version: '3'
-
-services:
-  hello:
-    image: registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-    networks:
-      - appnet
-    deploy:
-      labels:
-        - "traefik.port=8080"
-        - "traefik.docker.network=appnet"
-        - "traefik.frontend.rule=Host:apps.mydomain.com; PathPrefix: /hello/"
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - 'node.role==worker'
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<h2>Deploy our Application:</h2>
-
-<p>From our compose file we defined that our network is external, so if you are using the same name, and you have not yet setup the overlay network:</p>
-
-<pre><code class="bash">$ docker network create --driver overlay appnet
-</code></pre>
-
-<p>Now deploy the stack:</p>
-
-<pre><code class="bash">$ docker stack deploy --compose-file app.yml apps
-</code></pre>
-
-<h2>Testing our Application:</h2>
-
-<pre><code class="bash">$ curl http://apps.mydomain.com/hello/
-
-&lt;!DOCTYPE html&gt;
-&lt;html&gt;
-            Hello World!
-   Test Page with Docker + Payara Micro&lt;/h3&gt;
-
-   Serving From ContainerId: d24f8cd982fc
-&lt;/html&gt;
 </code></pre>
 ]]></content>
   </entry>

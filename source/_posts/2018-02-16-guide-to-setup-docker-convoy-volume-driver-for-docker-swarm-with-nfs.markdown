@@ -50,6 +50,8 @@ $ sudo mount -a
 
 ## Install Rancher Convoy Plugin:
 
+The Plugin needs to be installed on each docker node that will be part of the swarm:
+
 ```bash
 $ cd /tmp
 $ wget https://github.com/rancher/convoy/releases/download/v0.5.0/convoy.tar.gz
@@ -163,6 +165,26 @@ esac
 
 exit 0
 ```
+
+Make the script executable:
+
+```bash
+$ chmod +x /etc/init.d/convoy
+```
+
+Enable the service on boot:
+
+```bash
+$ sudo systemctl enable convoy
+```
+
+Start the service:
+
+```bash
+$ sudo /etc/init.d/convoy start
+```
+
+This should be done on all the nodes.
 
 ## Externally Managed Convoy Volumes
 

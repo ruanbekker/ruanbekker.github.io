@@ -10,7 +10,8 @@ As ~~until now, AWS does not offer VPC Support for Elasticsearch~~, so this make
 
 One workaround would be to setup a Nginx Reverse Proxy on AWS within the your Private VPC, associate a EIP on your Nginx EC2 Instance, then authorize your EIP on your Elasticsearch IP Access Policy.
 
-*Update*:
+**Update**:
+
 - [Elasticsearch Announced VPC Support for Elasticsearch](https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-vpc.html)
 
 ## Our Setup:

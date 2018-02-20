@@ -6,9 +6,12 @@ comments: true
 categories: ["aws", "nginx", "elasticsearch", "kibana", "security"] 
 ---
 
-As until now, AWS does not offer VPC Support for Elasticsearch, so this make things a bit difficult authorizing Private IP Ranges.
+As ~~until now, AWS does not offer VPC Support for Elasticsearch~~, so this make things a bit difficult authorizing Private IP Ranges.
 
 One workaround would be to setup a Nginx Reverse Proxy on AWS within the your Private VPC, associate a EIP on your Nginx EC2 Instance, then authorize your EIP on your Elasticsearch IP Access Policy.
+
+*Update*:
+- [Elasticsearch Announced VPC Support for Elasticsearch](https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-vpc.html)
 
 ## Our Setup:
 
@@ -159,3 +162,6 @@ Next you can configure your Route 53 Hosted Zone, `elk.mydomain.com` to map to y
 ## End Result
 
 Now you should be able to access Elasticsearch on `http://elk.mydomain.com/` and Kibana on `http://elk.mydomain.com/kibana` after authenticating.
+
+<p>
+<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 

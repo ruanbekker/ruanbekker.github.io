@@ -6,6 +6,8 @@ comments: true
 categories: ["golang", "programming", "golang-tutorial"] 
 ---
 
+![](![](https://i.snag.gy/VJmUZz.jpg))
+
 Today we will create a very basic application to read content from a file, and write the content from the file back to disk, but to another filename. 
 
 Basically, doing a copy of the file to another filename.
@@ -83,4 +85,4 @@ d3b07384d113edec49eaa6238ad5ff00  destination-data.txt
 
 ## Next:
 
-This was a very static way of doing it, as you need to hardcode the filenames. In the next post I will show how to use arguments to make it more dynamic.
+This was a very static way of doing it, as you need to hardcode the filenames. In the [next post](https://goo.gl/t8fasN) I will show how to use arguments to make it more dynamic.

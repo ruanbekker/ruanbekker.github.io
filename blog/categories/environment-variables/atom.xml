@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Environment-variables | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/environment-variables/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2018-03-12T18:26:55-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Populate Environment Variables From Docker Secrets With a Flask Demo App]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app/"/>
+    <updated>2018-03-12T18:16:42-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app</id>
+    <content type="html"><![CDATA[<h2>Docker Secrets Exporter to Environment Variable</h2>
+
+<p>In this post we will create a basic Python Flask WebApp, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.</p>
+
+<h2>Our Directory Setup:</h2>
+
+<p>This can be retrieved from <a href="https://github.com/ruanbekker/docker-swarm-apps/tree/master/tools-secrets-env-exporter">github.com/ruanbekker/docker-swarm-apps/tool-secrets-env-exporter</a>, but I will place the code in here as well.</p>
+
+<pre><code class="bash Dockerfile:">FROM alpine:edge
+RUN apk add --no-cache python2 py2-pip &amp;&amp; pip install flask
+ADD exporter.py /exporter.py
+ADD boot.sh /boot.sh
+ADD app.py /app.py
+CMD ["/bin/sh", "/boot.sh"]
+</code></pre>
+
+<pre><code class="python exporter.py">import os
+from glob import glob
+
+for var in glob('/run/secrets/*'):
+    k=var.split('/')[-1]
+    v=open(var).read().rstrip('\n')
+    os.environ[k] = v
+    print("export {key}={value}".format(key=k,value=v))
+</code></pre>
+
+<pre><code class="python app.py">import os
+from flask import Flask
+
+flask_host = str(os.environ['flask_host'])
+flask_port = int(os.environ['flask_port'])
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return 'ok\n'
+
+if __name__ == '__main__':
+    app.run(host=flask_host, port=flask_port)
+</code></pre>
+
+<pre><code class="bash boot.sh">#!/bin/sh
+set -e
+eval $(python /exporter.py)
+python /app.py
+</code></pre>
+
+<h2>Flow Information:</h2>
+
+<p>The exporter script checks all the secrets that is mounted to the container, then formats the secrets to a key/value pair, which then exports the environment variables to the current shell, which thereafter gets read by the flask application.</p>
+
+<h2>Usage:</h2>
+
+<p>Create Docker Secrets:</p>
+
+<pre><code>$ echo 5001 | docker secret create flask_port -
+$ echo 0.0.0.0 | docker secret create flask_host -
+</code></pre>
+
+<p>Build and Push the Image:</p>
+
+<pre><code>$ docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
+$ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
+</code></pre>
+
+<p>Create the Service, and specify the secrets that we created earlier:</p>
+
+<pre><code>$ docker service create --name webapp \
+--secret source=flask_host,target=flask_host \
+--secret source=flask_port,target=flask_port \
+registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
+</code></pre>
+
+<p>Exec into the container, list to see where the secrets got populated:</p>
+
+<pre><code>$ ls /run/secrets/
+flask_host  flask_port
+</code></pre>
+
+<p>Do a netstat, to see that the value from the created secret is listening:</p>
+
+<pre><code>$ netstat -tulpn
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:5001            0.0.0.0:*               LISTEN      7/python
+</code></pre>
+
+<p>Do a GET request on the Flask Application:</p>
+
+<pre><code>$ curl http://0.0.0.0:5001/
+ok
+</code></pre>
+]]></content>
+  </entry>
+  
+</feed>

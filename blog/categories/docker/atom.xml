@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-03-02T17:25:54-05:00</updated>
+  <updated>2018-03-12T18:26:55-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,107 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Populate Environment Variables From Docker Secrets With a Flask Demo App]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app/"/>
+    <updated>2018-03-12T18:16:42-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app</id>
+    <content type="html"><![CDATA[<h2>Docker Secrets Exporter to Environment Variable</h2>
+
+<p>In this post we will create a basic Python Flask WebApp, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.</p>
+
+<h2>Our Directory Setup:</h2>
+
+<p>This can be retrieved from <a href="https://github.com/ruanbekker/docker-swarm-apps/tree/master/tools-secrets-env-exporter">github.com/ruanbekker/docker-swarm-apps/tool-secrets-env-exporter</a>, but I will place the code in here as well.</p>
+
+<pre><code class="bash Dockerfile:">FROM alpine:edge
+RUN apk add --no-cache python2 py2-pip &amp;&amp; pip install flask
+ADD exporter.py /exporter.py
+ADD boot.sh /boot.sh
+ADD app.py /app.py
+CMD ["/bin/sh", "/boot.sh"]
+</code></pre>
+
+<pre><code class="python exporter.py">import os
+from glob import glob
+
+for var in glob('/run/secrets/*'):
+    k=var.split('/')[-1]
+    v=open(var).read().rstrip('\n')
+    os.environ[k] = v
+    print("export {key}={value}".format(key=k,value=v))
+</code></pre>
+
+<pre><code class="python app.py">import os
+from flask import Flask
+
+flask_host = str(os.environ['flask_host'])
+flask_port = int(os.environ['flask_port'])
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return 'ok\n'
+
+if __name__ == '__main__':
+    app.run(host=flask_host, port=flask_port)
+</code></pre>
+
+<pre><code class="bash boot.sh">#!/bin/sh
+set -e
+eval $(python /exporter.py)
+python /app.py
+</code></pre>
+
+<h2>Flow Information:</h2>
+
+<p>The exporter script checks all the secrets that is mounted to the container, then formats the secrets to a key/value pair, which then exports the environment variables to the current shell, which thereafter gets read by the flask application.</p>
+
+<h2>Usage:</h2>
+
+<p>Create Docker Secrets:</p>
+
+<pre><code>$ echo 5001 | docker secret create flask_port -
+$ echo 0.0.0.0 | docker secret create flask_host -
+</code></pre>
+
+<p>Build and Push the Image:</p>
+
+<pre><code>$ docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
+$ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
+</code></pre>
+
+<p>Create the Service, and specify the secrets that we created earlier:</p>
+
+<pre><code>$ docker service create --name webapp \
+--secret source=flask_host,target=flask_host \
+--secret source=flask_port,target=flask_port \
+registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
+</code></pre>
+
+<p>Exec into the container, list to see where the secrets got populated:</p>
+
+<pre><code>$ ls /run/secrets/
+flask_host  flask_port
+</code></pre>
+
+<p>Do a netstat, to see that the value from the created secret is listening:</p>
+
+<pre><code>$ netstat -tulpn
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:5001            0.0.0.0:*               LISTEN      7/python
+</code></pre>
+
+<p>Do a GET request on the Flask Application:</p>
+
+<pre><code>$ curl http://0.0.0.0:5001/
+ok
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Guide to Setup Docker Convoy Volume Driver for Docker Swarm With NFS]]></title>
@@ -939,149 +1040,6 @@ mysql&gt; show databases;
 </code></pre>
 
 <p>By design docker is stateless, but as we mapped the host&rsquo;s path to the container our data is persistent. As we have set a constraint so that the container must only spin up on this node, the container will always have access to the data path.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Local Dev Environment With Docker MySQL and Adminer WebUI With Docker Compose]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/11/13/local-dev-environment-with-docker-mysql-and-adminer-webui-with-docker-compose/"/>
-    <updated>2017-11-13T16:15:34-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/11/13/local-dev-environment-with-docker-mysql-and-adminer-webui-with-docker-compose</id>
-    <content type="html"><![CDATA[<p>Let&rsquo;s setup a local development environment with Docker, MySQL and Adminer WebUI using Docker Compose</p>
-
-<h2>Docker Compose File:</h2>
-
-<p>Let&rsquo;s look at our docker-compose file:</p>
-
-<pre><code class="yml">version: '3.2'
-
-services:
-  mysql-client:
-    image: alpine:edge
-    volumes:
-      - type: bind
-        source: ./workspace
-        target: /root/workspace
-    networks:
-      - docknet
-    command: ping 127.0.0.1
-
-  db:
-    image: mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: example
-    networks:
-      - docknet
-    volumes:
-      - type: volume
-        source: dbdata
-        target: /var/lib/mysql
-
-  adminer:
-    image: adminer
-    restart: always
-    ports:
-      - 8080:8080
-    networks:
-      - docknet
-
-networks:
-    docknet:
-        external: true
-
-volumes:
-  dbdata:
-    external: true
-</code></pre>
-
-<h2>Pre-Requirements:</h2>
-
-<p>Let&rsquo;s create our pre-requirement:</p>
-
-<ol>
-<li>Networks:</li>
-</ol>
-
-
-<pre><code class="bash">$ docker network create docknet
-</code></pre>
-
-<ol>
-<li>Volumes:</li>
-</ol>
-
-
-<p>Our Volume for MySQL so that we have persistent data:</p>
-
-<pre><code class="bash">$ docker volume create dbdata
-</code></pre>
-
-<p>Our <code>workspace</code> directory that will be persistent in our <code>debug-client</code> alpine container:</p>
-
-<pre><code class="bash">$ mkdir -p workspace/python
-</code></pre>
-
-<h2>Launching our Services:</h2>
-
-<p>Let&rsquo;s launch our services:</p>
-
-<pre><code class="bash ">$ docker-compose -f mysql-compose.yml up -d
-Creating mysql_db_1 ...
-Creating mysql_adminer_1
-Creating mysql_debug-client_1
-</code></pre>
-
-<p>Listing our Containers:</p>
-
-<pre><code class="bash">$ docker ps
-CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                      NAMES
-e05804ab6d64        alpine:edge         "ping 127.0.0.1"         21 seconds ago      Up 4 seconds                                   mysql_debug-client_1
-c052ceeb6d3b        mysql               "docker-entrypoint..."   21 seconds ago      Up 5 seconds        3306/tcp                   mysql_db_1
-2b0446daab4c        adminer             "entrypoint.sh doc..."   26 seconds ago      Up 5 seconds        0.0.0.0:8080-&gt;8080/tcp     mysql_adminer_1
-</code></pre>
-
-<h2>Using the Debug Container:</h2>
-
-<p>I will use the debug container as the client to connect to the internal services, for example, the mysql-client:</p>
-
-<pre><code class="bash">$ apk update
-$ apk add mysql-client
-$ mysql -h db -u root -ppassword
-MySQL [(none)]&gt;
-</code></pre>
-
-<p>Also, you will find the persistent data directory for our workspace:</p>
-
-<pre><code class="bash">$ ls /root/workspace/
-python
-</code></pre>
-
-<h2>Accessing the MySQL WebUI: Adminer</h2>
-
-<p>Access the service via the exposed endpoint:</p>
-
-<pre><code class="bash">+ http://localhost:8080/
-</code></pre>
-
-<p>The login view:</p>
-
-<p><img src="https://i.snag.gy/m8dUxe.jpg" alt="" /></p>
-
-<p>Creating the Table:</p>
-
-<p><img src="https://i.snag.gy/tPVbg6.jpg" alt="" /></p>
-
-<h2>Deleting the Environment:</h2>
-
-<p>The External Resources will not be deleted:</p>
-
-<pre><code class="bash">$ docker-compose -f mysql-compose.yml down
-Removing mysql_debug-client_1 ... done
-Removing mysql_db_1           ... done
-Removing mysql_adminer_1      ... done
-Network docknet is external, skipping
-</code></pre>
 ]]></content>
   </entry>
   

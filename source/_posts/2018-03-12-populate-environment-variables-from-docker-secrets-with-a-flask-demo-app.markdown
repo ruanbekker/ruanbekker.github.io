@@ -8,9 +8,8 @@ categories: ["docker", "swarm", "secrets", "environment-variables"]
 
 ![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
 
-## Docker Secrets Exporter to Environment Variable
 
-In this post we will create a basic Python Flask WebApp, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.
+In this post we will create a basic Python Flask WebApp on Docker Swarm, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.
 
 ## Our Directory Setup:
 

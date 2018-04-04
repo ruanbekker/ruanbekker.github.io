@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Ssm | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/ssm/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2018-04-04T18:34:07-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Using AWS SSM Parameter Store to Retrieve Secrets Encrypted by KMS Using Python]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/04/04/using-aws-ssm-parameter-store-to-retrieve-secrets-encrypted-by-kms-using-python/"/>
+    <updated>2018-04-04T16:47:16-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/04/04/using-aws-ssm-parameter-store-to-retrieve-secrets-encrypted-by-kms-using-python</id>
+    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/4ytE3W.jpg" alt="" /></p>
+
+<p>Today we will use Amazon Web Services SSM Service to store secrets in their Parameter Store which we will encyrpt using KMS.</p>
+
+<p>Then we will read the data from SSM and decrypt using our KMS key. We will then end it off by writing a Python Script that reads the AWS credentials, authenticates with SSM and then read the secret values that we stored.</p>
+
+<h2>The Do List:</h2>
+
+<p>We will break up this post in the following topics:</p>
+
+<ul>
+<li>Create a KMS Key which will use to Encrypt/Decrypt the Parameter in SSM</li>
+<li>Create the IAM Policy which will be used to authorize the Encrypt/Decrypt by the KMS ID</li>
+<li>Create the KMS Alias</li>
+<li>Create the Parameter using PutParameter as a SecureString to use Encryption with KMS</li>
+<li>Describe the Parameters</li>
+<li>Read the Parameter with and without Decryption to determine the difference using GetParameter</li>
+<li>Read the Parameters using GetParameters</li>
+<li>Environment Variable Example</li>
+</ul>
+
+
+<h2>Create the KMS Key:</h2>
+
+<p>As the administrator, or root account, create the KMS Key:</p>
+
+<pre><code class="python">&gt;&gt;&gt; import boto3
+&gt;&gt;&gt; session = boto3.Session(region_name='eu-west-1', profile_name='personal')
+&gt;&gt;&gt; iam = session.client('iam')
+&gt;&gt;&gt; kms = session.client('kms')
+&gt;&gt;&gt; response = kms.create_key(
+    Description='Ruan Test Key', 
+    KeyUsage='ENCRYPT_DECRYPT', 
+    Origin='AWS_KMS', 
+    BypassPolicyLockoutSafetyCheck=False, 
+    Tags=[{'TagKey': 'Name', 'TagValue': 'RuanTestKey'}]
+)
+
+&gt;&gt;&gt; print(response['KeyMetadata']['KeyId'])
+foobar-2162-4363-ba02-a953729e5ce6 
+</code></pre>
+
+<p>Create the IAM Policy:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = iam.create_policy(
+    PolicyName='ruan-kms-test-policy', 
+    PolicyDocument='{
+        "Version": "2012-10-17", 
+        "Statement": [{
+            "Sid": "Stmt1517212478199", 
+            "Action": [
+                "kms:Decrypt", 
+                "kms:Encrypt"
+            ], 
+            "Effect": "Allow", 
+            "Resource": "arn:aws:kms:eu-west-1:0123456789012:key/foobar-2162-4363-ba02-a953729e5ce6"
+        }]
+    }', 
+    Description='Ruan KMS Test Policy'
+)
+&gt;&gt;&gt; print(response['Policy']['Arn'])
+arn:aws:iam::0123456789012:policy/ruan-kms-test-policy
+</code></pre>
+
+<p>Create the KMS Alias:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = kms.create_alias(AliasName='alias/ruan-test-kms', TargetKeyId='foobar-2162-4363-ba02-a953729e5ce6')
+</code></pre>
+
+<h2>Publish the Secrets to SSM:</h2>
+
+<p>As the administrator, write the secret values to the parameter store in SSM. We will publish a secret with the Parameter: <code>/test/ruan/mysql/db01/mysql_hostname</code> and the Value: <code>db01.eu-west-1.mycompany.com</code>:</p>
+
+<pre><code class="python">&gt;&gt;&gt; from getpass import getpass
+&gt;&gt;&gt; secretvalue = getpass()
+Password:
+
+&gt;&gt;&gt; print(secretvalue)
+db01.eu-west-1.mycompany.com
+
+&gt;&gt;&gt; response = ssm.put_parameter(
+    Name='/test/ruan/mysql/db01/mysql_hostname', 
+    Description='RuanTest MySQL Hostname', 
+    Value=secretvalue, 
+    Type='SecureString', 
+    KeyId='foobar-2162-4363-ba02-a953729e5ce6', 
+    Overwrite=False
+)
+</code></pre>
+
+<h2>Describe Parameters</h2>
+
+<p>Describe the Parameter that we written to SSM:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = ssm.describe_parameters(
+    Filters=[{'Key': 'Name', 'Values': ['/test/ruan/mysql/db01/mysql_hostname']}]
+)
+&gt;&gt;&gt; print(response['ResponseMetadata']['Parameters'][0]['Name'])
+'/test/ruan/mysql/db01/mysql_hostname' 
+</code></pre>
+
+<h2>Reading from SSM:</h2>
+
+<p>Read the Parameter value from SSM without using decryption via KMS:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = ssm.get_parameter(Name='/test/ruan/mysql/db01/mysql_hostname')
+&gt;&gt;&gt; print(response['Parameter']['Value'])
+AQICAHh7jazUUBgNxMQbYFeve2/p+UWTuyAd5F3ZJkZkf9+hwgF+H+kSABfPCTEarjXqYBaJAAAAejB4BgkqhkiG9w0BBwagazBpAgEAMGQGCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMJUEuT8wDGCQ3zRBmAgEQgDc8LhLgFe+Rutgi0hOKnjTEVQa2lKTy3MmTDZEeLy3Tlr5VUl6AVJNBpd4IWJTbj5YuqrrAAWWJ
+</code></pre>
+
+<p>As you can see the value is encrypted, this time read the parameter value with specifying decryption via KMS:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = ssm.get_parameter(Name='/test/ruan/mysql/db01/mysql_hostname', WithDecryption=True)
+&gt;&gt;&gt; print(response['Parameter']['Value'])
+db01.eu-west-1.mycompany.com
+</code></pre>
+
+<h2>Grant Permissions to Instance Profile:</h2>
+
+<p>Now we will create a policy that can only decrypt and read values from SSM that matches the path: <code>/test/ruan/mysql/db01/mysql_*</code>. This policy will be associated to a instance profile role, which will be used by EC2, where our application will read the values from.</p>
+
+<p>Our policy will look like this:</p>
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Stmt1517398919242",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:kms:eu-west-1:0123456789012:key/foobar-2162-4363-ba02-a953729e5ce6"
+    },
+    {
+      "Sid": "Stmt1517399021096",
+      "Action": [
+        "ssm:GetParameter"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:ssm:eu-west-1:0123456789012:parameter/test/ruan/mysql/db01/mysql_*"
+    }
+  ]
+}
+</code></pre>
+
+<p>Create the Policy:</p>
+
+<pre><code class="python">&gt;&gt;&gt; pol = '{"Version": "2012-10-17","Statement": [{"Sid": "Stmt1517398919242","Action": ["kms:Decrypt"],"Effect": "Allow","Resource": "arn:aws:kms:eu-west-1:0123456789012:key/foobar-2162-4363-ba02-a953729e5ce6"},{"Sid": "Stmt1517399021096","Action": ["ssm:GetParameter"],"Effect": "Allow","Resource": "arn:aws:ssm:eu-west-1:0123456789012:parameter/test/ruan/mysql/db01/mysql_*"}]}'
+&gt;&gt;&gt; response = iam.create_policy(PolicyName='RuanGetSSM-Policy', PolicyDocument=pol, Description='Test Policy to Get SSM Parameters')
+</code></pre>
+
+<p>Create the instance profile:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = iam.create_instance_profile(InstanceProfileName='RuanTestSSMInstanceProfile')
+</code></pre>
+
+<p>Create the Role:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = iam.create_role(RoleName='RuanTestGetSSM-Role', AssumeRolePolicyDocument='{"Version": "2012-10-17","Statement": [{"Sid": "","Effect": "Allow","Principal": {"Service": "ec2.amazonaws.com"},"Action": "sts:AssumeRole"}]}')
+</code></pre>
+
+<p>Associate the Role and Instance Profile:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = iam.add_role_to_instance_profile(InstanceProfileName='RuanTestSSMInstanceProfile', RoleName='RuanTestGetSSM-Role')
+</code></pre>
+
+<p>Attach the Policy to the Role:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = iam.put_role_policy(RoleName='RuanTestGetSSM-Role', PolicyName='RuanTestGetSSMPolicy1', PolicyDocument=pol')
+</code></pre>
+
+<p>Launch the EC2 instance with the above mentioned Role. Create the <code>get_ssm.py</code> and run it to decrypt and read the value from SSM:</p>
+
+<pre><code class="python get_ssm.py">import boto3
+session = boto3.Session(region_name='eu-west-1')
+ssm = session.client('ssm')
+hostname = ssm.get_parameter(Name='/test/ruan/mysql/db01/mysql_hostname', WithDecryption=True)
+print(hostname['Parameter']['Value'])
+</code></pre>
+
+<p>Run it:</p>
+
+<pre><code class="bash">$ python get_ssm.py
+db01.eu-west-1.mycompany.com
+</code></pre>
+
+<h2>Reading with GetParameters:</h2>
+
+<p>So say that we created more than one parameter in the path that we allowed, lets use <code>GetParameters</code> to read more than one Parameter:</p>
+
+<pre><code class="python get_parameters.py">import boto3
+session = boto3.Session(region_name='eu-west-1')
+ssm = session.client('ssm')
+response = ssm.get_parameters(
+    Names=[
+        '/test/ruan/mysql/db01/mysql_hostname', 
+        '/test/ruan/mysql/db01/mysql_user'
+    ], 
+    WithDecryption=True
+)
+
+for secrets in response['Parameters']:
+    if secrets['Name'] == '/test/ruan/mysql/db01/mysql_hostname':
+        print("Hostname: {}".format(secrets['Value']))
+    if secrets['Name'] == '/test/ruan/mysql/db01/mysql_user':
+        print("Username: {}".format(secrets['Value']))
+</code></pre>
+
+<p>Run it:</p>
+
+<pre><code class="bash">$ python get_parameters.py
+Hostname: db01.eu-west-1.mycompany.com
+Username: super_dba
+</code></pre>
+
+<h2>Environment Variable Example from an Application:</h2>
+
+<p>Set the Environment Variable value to the SSM key:</p>
+
+<pre><code class="bash">$ export MYSQL_HOSTNAME="/test/ruan/mysql/db01/mysql_hostname"
+$ export MYSQL_USERNAME="/test/ruan/mysql/db01/mysql_user"
+</code></pre>
+
+<p>The application code:</p>
+
+<pre><code class="python">import os
+import boto3
+
+session = boto3.Session(region_name='eu-west-1')
+ssm = session.client('ssm')
+
+MYSQL_HOSTNAME = os.environ.get('MYSQL_HOSTNAME')
+MYSQL_USERNAME = os.environ.get('MYSQL_USERNAME')
+
+hostname = ssm.get_parameter(Name=MYSQL_HOSTNAME, WithDecryption=True)
+username = ssm.get_parameter(Name=MYSQL_USERNAME, WithDecryption=True)
+
+print("Hostname: {}".format(hostname['Parameter']['Value']))
+print("Username: {}".format(username['Parameter']['Value']))
+</code></pre>
+
+<p>Let the application transform the key to the SSM Value:</p>
+
+<pre><code class="bash">$ python app.py
+Hostname: db01.eu-west-1.mycompany.com
+Username: super_dba
+</code></pre>
+
+<h2>Resources:</h2>
+
+<p>Great thanks to the following resources:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-su-organize.html">https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-su-organize.html</a></li>
+<li><a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-roles.html">https://docs.aws.amazon.com/cli/latest/userguide/cli-roles.html</a></li>
+<li><a href="https://github.com/iMilnb/awstools/blob/master/platforms/roles/mkrole.py">https://github.com/iMilnb/awstools/blob/master/platforms/roles/mkrole.py</a></li>
+<li><a href="https://github.com/ktruckenmiller/ssm-get-parameter-by-path/blob/master/python.py">https://github.com/ktruckenmiller/ssm-get-parameter-by-path/blob/master/python.py</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

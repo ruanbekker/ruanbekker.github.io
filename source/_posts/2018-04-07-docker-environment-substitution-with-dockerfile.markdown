@@ -48,4 +48,5 @@ env var: NOT_DEFINED
 
 ## Resources:
 
+- https://stackify.com/config-values-docker-containers-environment-variables/
 - https://tryolabs.com/blog/2015/03/26/configurable-docker-containers-for-multiple-environments/

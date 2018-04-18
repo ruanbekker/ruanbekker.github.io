@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Elasticsearch | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/elasticsearch/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-04-18T13:32:07-04:00</updated>
+  <updated>2018-04-18T13:32:54-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,174 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Monitor a Amazon Elasticsearch Service Cluster Update Process]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/04/16/how-to-monitor-a-amazon-elasticsearch-service-cluster-update-process/"/>
+    <updated>2018-04-16T03:24:09-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/04/16/how-to-monitor-a-amazon-elasticsearch-service-cluster-update-process</id>
+    <content type="html"><![CDATA[<p>When you make a configuration change on Amazon&rsquo;s Elasticsearch, it does a blue/green deployment. So new nodes will be allocated to the cluster (which you will notice from CloudWatch when looking at the nodes metrics). Once these nodes are deployed, data gets copied accross to the new nodes, and traffic gets directed to the new nodes, and once its done, the old nodes gets terminated.</p>
+
+<p>Note: While there will be more nodes in the cluster, you will not get billed for the extra nodes.</p>
+
+<p>While this process is going, you can monitor your cluster to see the progress:</p>
+
+<h2>The Shards API:</h2>
+
+<p>Using the <code>/_cat/shards</code> API, you will find that the shards are in a RELOCATING state (keeping in mind, this is when the change is still busy)</p>
+
+<pre><code class="bash">curl -s -XGET 'https://search-example-elasticsearch-cluster-6-abc123defghijkl5airxticzvjaqy.eu-west-1.es.amazonaws.com/_cat/shards?v' | grep -v 'STARTED'
+index                                   shard prirep state         docs    store ip            node
+example-app1-2018.02.23                 4     r      RELOCATING  323498 1018.3mb x.x.x.x x2mKoe_ -&gt; x.x.x.x GyNiRJyeSTifN_9JZisGuQ GyNiRJy
+example-app1-2018.02.28                 2     p      RELOCATING  477609    1.5gb x.x.x.x x2mKoe_ -&gt; x.x.x.x sOihejw1SrKtag_LO1RGIA sOihejw
+example-app1-2018.03.01                 3     r      RELOCATING  463143    1.5gb x.x.x.x  ZZfv-Ha -&gt; x.x.x.x jOchdCZWQq-TAPZNTadNoA jOchdCZ
+fortinet-syslog-2018.02                 0     p      RELOCATING 1218556  462.2mb x.x.x.x  moQA57Y -&gt; x.x.x.x sOihejw1SrKtag_LO1RGIA sOihejw
+example-app1-2018.03.23                 3     r      RELOCATING  821254    2.4gb x.x.x.x  moQA57Y -&gt; x.x.x.x GyNiRJyeSTifN_9JZisGuQ GyNiRJy
+example-app1-2018.04.02                 2     p      RELOCATING 1085279    3.4gb x.x.x.x x2mKoe_ -&gt; x.x.x.x jOchdCZWQq-TAPZNTadNoA jOchdCZ
+example-app1-2018.02.08                 3     p      RELOCATING  136321    125mb x.x.x.x ZUZSFWu -&gt; x.x.x.x tyU_V_KLS5mZXEwnF-YEAQ tyU_V_K
+fortinet-syslog-2018.04                 4     r      RELOCATING 7513842    2.8gb x.x.x.x  ZZfv-Ha -&gt; x.x.x.x il1WsroNSgGmXJugds_aMQ il1Wsro
+example-app1-2018.04.09                 1     r      RELOCATING 1074581    3.5gb x.x.x.x  ZRzKGe5 -&gt; x.x.x.x il1WsroNSgGmXJugds_aMQ il1Wsro
+example-app1-2018.04.09                 0     p      RELOCATING 1074565    3.5gb x.x.x.x  moQA57Y -&gt; x.x.x.x tyU_V_KLS5mZXEwnF-YEAQ tyU_V_K
+</code></pre>
+
+<h2>The Recovery API:</h2>
+
+<p>We can then use the <code>/_cat/recovery</code> API, which will show the progress of the shards transferring to the other nodes, you will find the following:</p>
+
+<ul>
+<li><code>index, shard, time, type, stage, source_host, target_host, files, files_percent, bytes, bytes_percent</code></li>
+</ul>
+
+
+<p>As Amazon masks their node ip addresses, we will find that the ips are not available. To make it more human readable, we will only pass the columns that we are interested in and not to show the shards that has been set to <code>done</code>:</p>
+
+<pre><code>$ curl -s -XGET 'https://search-example-elasticsearch-cluster-6-abc123defghijkl5airxticzvjaqy.eu-west-1.es.amazonaws.com/_cat/recovery?v&amp;h=i,s,t,ty,st,shost,thost,f,fp,b,bp' | grep -v 'done'
+i                                       s t     ty          st       shost         thost         f   fp     b          bp
+example-app1-2018.04.11                 1 2m    peer        index    x.x.x.x x.x.x.x  139 97.1%  3435483673 65.9%
+web-syslog-2018.04                 4 7.6m  peer        finalize x.x.x.x x.x.x.x  109 100.0% 2854310892 100.0%
+example-app1-2018.04.16                 3 2.9m  peer        translog x.x.x.x x.x.x.x  130 100.0% 446180036  100.0%
+example-app1-2018.03.30                 3 2.1m  peer        index    x.x.x.x  x.x.x.x  127 97.6%  3862498583 62.5%
+example-app1-2018.04.01                 0 4.4m  peer        index    x.x.x.x  x.x.x.x  140 99.3%  3410543270 87.9%
+example-app1-2018.04.06                 0 5.1m  peer        index    x.x.x.x x.x.x.x  128 97.7%  4291421948 66.3%
+example-app1-2018.04.07                 0 52.2s peer        index    x.x.x.x x.x.x.x 149 91.9%  3969581277 27.4%
+network-capture-2018.04.01               2 11.4s peer        index    x.x.x.x  x.x.x.x 107 95.3%  359987163  55.0%
+example-app1-2018.03.17                 1 1.7m  peer        index    x.x.x.x  x.x.x.x 117 98.3%  2104196548 74.5%
+example-app1-2018.02.25                 3 58.4s peer        index    x.x.x.x  x.x.x.x 102 98.0%  945437614  74.7%
+</code></pre>
+
+<p>We can also see the human readable output, which is displayed in json format, with much more detail:</p>
+
+<pre><code>$ curl -s -XGET 'https://search-example-elasticsearch-cluster-6-abc123defghijkl5airxticzvjaqy.eu-west-1.es.amazonaws.com/example-app1-2018.04.03/_recovery?human' | python -m json.tool
+{
+    "example-app1-2018.04.03": {
+        "shards": [
+            {
+                "id": 0,
+                "index": {
+                    "files": {
+                        "percent": "100.0%",
+                        "recovered": 103,
+                        "reused": 0,
+                        "total": 103
+                    },
+                    "size": {
+                        "percent": "100.0%",
+                        "recovered": "3.6gb",
+                        "recovered_in_bytes": 3926167091,
+                        "reused": "0b",
+                        "reused_in_bytes": 0,
+                        "total": "3.6gb",
+                        "total_in_bytes": 3926167091
+                    },
+                    "source_throttle_time": "2m",
+                    "source_throttle_time_in_millis": 121713,
+                    "target_throttle_time": "2.1m",
+                    "target_throttle_time_in_millis": 126170,
+                    "total_time": "7.2m",
+                    "total_time_in_millis": 434142
+                },
+                "primary": true,
+                "source": {
+                    "host": "x.x.x.x",
+                    "id": "ZRzKGe5WSg2SzilZGb3RbA",
+                    "ip": "x.x.x.x",
+                    "name": "ZRzKGe5",
+                    "transport_address": "x.x.x.x:9300"
+                },
+                "stage": "DONE",
+                "start_time": "2018-04-10T19:26:48.668Z",
+                "start_time_in_millis": 1523388408668,
+                "stop_time": "2018-04-10T19:34:04.980Z",
+                "stop_time_in_millis": 1523388844980,
+                "target": {
+                    "host": "x.x.x.x",
+                    "id": "x2mKoe_GTpe3b1CnXOKisA",
+                    "ip": "x.x.x.x",
+                    "name": "x2mKoe_",
+                    "transport_address": "x.x.x.x:9300"
+                },
+                "total_time": "7.2m",
+                "total_time_in_millis": 436311,
+                "translog": {
+                    "percent": "100.0%",
+                    "recovered": 0,
+                    "total": 0,
+                    "total_on_start": 0,
+                    "total_time": "1.1s",
+                    "total_time_in_millis": 1154
+                },
+                "type": "PEER",
+                "verify_index": {
+                    "check_index_time": "0s",
+                    "check_index_time_in_millis": 0,
+                    "total_time": "0s",
+                    "total_time_in_millis": 0
+                }
+            },
+</code></pre>
+
+<h2>The Cluster Health API:</h2>
+
+<p>Amazon restricts most of the <code>/_cluster</code> API actions, but we can however see the health endpoint, where we can see the number of <code>nodes</code>, <code>active_shards</code>, <code>relocating_shards</code>, <code>number_of_pending_tasks</code> etc:</p>
+
+<pre><code>$ curl -XGET https://search-example-elasticsearch-cluster-6-abc123defghijkl5airxticzvjaqy.eu-west-1.es.amazonaws.com/_cluster/health?pretty
+{
+  "cluster_name" : "0123456789012:example-elasticsearch-cluster-6",
+  "status" : "green",
+  "timed_out" : false,
+  "number_of_nodes" : 16,
+  "number_of_data_nodes" : 10,
+  "active_primary_shards" : 803,
+  "active_shards" : 1606,
+  "relocating_shards" : 10,
+  "initializing_shards" : 0,
+  "unassigned_shards" : 0,
+  "delayed_unassigned_shards" : 0,
+  "number_of_pending_tasks" : 0,
+  "number_of_in_flight_fetch" : 0,
+  "task_max_waiting_in_queue_millis" : 0,
+  "active_shards_percent_as_number" : 100.0
+}
+</code></pre>
+
+<h2>The Pending Tasks API:</h2>
+
+<p>We also have some insights into the <code>/_cat/pending_tasks</code> API:</p>
+
+<pre><code>$ curl -s -XGET 'https://search-example-elasticsearch-cluster-6-abc123defghijkl5airxticzvjaqy.eu-west-1.es.amazonaws.com/_cat/pending_tasks?v'
+insertOrder timeInQueue priority source
+1757        53ms URGENT   shard-started shard id [[network-metrics-2018.04.13][0]], allocation id [Qh91o_OGRX-lFnY8KxYgQw], primary term [0], message [after peer recovery]
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-recovery.html#cat-recovery">https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-recovery.html#cat-recovery</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-recovery.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-recovery.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Elasticsearch Curator to Manage and Curate Your Elasticsearch Indexes]]></title>
@@ -727,66 +895,6 @@ yellow open   test-index                  5   1          2            0       65
 <li><a href="https://www.npmjs.com/package/elasticdump">https://www.npmjs.com/package/elasticdump</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Installing Elastalert for Elasticsearch on Amazon Linux]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/11/07/installing-elastalert-for-elasticsearch-on-amazon-linux/"/>
-    <updated>2017-11-07T07:53:33-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/11/07/installing-elastalert-for-elasticsearch-on-amazon-linux</id>
-    <content type="html"><![CDATA[<p>Elastalert, a service for Alerting with Elasticsearch:</p>
-
-<ul>
-<li><a href="https://github.com/Yelp/elastalert">https://github.com/Yelp/elastalert</a></li>
-</ul>
-
-
-<h2>Setting up Elastalert</h2>
-
-<p>We will setup Elastalert for Elasticsearch on Amazon Linux which is a RHEL Based Distribution.</p>
-
-<p>Setting up dependencies</p>
-
-<pre><code class="bash">$ sudo su
-# yum update -y
-# yum install git python-devel lib-devel libevent-devel bzip2-devel openssl-devel ncurses-devel zlib zlib-devel xz-devel gcc -y
-# yum install python-setuptools -y
-# easy_install pip
-# pip install virtualenv
-# virtualenv .venv
-# source .venv/bin/activate
-# pip install pip --upgrade
-# pip install setuptools --upgrade
-</code></pre>
-
-<p>Clone Elastalert Repository and Install Dependencies:</p>
-
-<pre><code class="bash">$ git clone https://github.com/Yelp/elastalert
-$ cd elastalert/
-$ pip install -r requirements.txt
-</code></pre>
-
-<p>Configs:</p>
-
-<pre><code class="bash">$ cp config.yaml.example config.yaml
-$ vim config.yaml
-$ vim example_rules/example_frequency.yaml
-</code></pre>
-
-<p>After opening the config, populate the configuration where needed.</p>
-
-<p>Installation of elastalert:</p>
-
-<pre><code class="bash">$ python setup.py install
-$ elastalert-create-index
-</code></pre>
-
-<p>Running elastalert:</p>
-
-<pre><code class="bash">$ python -m elastalert.elastalert --verbose --rule example_frequency.yaml
-INFO:elastalert:Starting up
-</code></pre>
 ]]></content>
   </entry>
   

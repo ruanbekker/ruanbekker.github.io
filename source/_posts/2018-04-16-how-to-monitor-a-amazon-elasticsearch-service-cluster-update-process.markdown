@@ -3,7 +3,7 @@ layout: post
 title: "How to Monitor a Amazon Elasticsearch Service Cluster Update Process"
 date: 2018-04-16 03:24:09 -0400
 comments: true
-categories:["elasticsearch", "aws", "amazon", "monitoring"] 
+categories: ["elasticsearch", "aws", "amazon", "monitoring"] 
 ---
 
 When you make a configuration change on Amazon's Elasticsearch, it does a blue/green deployment. So new nodes will be allocated to the cluster (which you will notice from CloudWatch when looking at the nodes metrics). Once these nodes are deployed, data gets copied accross to the new nodes, and traffic gets directed to the new nodes, and once its done, the old nodes gets terminated.

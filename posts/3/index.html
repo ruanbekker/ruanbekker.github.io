@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="On Amazon Web Services with RDS for MySQL or Aurora with MySQL compatibility, you can authenticate to your Database instance or cluster using IAM for &hellip;">
+  <meta name="description" content="Today we will setup a Site to Site ipsec VPN with Strongswan, which will be configured with PreShared Key Authentication. After our tunnels are &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -87,6 +87,457 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/02/11/setup-a-site-to-site-ipsec-vpn-with-strongswan-and-preshared-key-authentication/">Setup a Site to Site IPsec VPN With Strongswan and PreShared Key Authentication</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-02-11T16:09:37-05:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>4:09 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://i.snag.gy/sWn8zc.jpg" alt="" /></p>
+
+<p>Today we will setup a Site to Site ipsec VPN with Strongswan, which will be configured with PreShared Key Authentication.</p>
+
+<p>After our tunnels are established, we will be able to reach the private ips over the vpn tunnels.</p>
+
+<h2>Get the Dependencies:</h2>
+
+<p>Update your repository indexes and install strongswan:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install strongswan -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the following kernel parameters:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt;&gt; /etc/sysctl.conf <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'><span class="s">echo net.ipv4.ip_forward = 1 </span>
+</span><span class='line'><span class="s">net.ipv4.conf.all.accept_redirects = 0 </span>
+</span><span class='line'><span class="s">net.ipv4.conf.all.send_redirects = 0</span>
+</span><span class='line'><span class="s">EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>sysctl -p /etc/sysctl.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Generate Preshared Key:</h2>
+
+<p>We will need a preshared key that both servers will use:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>openssl rand -base64 64
+</span><span class='line'>87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Details of our 2 Sites:</h2>
+
+<p>Site A:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Location: Paris, France
+</span><span class='line'>External IP: 51.15.139.201
+</span><span class='line'>Internal IP: 10.10.27.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Site B:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Location: Amsterdam, Netherlands
+</span><span class='line'>External IP: 51.15.44.48
+</span><span class='line'>Internal IP: 10.9.141.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Site A:</h2>
+
+<p>We will setup our VPN Gateway in Site A (Paris), first to setup the <code>/etc/ipsec.secrets</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ipsec.secrets
+</span><span class='line'><span class="c"># source      destination</span>
+</span><span class='line'>51.15.139.201 51.15.44.48 : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now to setup our VPN configuration in <code>/etc/ipsec.conf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/ipsec.conf
+</span><span class='line'><span class="c"># basic configuration</span>
+</span><span class='line'>config setup
+</span><span class='line'>        <span class="nv">charondebug</span><span class="o">=</span><span class="s2">&quot;all&quot;</span>
+</span><span class='line'>        <span class="nv">uniqueids</span><span class="o">=</span>yes
+</span><span class='line'>        <span class="nv">strictcrlpolicy</span><span class="o">=</span>no
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to amsterdam datacenter</span>
+</span><span class='line'>conn paris-to-amsterdam
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.10.27.1/24
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.44.48
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.9.141.1/24
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Firewall Rules:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo iptables -t nat -A POSTROUTING -s 10.9.141.0/24 -d 10.10.27.0/24 -j MASQUERADE
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Site B:</h2>
+
+<p>We will setup our VPN Gateway in Site B (Amsterdam), setup the <code>/etc/ipsec.secrets</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ipsec.secrets
+</span><span class='line'>51.15.44.48 51.15.139.201 : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next to setup our VPN Configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/ipsec.conf
+</span><span class='line'><span class="c"># basic configuration</span>
+</span><span class='line'>config setup
+</span><span class='line'>        <span class="nv">charondebug</span><span class="o">=</span><span class="s2">&quot;all&quot;</span>
+</span><span class='line'>        <span class="nv">uniqueids</span><span class="o">=</span>yes
+</span><span class='line'>        <span class="nv">strictcrlpolicy</span><span class="o">=</span>no
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to paris datacenter</span>
+</span><span class='line'>conn amsterdam-to-paris
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.44.48
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.9.141.1/24
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.10.27.1/24
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Firewall Rules:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo iptables -t nat -A POSTROUTING -s 10.10.27.0/24 -d 10.9.41.0/24 -J MASQUERADE
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Start the VPN:</h2>
+
+<p>Start the VPN on both ends:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec restart
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get the status of the tunnel, in this case we are logged onto our Site A (Paris) Server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec status
+</span><span class='line'>Security Associations <span class="o">(</span><span class="m">1</span> up, <span class="m">0</span> connecting<span class="o">)</span>:
+</span><span class='line'>paris-to-amsterdam<span class="o">[</span>2<span class="o">]</span>: ESTABLISHED <span class="m">14</span> minutes ago, 10.10.27.161<span class="o">[</span>51.15.139.201<span class="o">]</span>...51.15.44.48<span class="o">[</span>51.15.44.48<span class="o">]</span>
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>1<span class="o">}</span>:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c8c868ee_i c9d58dbd_o
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>1<span class="o">}</span>:   10.10.27.1/24 <span class="o">===</span> 10.9.141.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test if we can see the remote end on its private range:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ping 10.9.141.97
+</span><span class='line'>PING 10.9.141.97 <span class="o">(</span>10.9.141.97<span class="o">)</span> 56<span class="o">(</span>84<span class="o">)</span> bytes of data.
+</span><span class='line'><span class="m">64</span> bytes from 10.9.141.97: <span class="nv">icmp_seq</span><span class="o">=</span><span class="m">1</span> <span class="nv">ttl</span><span class="o">=</span><span class="m">64</span> <span class="nb">time</span><span class="o">=</span>14.6 ms
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the service to start on boot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>strongswan
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then your VPN should be setup correctly.</p>
+
+<h2>Other useful commands:</h2>
+
+<p>Start / Stop / Status:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec up connection-name
+</span><span class='line'><span class="nv">$ </span>sudo ipsec down connection-name
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>sudo ipsec restart
+</span><span class='line'><span class="nv">$ </span>sudo ipsec status
+</span><span class='line'><span class="nv">$ </span>sudo ipsec statusall
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get the Policies and States of the IPsec Tunnel:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ip xfrm state
+</span><span class='line'><span class="nv">$ </span>sudo ip xfrm policy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload the secrets, while the service is running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec rereadsecrets
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check if traffic flows through the tunnel:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo tcpdump esp
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Adding more connections to your config:</h2>
+
+<p>If you have to add another site to your config, the example of the <code>ipsec.secrets</code> will look like:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ipsec.secrets
+</span><span class='line'>51.15.139.201 51.15.44.48 : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span><span class='line'>51.15.139.201 51.15.87.41  : PSK <span class="s2">&quot;87zRQqylaoeF5I8o4lRhwvmUzf+pYdDpsCOlesIeFA/2xrtxKXJTbCPZgqplnXgPX5uprL+aRgxD8ua7MmdWaQ&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And the <code>ipsec.conf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/ipsec.conf
+</span><span class='line'><span class="c"># basic configuration</span>
+</span><span class='line'>config setup
+</span><span class='line'>        <span class="nv">charondebug</span><span class="o">=</span><span class="s2">&quot;all&quot;</span>
+</span><span class='line'>        <span class="nv">uniqueids</span><span class="o">=</span>yes
+</span><span class='line'>        <span class="nv">strictcrlpolicy</span><span class="o">=</span>no
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to amsterdam datacenter</span>
+</span><span class='line'>conn paris-to-amsterdam
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.10.27.161/32
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.44.48
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.9.141.97/32
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span><span class='line'>
+</span><span class='line'><span class="c"># connection to frankfurt datacenter</span>
+</span><span class='line'>conn paris-to-frankfurt
+</span><span class='line'>  <span class="nv">authby</span><span class="o">=</span>secret
+</span><span class='line'>  <span class="nv">left</span><span class="o">=</span>%defaultroute
+</span><span class='line'>  <span class="nv">leftid</span><span class="o">=</span>51.15.139.201
+</span><span class='line'>  <span class="nv">leftsubnet</span><span class="o">=</span>10.10.27.1/24
+</span><span class='line'>  <span class="nv">right</span><span class="o">=</span>51.15.87.41
+</span><span class='line'>  <span class="nv">rightsubnet</span><span class="o">=</span>10.9.137.1/24
+</span><span class='line'>  <span class="nv">ike</span><span class="o">=</span>aes256-sha2_256-modp1024!
+</span><span class='line'>  <span class="nv">esp</span><span class="o">=</span>aes256-sha2_256!
+</span><span class='line'>  <span class="nv">keyingtries</span><span class="o">=</span>0
+</span><span class='line'>  <span class="nv">ikelifetime</span><span class="o">=</span>1h
+</span><span class='line'>  <span class="nv">lifetime</span><span class="o">=</span>8h
+</span><span class='line'>  <span class="nv">dpddelay</span><span class="o">=</span>30
+</span><span class='line'>  <span class="nv">dpdtimeout</span><span class="o">=</span>120
+</span><span class='line'>  <span class="nv">dpdaction</span><span class="o">=</span>restart
+</span><span class='line'>  <span class="nv">auto</span><span class="o">=</span>start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Just remember to configure the config on the Frankfurt VPN Gateway, and the example of the status output will look like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ipsec status
+</span><span class='line'>Security Associations <span class="o">(</span><span class="m">2</span> up, <span class="m">0</span> connecting<span class="o">)</span>:
+</span><span class='line'>paris-to-frankfurt<span class="o">[</span>2<span class="o">]</span>: ESTABLISHED <span class="m">102</span> seconds ago, 10.10.27.161<span class="o">[</span>51.15.139.201<span class="o">]</span>...51.15.87.41<span class="o">[</span>51.15.87.41<span class="o">]</span>
+</span><span class='line'>paris-to-frankfurt<span class="o">{</span>1<span class="o">}</span>:  INSTALLED, TUNNEL, reqid 2, ESP in UDP SPIs: cbc62a1f_i c95b8f78_o
+</span><span class='line'>paris-to-frankfurt<span class="o">{</span>1<span class="o">}</span>:   10.10.27.1/24 <span class="o">===</span> 10.9.137.1/24
+</span><span class='line'>paris-to-amsterdam<span class="o">[</span>1<span class="o">]</span>: ESTABLISHED <span class="m">102</span> seconds ago, 10.10.27.161<span class="o">[</span>51.15.139.201<span class="o">]</span>...51.15.44.48<span class="o">[</span>51.15.44.48<span class="o">]</span>
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>2<span class="o">}</span>:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c7b36756_i cc54053c_o
+</span><span class='line'>paris-to-amsterdam<span class="o">{</span>2<span class="o">}</span>:   10.10.27.1/24 <span class="o">===</span> 10.9.141.1/24
+</span></code></pre></td></tr></table></div></figure>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1948,157 +2399,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/12/10/rejoining-or-bootstrapping-mysql-galera-cluster-nodes-after-shutdown/">Rejoining or Bootstrapping MySQL Galera Cluster Nodes After Shutdown</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-12-10T18:03:44-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>6:03 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>I have a 3 Node MySQL Galera Cluster that faced a shutdown on all 3 nodes at the same time, luckily this is only a testing environment, but at that time it was down and did not want to start up.</p>
-
-<h2>Issues Faced</h2>
-
-<p>When trying to start MySQL the only error visible was:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>/etc/init.d/mysql restart
-</span><span class='line'> * MySQL server PID file could not be found!
-</span><span class='line'>Starting MySQL
-</span><span class='line'>........ * The server quit without updating PID file <span class="o">(</span>/var/run/mysqld/mysqld.pid<span class="o">)</span>.
-</span><span class='line'> * Failed to restart server.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>At that time I can see that the galera port is started, but not mysql:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ps aux <span class="p">|</span> grep mysql
-</span><span class='line'>root     <span class="m">23580</span>  0.0  0.0   <span class="m">4508</span>  <span class="m">1800</span> pts/0    S    00:37   0:00 /bin/sh /usr/bin/mysqld_safe --datadir<span class="o">=</span>/var/lib/mysql --pid-file<span class="o">=</span>/var/run/mysqld/mysqld.pid
-</span><span class='line'>mysql    <span class="m">24144</span>  0.7 22.2 <span class="m">1185116</span> <span class="m">455660</span> pts/0  Sl   00:38   0:00 /usr/sbin/mysqld --basedir<span class="o">=</span>/usr --datadir<span class="o">=</span>/var/lib/mysql --plugin-dir<span class="o">=</span>/usr/lib/mysql/plugin --user<span class="o">=</span>mysql --log-error<span class="o">=</span>/var/log/mysql/error.log --pid-file<span class="o">=</span>/var/run/mysqld/mysqld.pid --socket<span class="o">=</span>/var/run/mysqld/mysqld.sock --port<span class="o">=</span><span class="m">3306</span> --wsrep_start_position<span class="o">=</span>long:string
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>netstat -tulpn
-</span><span class='line'>Active Internet connections <span class="o">(</span>only servers<span class="o">)</span>
-</span><span class='line'>Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 0.0.0.0:4567            0.0.0.0:*               LISTEN      25507/mysqld
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Why?</h2>
-
-<p>More in detail is explained on a <a href="https://severalnines.com/blog/how-bootstrap-mysqlmariadb-galera-cluster">SeveralNines Blog Post</a>, but due to the fact that all the nodes left the cluster, one of the nodes needs to be started as a referencing point, before the other nodes can rejoin or bootstrapped to the cluster.</p>
-
-<h2>Rejoining the Cluster</h2>
-
-<p>Consult the blog for more information, but from my end, I had a look at the node with the highest seqno and then updated <code>safe_to_bootstrap</code> to <code>1</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /var/lib/mysql/grastate.dat
-</span><span class='line'><span class="c"># GALERA saved state</span>
-</span><span class='line'>version: 2.1
-</span><span class='line'>uuid:    e9f9cf6a-87a1-11e7-9fb4-52612b906897
-</span><span class='line'>seqno:   123512
-</span><span class='line'>safe_to_bootstrap: 1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then made sure that no mysql processes are running, then did a bootstrap:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>/etc/init.d/mysql bootstrap
-</span><span class='line'>Bootstrapping the cluster
-</span><span class='line'>Starting MySQL
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then restarted mysql on the other nodes.</p>
-
-<h2>Verifying</h2>
-
-<p>To verify that all your nodes has checked in, I have 3 nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">SHOW</span> <span class="n">STATUS</span> <span class="k">LIKE</span> <span class="s1">&#39;wsrep_%&#39;</span><span class="p">;</span>
-</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
-</span><span class='line'><span class="o">|</span> <span class="n">Variable_name</span>                <span class="o">|</span> <span class="n">Value</span>                                             <span class="o">|</span>
-</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_local_recv_queue_avg</span>   <span class="o">|</span> <span class="mi">0</span><span class="p">.</span><span class="mi">000000</span>                                          <span class="o">|</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_local_state_comment</span>    <span class="o">|</span> <span class="n">Synced</span>                                            <span class="o">|</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_incoming_addresses</span>     <span class="o">|</span> <span class="mi">10</span><span class="p">.</span><span class="mi">3</span><span class="p">.</span><span class="mi">132</span><span class="p">.</span><span class="mi">91</span><span class="p">:</span><span class="mi">3306</span><span class="p">,</span><span class="mi">10</span><span class="p">.</span><span class="mi">4</span><span class="p">.</span><span class="mi">1</span><span class="p">.</span><span class="mi">201</span><span class="p">:</span><span class="mi">3306</span><span class="p">,</span><span class="mi">10</span><span class="p">.</span><span class="mi">4</span><span class="p">.</span><span class="mi">113</span><span class="p">.</span><span class="mi">21</span><span class="p">:</span><span class="mi">3306</span> <span class="o">|</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_evs_state</span>              <span class="o">|</span> <span class="n">OPERATIONAL</span>                                       <span class="o">|</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_cluster_size</span>           <span class="o">|</span> <span class="mi">3</span>                                                 <span class="o">|</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_cluster_status</span>         <span class="o">|</span> <span class="k">Primary</span>                                           <span class="o">|</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_connected</span>              <span class="o">|</span> <span class="k">ON</span>                                                <span class="o">|</span>
-</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>or a shorter version:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">SHOW</span> <span class="k">GLOBAL</span> <span class="n">STATUS</span> <span class="k">LIKE</span> <span class="s1">&#39;wsrep_cluster_size&#39;</span><span class="p">;</span>
-</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
-</span><span class='line'><span class="o">|</span> <span class="n">Variable_name</span>                <span class="o">|</span> <span class="n">Value</span>                                             <span class="o">|</span>
-</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
-</span><span class='line'><span class="o">|</span> <span class="n">wsrep_cluster_size</span>           <span class="o">|</span> <span class="mi">3</span>                                                 <span class="o">|</span>
-</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
-</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/4">&larr; Older</a>
@@ -2116,6 +2416,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/04/18/basic-introduction-to-use-arguments-with-argparse-on-python/">Basic Introduction to Use Arguments With Argparse on Python</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/04/16/how-to-monitor-a-amazon-elasticsearch-service-cluster-update-process/">How to Monitor a Amazon Elasticsearch Service Cluster Update Process</a>
       </li>
     
@@ -2129,10 +2433,6 @@
     
       <li class="post">
         <a href="/blog/2018/04/07/set-docker-environment-variables-during-build-time/">Set Docker Environment Variables During Build Time</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/04/07/docker-environment-substitution-with-dockerfile/">Docker Environment Substitution With Dockerfile</a>
       </li>
     
   </ul>

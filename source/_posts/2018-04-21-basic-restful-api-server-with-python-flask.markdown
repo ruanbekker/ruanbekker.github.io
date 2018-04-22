@@ -237,3 +237,8 @@ Created: {u'country': u'australia', u'age': 24, u'name': u'shaun', 'id': 4}
 Thats it. I've stumbled upon [Flask-Restful](https://flask-restful.readthedocs.io/en/latest/) which I still want to check out, and as soon as I do, I will do a post on it, maybe baked with a NoSQL db or something like that.
 
 Cheers!
+
+## Resources:
+
+- [Python Generator Expressions](https://stackoverflow.com/a/8653568)
+- [Flask Docs](http://flask.pocoo.org/docs/0.12/api/#flask.Request)

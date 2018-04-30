@@ -31,8 +31,8 @@ Encrypting:
 
 >>> print(key, len(key))
 ('BLhgpCL81fdLBk23HkZp8BgbT913cqt0', 32)
->>> print(key, len(iv))
-('BLhgpCL81fdLBk23HkZp8BgbT913cqt0', 16)
+>>> print(iv, len(iv))
+('OWFJATh1Zowac2xr', 16)
 
 >>> enc_s = AES.new(key, AES.MODE_CFB, iv)
 >>> cipher_text = enc_s.encrypt('this is a super important message')

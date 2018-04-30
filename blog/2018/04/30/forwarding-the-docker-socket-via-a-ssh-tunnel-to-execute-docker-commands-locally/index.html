@@ -1,0 +1,368 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Forwarding the Docker Socket via a SSH Tunnel to Execute Docker Commands Locally - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="With automation in mind, when you want to execute docker commands remotely, you want to do it in a secure manner, as you don&rsquo;t want to expose &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="http://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My HowTo Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Forwarding the Docker Socket via a SSH Tunnel to Execute Docker Commands Locally</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-04-30T08:30:23-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>30</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>8:30 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p>With automation in mind, when you want to execute docker commands remotely, you want to do it in a secure manner, as you don&rsquo;t want to expose your Docker port to the whole world.</p>
+
+<p>One way in doing that, is forwarding the remote docker socket via a local port over a SSH Tunnel. With this way, you can execute docker commands locally on your workstation, as if the swarm is running on your workstation/laptop/node/bastion host etc.</p>
+
+<p>Without the tunnel, I have a swarm on my laptop with no running services:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                   MODE                REPLICAS            IMAGE                                                               PORTS
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see, we have no services running, but the remote swarm has a couple, so after forwarding the connection, we should see our remote services.</p>
+
+<h2>Setting up the SSH Tunnel:</h2>
+
+<p>Here we will forward the remote docker socket: <code>/var/run/docker.sock</code> to a local port bound to localhost: <code>localhost:2377</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>screen -S docker
+</span><span class='line'><span class="nv">$ </span>ssh -oStrictHostKeyChecking<span class="o">=</span>no -oUserKnownHostsFile<span class="o">=</span>/dev/null -i ~/path/to/key.pem -NL localhost:2377:/var/run/docker.sock root@docker-managers.mydomain.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now the SSH Tunnel will be established, and you can detach your screen session, or open a new shell session. To detach your screen session: <code>'ctrl + a' then d</code></p>
+
+<h2>Verifying that the tunnel is established:</h2>
+
+<p>You can use netstat to verify that the port is listening:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>netstat -ant <span class="p">|</span> grep 2377
+</span><span class='line'>tcp4       <span class="m">0</span>      <span class="m">0</span>  127.0.0.1.2377         *.*                    LISTEN
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Inform the Docker Client to use the Port:</h2>
+
+<p>Now we need to inform the docker client, to use the new port to talk to the docker daemon. We do that by setting the <code>DOCKER_HOST</code> environment variable to point to <code>localhost:2377</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">DOCKER_HOST</span><span class="o">=</span><span class="s2">&quot;localhost:2377&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This will remain for the lifetime of the shell session.</p>
+
+<h2>Testing it Out:</h2>
+
+<p>Now we can run our commands locally, and we should see the output of our remote swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                   MODE                REPLICAS            IMAGE                                                               PORTS
+</span><span class='line'>xjta8e3ek2u2        apps_flask_reminders   replicated          3/3                 rbekker87/flask-reminders:debian
+</span><span class='line'>0l7ruktbqj99        apps_kibana            replicated          1/1                 kibana:latest
+</span><span class='line'>...
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Terminating our SSH Tunnel:</h2>
+
+<p>To terminate our SSH Tunnel, reconnect to your shell session, and hit <code>ctrl + c</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>screen -ls
+</span><span class='line'>There is a screen on:
+</span><span class='line'>  50413.docker    <span class="o">(</span>Detached<span class="o">)</span>
+</span><span class='line'><span class="nv">$ </span>screen -r 50413
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Hit <code>ctrl + c</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>CKilled by signal 2.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And exit the screen session:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">exit</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>With this way, you can do lots of automation with docker swarm, not limited to swarm, but one of them.</p>
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2018-04-30T08:30:23-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>30</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>8:30 am</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/devops/'>devops</a>, <a class='category' href='/blog/categories/docker/'>docker</a>, <a class='category' href='/blog/categories/ssh/'>ssh</a>, <a class='category' href='/blog/categories/ssh-tunnel/'>ssh-tunnel</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2018/04/30/encryption-and-decryption-with-the-pycrypto-module-using-the-aes-cipher-in-python/" title="Previous Post: Encryption and Decryption with the PyCrypto module using the AES Cipher in Python">&laquo; Encryption and Decryption with the PyCrypto module using the AES Cipher in Python</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/">Forwarding the Docker Socket via a SSH Tunnel to Execute Docker Commands Locally</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/04/30/encryption-and-decryption-with-the-pycrypto-module-using-the-aes-cipher-in-python/">Encryption and Decryption With the PyCrypto Module Using the AES Cipher in Python</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing/">Running a 3 Node Elasticsearch Cluster With Docker Compose on Your Laptop for Testing</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/04/29/using-the-bulk-api-with-elasticsearch/">Using the Bulk API With Elasticsearch</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/04/29/encryption-and-decryption-with-simple-crypt-using-python/">Encryption and Decryption With Simple Crypt Using Python</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2018 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>

@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-04-30T02:07:32-04:00</updated>
+  <updated>2018-04-30T09:29:16-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,111 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Forwarding the Docker Socket via a SSH Tunnel to Execute Docker Commands Locally]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally/"/>
+    <updated>2018-04-30T08:30:23-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/04/30/forwarding-the-docker-socket-via-a-ssh-tunnel-to-execute-docker-commands-locally</id>
+    <content type="html"><![CDATA[<p>With automation in mind, when you want to execute docker commands remotely, you want to do it in a secure manner, as you don&rsquo;t want to expose your Docker port to the whole world.</p>
+
+<p>One way in doing that, is forwarding the remote docker socket via a local port over a SSH Tunnel. With this way, you can execute docker commands locally on your workstation, as if the swarm is running on your workstation/laptop/node/bastion host etc.</p>
+
+<p>Without the tunnel, I have a swarm on my laptop with no running services:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                   MODE                REPLICAS            IMAGE                                                               PORTS
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see, we have no services running, but the remote swarm has a couple, so after forwarding the connection, we should see our remote services.</p>
+
+<h2>Setting up the SSH Tunnel:</h2>
+
+<p>Here we will forward the remote docker socket: <code>/var/run/docker.sock</code> to a local port bound to localhost: <code>localhost:2377</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>screen -S docker
+</span><span class='line'><span class="nv">$ </span>ssh -oStrictHostKeyChecking<span class="o">=</span>no -oUserKnownHostsFile<span class="o">=</span>/dev/null -i ~/path/to/key.pem -NL localhost:2377:/var/run/docker.sock root@docker-managers.mydomain.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now the SSH Tunnel will be established, and you can detach your screen session, or open a new shell session. To detach your screen session: <code>'ctrl + a' then d</code></p>
+
+<h2>Verifying that the tunnel is established:</h2>
+
+<p>You can use netstat to verify that the port is listening:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>netstat -ant <span class="p">|</span> grep 2377
+</span><span class='line'>tcp4       <span class="m">0</span>      <span class="m">0</span>  127.0.0.1.2377         *.*                    LISTEN
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Inform the Docker Client to use the Port:</h2>
+
+<p>Now we need to inform the docker client, to use the new port to talk to the docker daemon. We do that by setting the <code>DOCKER_HOST</code> environment variable to point to <code>localhost:2377</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">DOCKER_HOST</span><span class="o">=</span><span class="s2">&quot;localhost:2377&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This will remain for the lifetime of the shell session.</p>
+
+<h2>Testing it Out:</h2>
+
+<p>Now we can run our commands locally, and we should see the output of our remote swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                   MODE                REPLICAS            IMAGE                                                               PORTS
+</span><span class='line'>xjta8e3ek2u2        apps_flask_reminders   replicated          3/3                 rbekker87/flask-reminders:debian
+</span><span class='line'>0l7ruktbqj99        apps_kibana            replicated          1/1                 kibana:latest
+</span><span class='line'>...
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Terminating our SSH Tunnel:</h2>
+
+<p>To terminate our SSH Tunnel, reconnect to your shell session, and hit <code>ctrl + c</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>screen -ls
+</span><span class='line'>There is a screen on:
+</span><span class='line'>  50413.docker    <span class="o">(</span>Detached<span class="o">)</span>
+</span><span class='line'><span class="nv">$ </span>screen -r 50413
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Hit <code>ctrl + c</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>CKilled by signal 2.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And exit the screen session:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">exit</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>With this way, you can do lots of automation with docker swarm, not limited to swarm, but one of them.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Encryption and Decryption With the PyCrypto Module Using the AES Cipher in Python]]></title>
@@ -3609,117 +3714,6 @@
 <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/recognize-expanded-volume-linux.html">https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/recognize-expanded-volume-linux.html</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Nginx Basic Authentication With Source IP Whitelisting]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/03/19/nginx-basic-authentication-with-source-ip-whitelisting/"/>
-    <updated>2018-03-19T10:57:36-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/03/19/nginx-basic-authentication-with-source-ip-whitelisting</id>
-    <content type="html"><![CDATA[<p>Quick post on how to setup HTTP Basic Authentication and whitelist IP Based Sources to not get prompted for Authentication.</p>
-
-<p>This could be useful for systems interacting with Nginx, so that they don&rsquo;t have to provide authentication.</p>
-
-<h2>Dependencies:</h2>
-
-<p>Install nginx and the package required to create the auth file:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt install nginx apache2-utils -y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the Password file:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ htpasswd -c /etc/ngins/secrets admin</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Configuration:</h2>
-
-<p>Create the site config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ rm -rf /etc/nginx/conf.d/*.conf
-</span><span class='line'>$ vim /etc/nginx/conf.d/default.conf</span></code></pre></td></tr></table></div></figure>
-
-
-
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>server {
-</span><span class='line'>    listen       80;
-</span><span class='line'>    server_name  localhost;
-</span><span class='line'>
-</span><span class='line'>    location / {
-</span><span class='line'>        satisfy any;
-</span><span class='line'>        allow 127.0.0.1;
-</span><span class='line'>        deny all;
-</span><span class='line'>
-</span><span class='line'>        auth_basic "restricted";
-</span><span class='line'>        auth_basic_user_file /etc/nginx/secrets;
-</span><span class='line'>        root   /usr/share/nginx/html;
-</span><span class='line'>        index  index.html index.htm;
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>    error_page   500 502 503 504  /50x.html;
-</span><span class='line'>    location = /50x.html {
-</span><span class='line'>        root   /usr/share/nginx/html;
-</span><span class='line'>    }
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Reload the Changes:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ nginx -s reload</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Testing:</h2>
-
-<p>Testing from our Whitelisted location (localhost):</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>curl -i http://127.0.0.1 
-</span><span class='line'>HTTP/1.1 200 OK</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Testing from remote location:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -i http://localhost
-</span><span class='line'>HTTP/1.1 401 Unauthorized
-</span><span class='line'>
-</span><span class='line'>$ curl -i http://admin:password@localhost
-</span><span class='line'>HTTP/1.1 200 OK</span></code></pre></td></tr></table></div></figure>
-
-
-<p></p>
 ]]></content>
   </entry>
   

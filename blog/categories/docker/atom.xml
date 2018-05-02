@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-05-02T12:02:25-04:00</updated>
+  <updated>2018-05-02T15:14:17-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,223 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup the Elasticsearch Log Driver on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/05/02/setup-the-elasticsearch-log-driver-on-docker-swarm/"/>
+    <updated>2018-05-02T15:10:30-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/05/02/setup-the-elasticsearch-log-driver-on-docker-swarm</id>
+    <content type="html"><![CDATA[<p>Today we will look at a Elasticsearch logging driver for Docker.</p>
+
+<h2>Why a Log Driver?</h2>
+
+<p>By default the log output can be retrieved when using the <code>docker service logs -f service_name</code>, where log output of that service is shown via stdout. When having a lot of services in your swarm, it becomes useful logging all of your log output to a database service.</p>
+
+<p>This is not just for Swarm but Docker stand alone as well.</p>
+
+<p>In this tutorial we will use the Elasticsearch Log Driver, to log our logs for all our docker swarm services to Elasticsearch.</p>
+
+<h2>Installing to Elasticsearch Log Driver:</h2>
+
+<p>If you are running Docker Swarm, run this on all the nodes:</p>
+
+<pre><code class="bash">$ docker plugin install rchicoli/docker-log-elasticsearch:latest --alias elasticsearch_latest
+</code></pre>
+
+<p>Verify that the log driver has been installed:</p>
+
+<pre><code class="bash">$ docker plugin ls
+ID                  NAME                          DESCRIPTION                          ENABLED
+eadf06ad3d2a        elasticsearch_latest:latest   Send log messages to elasticsearch   true
+</code></pre>
+
+<h2>Test the Log Driver:</h2>
+
+<p>Run a container of Alpine and echo a string of text:</p>
+
+<pre><code class="bash">$ docker run --rm -ti \
+    --log-driver elasticsearch_latest \
+    --log-opt elasticsearch-url=http://192.168.0.235:9200 \
+    --log-opt elasticsearch-insecure=false \
+    --log-opt elasticsearch-sniff=false \
+    --log-opt elasticsearch-index=docker-%F \
+    --log-opt elasticsearch-type=log \
+    --log-opt elasticsearch-timeout=10 \
+    --log-opt elasticsearch-version=5 \
+    --log-opt elasticsearch-fields=containerID,containerName,containerImageID,containerImageName,containerCreated \
+    --log-opt elasticsearch-bulk-workers=1 \
+    --log-opt elasticsearch-bulk-actions=1000 \
+    --log-opt elasticsearch-bulk-size=1024 \
+    --log-opt elasticsearch-bulk-flush-interval=1s \
+    --log-opt elasticsearch-bulk-stats=false \
+        alpine echo -n "this is a test logging message"
+</code></pre>
+
+<p>Have a look at your Elasticsearch indexes, and you will find the index which was specified in the log-options:</p>
+
+<pre><code class="bash">$ curl http://192.168.0.235:9200/_cat/indices?v
+health status index             uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+yellow open   docker-2018.05.01 8FTqWq6nQlSGpYjD9M5qSg   5   1          1            0      8.9kb          8.9kb
+</code></pre>
+
+<p>Lets have a look at the Elasticsearch Document which holds the data of the log entry:</p>
+
+<pre><code class="bash">$ curl http://192.168.0.235:9200/docker-2018.05.01/_search?pretty
+{
+  "took" : 5,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 1,
+    "max_score" : 1.0,
+    "hits" : [
+      {
+        "_index" : "docker-2018.05.01",
+        "_type" : "log",
+        "_id" : "hMTUG2MBIFc8kAgSNkYo",
+        "_score" : 1.0,
+        "_source" : {
+          "containerID" : "cee0dc758528",
+          "containerName" : "jolly_goodall",
+          "containerImageID" : "sha256:3fd9065eaf02feaf94d68376da52541925650b81698c53c6824d92ff63f98353",
+          "containerImageName" : "alpine",
+          "containerCreated" : "2018-05-01T13:11:20.819447101Z",
+          "message" : "this is a test logging message",
+          "source" : "stdout",
+          "timestamp" : "2018-05-01T13:11:21.119861767Z",
+          "partial" : true
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+
+<h2>Using Swarm and Docker Compose:</h2>
+
+<p>We will deploy a stack with a whoami golang web app, which will use the elasticsearch log driver:</p>
+
+<pre><code class="bash docker-compose.yml">version: '3.4'
+
+services:
+  whoami:
+    image: rbekker87/golang-whoami:latest
+    networks:
+      - appnet
+    deploy:
+      labels:
+        - "traefik.port=80"
+        - "traefik.backend.loadbalancer.swarm=true"
+        - "traefik.docker.network=appnet"
+        - "traefik.frontend.rule=Host:whoami.homecloud.mydomain.com"
+      mode: replicated
+      replicas: 10
+      restart_policy:
+        condition: any
+      update_config:
+        parallelism: 1
+        delay: 70s
+        order: start-first
+        failure_action: rollback
+      placement:
+        constraints:
+          - 'node.role==worker'
+      resources:
+        limits:
+          cpus: '0.01'
+          memory: 128M
+        reservations:
+          cpus: '0.001'
+          memory: 64M
+    logging:
+      driver: elasticsearch_latest
+      options:
+        elasticsearch-url: "http://192.168.0.235:9200"
+        elasticsearch-sniff: "false"
+        elasticsearch-index: "docker-whoami-%F"
+        elasticsearch-type: "log"
+        elasticsearch-timeout: "10"
+        elasticsearch-version: "6"
+        elasticsearch-fields: "containerID,containerName,containerImageID,containerImageName,containerCreated"
+        elasticsearch-bulk-workers: "1"
+        elasticsearch-bulk-actions: "1000"
+        elasticsearch-bulk-size: "1024"
+        elasticsearch-bulk-flush-interval: "1s"
+        elasticsearch-bulk-stats: "false"
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>Deploy the Stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c docker-compose.yml web 
+</code></pre>
+
+<p>Give it some time to launch and have a look at your indexes, and you will find the index which it wrote to:</p>
+
+<pre><code class="bash">$ curl http://192.168.0.235:9200/_cat/indices?v
+health status index                     uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+yellow open   docker-2018.05.01         8FTqWq6nQlSGpYjD9M5qSg   5   1          1            0      8.9kb          8.9kb
+yellow open   docker-whoami-2018.05.01  YebUtKa1RnCy86iP5_ylgg   5   1         11            0     54.4kb         54.4kb
+</code></pre>
+
+<p>Having a look at the data:</p>
+
+<pre><code>$ curl 'http://192.168.0.235:9200/docker-whoami-2018.05.01/_search?pretty&amp;size=1'
+{
+  "took" : 18,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 11,
+    "max_score" : 1.0,
+    "hits" : [
+      {
+        "_index" : "docker-whoami-2018.05.01",
+        "_type" : "log",
+        "_id" : "acbgG2MBIFc8kAgShQa7",
+        "_score" : 1.0,
+        "_source" : {
+          "containerID" : "97c3b337735f",
+          "containerName" : "web_whoami.6.t2prjiexkym14isbx3yfxa99w",
+          "containerImageID" : "sha256:0f7762d2ce569fc2ccf95fbc4c7191dde727551a180253fac046daecc580c7e9",
+          "containerImageName" : "rbekker87/golang-whoami:latest@sha256:5a55c5de9cc16fbdda376791c90efb7c704c81b8dba949dce21199945c14cc88",
+          "containerCreated" : "2018-05-01T13:24:43.089365528Z",
+          "message" : "Starting up on port 80",
+          "source" : "stdout",
+          "timestamp" : "2018-05-01T13:24:48.636773709Z",
+          "partial" : false
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+
+<p>For more info about this, have a look at the referenced documentation below.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://github.com/rchicoli/docker-log-elasticsearch">https://github.com/rchicoli/docker-log-elasticsearch</a></li>
+<li><a href="https://github.com/moby/moby/issues/25694">https://github.com/moby/moby/issues/25694</a></li>
+<li><a href="https://docs.docker.com/v17.09/engine/admin/logging/view_container_logs/">https://docs.docker.com/v17.09/engine/admin/logging/view_container_logs/</a></li>
+<li><a href="https://sysadmins.co.za/how-to-setup-a-2-node-elasticsearch-cluster-on-centos-7-with-some-example-usage/">https://sysadmins.co.za/how-to-setup-a-2-node-elasticsearch-cluster-on-centos-7-with-some-example-usage/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Forwarding the Docker Socket via a SSH Tunnel to Execute Docker Commands Locally]]></title>
@@ -331,107 +548,6 @@ env var: NOT_DEFINED
 <li><a href="https://tryolabs.com/blog/2015/03/26/configurable-docker-containers-for-multiple-environments/">https://tryolabs.com/blog/2015/03/26/configurable-docker-containers-for-multiple-environments/</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Populate Environment Variables From Docker Secrets With a Flask Demo App]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app/"/>
-    <updated>2018-03-12T18:16:42-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app</id>
-    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
-
-<p>In this post we will create a basic Python Flask WebApp on Docker Swarm, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.</p>
-
-<h2>Our Directory Setup:</h2>
-
-<p>This can be retrieved from <a href="https://github.com/ruanbekker/docker-swarm-apps/tree/master/tools-secrets-env-exporter">github.com/ruanbekker/docker-swarm-apps/tool-secrets-env-exporter</a>, but I will place the code in here as well.</p>
-
-<pre><code class="bash Dockerfile:">FROM alpine:edge
-RUN apk add --no-cache python2 py2-pip &amp;&amp; pip install flask
-ADD exporter.py /exporter.py
-ADD boot.sh /boot.sh
-ADD app.py /app.py
-CMD ["/bin/sh", "/boot.sh"]
-</code></pre>
-
-<pre><code class="python exporter.py">import os
-from glob import glob
-
-for var in glob('/run/secrets/*'):
-    k=var.split('/')[-1]
-    v=open(var).read().rstrip('\n')
-    os.environ[k] = v
-    print("export {key}={value}".format(key=k,value=v))
-</code></pre>
-
-<pre><code class="python app.py">import os
-from flask import Flask
-
-flask_host = str(os.environ['flask_host'])
-flask_port = int(os.environ['flask_port'])
-
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return 'ok\n'
-
-if __name__ == '__main__':
-    app.run(host=flask_host, port=flask_port)
-</code></pre>
-
-<pre><code class="bash boot.sh">#!/bin/sh
-set -e
-eval $(python /exporter.py)
-python /app.py
-</code></pre>
-
-<h2>Flow Information:</h2>
-
-<p>The exporter script checks all the secrets that is mounted to the container, then formats the secrets to a key/value pair, which then exports the environment variables to the current shell, which thereafter gets read by the flask application.</p>
-
-<h2>Usage:</h2>
-
-<p>Create Docker Secrets:</p>
-
-<pre><code>$ echo 5001 | docker secret create flask_port -
-$ echo 0.0.0.0 | docker secret create flask_host -
-</code></pre>
-
-<p>Build and Push the Image:</p>
-
-<pre><code>$ docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-$ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-</code></pre>
-
-<p>Create the Service, and specify the secrets that we created earlier:</p>
-
-<pre><code>$ docker service create --name webapp \
---secret source=flask_host,target=flask_host \
---secret source=flask_port,target=flask_port \
-registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-</code></pre>
-
-<p>Exec into the container, list to see where the secrets got populated:</p>
-
-<pre><code>$ ls /run/secrets/
-flask_host  flask_port
-</code></pre>
-
-<p>Do a netstat, to see that the value from the created secret is listening:</p>
-
-<pre><code>$ netstat -tulpn
-Active Internet connections (only servers)
-Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
-tcp        0      0 0.0.0.0:5001            0.0.0.0:*               LISTEN      7/python
-</code></pre>
-
-<p>Do a GET request on the Flask Application:</p>
-
-<pre><code>$ curl http://0.0.0.0:5001/
-ok
-</code></pre>
 ]]></content>
   </entry>
   

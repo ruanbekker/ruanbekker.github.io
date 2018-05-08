@@ -1,0 +1,313 @@
+---
+layout: post
+title: "Use Python Requests to Interact with the iTunes API to search for Music Info"
+date: 2018-05-08 17:01:11 -0400
+comments: true
+categories: ["python", "requests", "api", "itunes"] 
+---
+
+Tutorial on using Python Requests and using Apple iTunes Music API, where we will be doing the following:
+
+- Basics of using the Requests module
+- Query iTunes API on Songs by Artist
+- Query iTunes API on Artists Info
+- Query iTunes API on All Albums by Artist
+- Query iTunes API on Top 5 Albums
+- Query iTunes API on Multipe Artists
+
+## Resources:
+
+- [Python Requests](http://docs.python-requests.org/en/master/)
+- [iTunes API](https://affiliate.itunes.apple.com/resources/documentation/itunes-store-web-service-search-api/)
+
+## Install the Request Module:
+
+```
+$ virtualenv -p /usr/bin/python .venv
+$ source .venv/bin/activate
+$ pip install requests
+```
+
+## Basic Usage of Requests:
+
+In this demonstration we will only use the GET HTTP Method.
+
+Make the GET Request to the endpoint:
+
+```python
+>>> import requests
+>>> response = requests.get('https://itunes.apple.com/search?term=guns+and+roses&limit=1')
+```
+
+View the HTTP Status Code of the Response:
+
+```python
+>>> response.status_code
+200
+```
+
+To view some of the status codes of the request library:
+
+```python
+>>> requests.codes.ok
+200
+>>> requests.codes.no_content
+204
+>>> requests.codes.temporary_redirect
+307
+>>> requests.codes.permanent_redirect
+308
+>>> requests.codes.bad
+400
+>>> requests.codes.not_found
+404
+>>> requests.codes.bad_gateway
+502
+```
+
+Call `.ok` for the status lookup, the boolean answer will indicate if it responded with a `200 OK`:
+
+```python
+>>> response.ok
+True
+```
+
+Measure the amount of time the request took:
+
+```python
+>>> response.elapsed.total_seconds()
+0.706043
+```
+
+View the content of the response:
+
+```python
+>>> response.content
+'\n\n\n{\n "resultCount":1,\n "results": [\n{"wrapperType":"track", "kind":"song", "artistId":106621, "collectionId":5669937, "trackId":5669911, "artistName":"Guns N\' Roses", "collectionName":"Greatest Hits", "trackName":"Sweet Child O\' Mine", "collectionCensoredName":"Greatest Hits", "trackCensoredName":"Sweet Child O\' Mine", "artistViewUrl":"https://itunes.apple.com/us/artist/guns-n-roses/106621?uo=4", "collectionViewUrl":"https://itunes.apple.com/us/album/sweet-child-o-mine/5669937?i=5669911&uo=4", "trackViewUrl":"https://itunes.apple.com/us/album/sweet-child-o-mine/5669937?i=5669911&uo=4", \n"previewUrl":"https://audio-ssl.itunes.apple.com/apple-assets-us-std-000001/Music6/v4/f2/7d/73/f27d7346-de92-bdc6-e148-56a3da406005/mzaf_2747902348777129728.plus.aac.p.m4a", "artworkUrl30":"https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/30x30bb.jpg", "artworkUrl60":"https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/60x60bb.jpg", "artworkUrl100":"https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/100x100bb.jpg", "collectionPrice":9.99, "trackPrice":1.29, "releaseDate":"1987-07-21T07:00:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"notExplicit", "discCount":1, "discNumber":1, "trackCount":14, "trackNumber":2, "trackTimeMillis":355267, "country":"USA", "currency":"USD", "primaryGenreName":"Rock", "isStreamable":true}]\n}\n\n\n'
+```
+
+View the content in json format:
+
+```python
+>>> response.json()
+{u'resultCount': 1, u'results': [{u'collectionExplicitness': u'notExplicit', u'releaseDate': u'1987-07-21T07:00:00Z', u'currency': u'USD', u'artistId': 106621, u'previewUrl': u'https://audio-ssl.itunes.apple.com/apple-assets-us-std-000001/Music6/v4/f2/7d/73/f27d7346-de92-bdc6-e148-56a3da406005/mzaf_2747902348777129728.plus.aac.p.m4a', u'trackPrice': 1.29, u'isStreamable': True, u'trackViewUrl': u'https://itunes.apple.com/us/album/sweet-child-o-mine/5669937?i=5669911&uo=4', u'collectionName': u'Greatest Hits', u'collectionId': 5669937, u'trackId': 5669911, u'collectionViewUrl': u'https://itunes.apple.com/us/album/sweet-child-o-mine/5669937?i=5669911&uo=4', u'trackCount': 14, u'trackNumber': 2, u'discNumber': 1, u'collectionPrice': 9.99, u'trackCensoredName': u"Sweet Child O' Mine", u'trackName': u"Sweet Child O' Mine", u'trackTimeMillis': 355267, u'primaryGenreName': u'Rock', u'artistViewUrl': u'https://itunes.apple.com/us/artist/guns-n-roses/106621?uo=4', u'kind': u'song', u'country': u'USA', u'wrapperType': u'track', u'artworkUrl100': u'https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/100x100bb.jpg', u'collectionCensoredName': u'Greatest Hits', u'artistName': u"Guns N' Roses", u'artworkUrl60': u'https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/60x60bb.jpg', u'trackExplicitness': u'notExplicit', u'artworkUrl30': u'https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/30x30bb.jpg', u'discCount': 1}]}
+```
+
+View the request headers:
+
+```python
+>>> response.headers
+{'Content-Length': '650', 'x-apple-translated-wo-url': '/WebObjects/MZStoreServices.woa/ws/wsSearch?term=guns+and+roses&limit=1&urlDesc=', 'Access-Control-Allow-Origin': '*', 'x-webobjects-loadaverage': '0', 'X-Cache': 'TCP_MISS from a2-21-98-60.deploy.akamaitechnologies.com (AkamaiGHost/9.3.0.3-22245996) (-)', 'x-content-type-options': 'nosniff', 'x-apple-orig-url': 'https://itunes.apple.com/search?term=guns+and+roses&limit=1', 'x-apple-jingle-correlation-key': 'GUOFR25MGUUK5J7LUKI6UUFUWM', 'x-apple-application-site': 'ST11', 'Date': 'Tue, 08 May 2018 20:50:39 GMT', 'apple-tk': 'false', 'content-disposition': 'attachment; filename=1.txt', 'Connection': 'keep-alive', 'apple-seq': '0', 'x-apple-application-instance': '2001318', 'X-Apple-Partner': 'origin.0', 'Content-Encoding': 'gzip', 'strict-transport-security': 'max-age=31536000', 'Vary': 'Accept-Encoding', 'apple-timing-app': '109 ms', 'X-True-Cache-Key': '/L/itunes.apple.com/search ci2=limit=1&term=guns+and+roses__', 'X-Cache-Remote': 'TCP_MISS from a23-57-75-64.deploy.akamaitechnologies.com (AkamaiGHost/9.3.0.3-22245996) (-)', 'Cache-Control': 'max-age=86400', 'x-apple-request-uuid': '351c58eb-ac35-28ae-a7eb-a291ea50b4b3', 'Content-Type': 'text/javascript; charset=utf-8', 'apple-originating-system': 'MZStoreServices'}
+```
+
+## Python Requests and the iTunes API:
+
+Search for the Artist Guns and Roses and limit the output to 1 Song:
+
+```python
+>>> import requests
+>>> import json
+>>> a = 'https://itunes.apple.com/search?term=guns+and+roses&limit=1'
+>>> b = requests.get(a).json()
+>>> print(json.dumps(b, indent=2))
+{
+  "resultCount": 1,
+  "results": [
+    {
+      "collectionExplicitness": "notExplicit",
+      "releaseDate": "1987-07-21T07:00:00Z",
+      "currency": "USD",
+      "artistId": 106621,
+      "previewUrl": "https://audio-ssl.itunes.apple.com/apple-assets-us-std-000001/Music6/v4/f2/7d/73/f27d7346-de92-bdc6-e148-56a3da406005/mzaf_2747902348777129728.plus.aac.p.m4a",
+      "trackPrice": 1.29,
+      "isStreamable": true,
+      "trackViewUrl": "https://itunes.apple.com/us/album/sweet-child-o-mine/5669937?i=5669911&uo=4",
+      "collectionName": "Greatest Hits",
+      "collectionId": 5669937,
+      "trackId": 5669911,
+      "collectionViewUrl": "https://itunes.apple.com/us/album/sweet-child-o-mine/5669937?i=5669911&uo=4",
+      "trackCount": 14,
+      "trackNumber": 2,
+      "discNumber": 1,
+      "collectionPrice": 9.99,
+      "trackCensoredName": "Sweet Child O' Mine",
+      "trackName": "Sweet Child O' Mine",
+      "trackTimeMillis": 355267,
+      "primaryGenreName": "Rock",
+      "artistViewUrl": "https://itunes.apple.com/us/artist/guns-n-roses/106621?uo=4",
+      "kind": "song",
+      "country": "USA",
+      "wrapperType": "track",
+      "artworkUrl100": "https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/100x100bb.jpg",
+      "collectionCensoredName": "Greatest Hits",
+      "artistName": "Guns N' Roses",
+      "artworkUrl60": "https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/60x60bb.jpg",
+      "trackExplicitness": "notExplicit",
+      "artworkUrl30": "https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/30x30bb.jpg",
+      "discCount": 1
+    }
+  ]
+}
+```
+
+From the response we got a `"artistId": 106621`, lets query the API on the ArtistId, to get info of the Artist:
+
+```python
+>>> a = 'https://itunes.apple.com/lookup?id=106621'
+>>> b = requests.get(a).json()
+>>> print(json.dumps(b, indent=2))
+{
+  "resultCount": 1,
+  "results": [
+    {
+      "artistType": "Artist",
+      "amgArtistId": 4416,
+      "wrapperType": "artist",
+      "artistId": 106621,
+      "artistLinkUrl": "https://itunes.apple.com/us/artist/guns-n-roses/106621?uo=4",
+      "artistName": "Guns N' Roses",
+      "primaryGenreId": 21,
+      "primaryGenreName": "Rock"
+    }
+  ]
+}
+```
+
+Query all the Albums by Artist by using the ArtistId and Entity for Album:
+
+```python
+>>> a = 'https://itunes.apple.com/lookup?id=106621&entity=album'
+>>> b = requests.get(a).json()
+>>> print(json.dumps(b, indent=2))
+{
+  "resultCount": 13,
+  "results": [
+    {
+      "artistType": "Artist",
+      "amgArtistId": 4416,
+      "wrapperType": "artist",
+      "artistId": 106621,
+      "artistLinkUrl": "https://itunes.apple.com/us/artist/guns-n-roses/106621?uo=4",
+      "artistName": "Guns N' Roses",
+      "primaryGenreId": 21,
+      "primaryGenreName": "Rock"
+    },
+    {
+      "artistViewUrl": "https://itunes.apple.com/us/artist/guns-n-roses/106621?uo=4",
+      "releaseDate": "2004-01-01T08:00:00Z",
+      "collectionType": "Compilation",
+      "collectionName": "Greatest Hits",
+      "amgArtistId": 4416,
+      "copyright": "\u2117 2004 Geffen Records",
+      "collectionId": 5669937,
+      "artworkUrl60": "https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/60x60bb.jpg",
+      "wrapperType": "collection",
+      "collectionViewUrl": "https://itunes.apple.com/us/album/greatest-hits/5669937?uo=4",
+      "artistId": 106621,
+      "collectionCensoredName": "Greatest Hits",
+      "artworkUrl100": "https://is3-ssl.mzstatic.com/image/thumb/Music/v4/3c/18/87/3c188735-e462-3c99-92eb-50fb06afa73f/source/100x100bb.jpg",
+      "trackCount": 14,
+      "currency": "USD",
+      "artistName": "Guns N' Roses",
+      "country": "USA",
+      "primaryGenreName": "Rock",
+      "collectionExplicitness": "notExplicit",
+      "collectionPrice": 9.99
+    },
+```
+
+Get the Top 5 Albums by the Artist:
+
+```python
+a = 'https://itunes.apple.com/lookup?id=106621&entity=album&limit=5'
+```
+
+How to get AMG ID (all music id):
+
+```python
+>>> a = 'https://itunes.apple.com/search?term=jack+johnson&limit=2'
+>>> b = requests.get(a).json()
+>>> print(json.dumps(b, indent=2))
+{
+  "resultCount": 2,
+  "results": [
+    {
+      "collectionExplicitness": "notExplicit",
+      "releaseDate": "2005-03-01T08:00:00Z",
+      "currency": "USD",
+      "artistId": 909253,
+```
+
+Query Multiple Artists by using the amgId's:
+
+```python
+>>> a = 'https://itunes.apple.com/lookup?amgArtistId=468749,5723'
+>>> b = requests.get(a).json()
+>>> print(json.dumps(b, indent=2))
+{
+  "resultCount": 2,
+  "results": [
+    {
+      "artistType": "Artist",
+      "amgArtistId": 468749,
+      "wrapperType": "artist",
+      "artistId": 909253,
+      "artistLinkUrl": "https://itunes.apple.com/us/artist/jack-johnson/909253?uo=4",
+      "artistName": "Jack Johnson",
+      "primaryGenreId": 21,
+      "primaryGenreName": "Rock"
+    },
+    {
+      "artistType": "Artist",
+      "amgArtistId": 5723,
+      "wrapperType": "artist",
+      "artistId": 78500,
+      "artistLinkUrl": "https://itunes.apple.com/us/artist/u2/78500?uo=4",
+      "artistName": "U2",
+      "primaryGenreId": 21,
+      "primaryGenreName": "Rock"
+    }
+  ]
+}
+```
+
+
+If we Query the ArtistId from the previous response we will get the same artist:
+
+```python
+>>> a = 'https://itunes.apple.com/lookup?id=909253'
+>>> b = requests.get(a).json()
+>>> print(json.dumps(b, indent=2))
+{
+  "resultCount": 1,
+  "results": [
+    {
+      "artistType": "Artist",
+      "amgArtistId": 468749,
+      "wrapperType": "artist",
+      "artistId": 909253,
+      "artistLinkUrl": "https://itunes.apple.com/us/artist/jack-johnson/909253?uo=4",
+      "artistName": "Jack Johnson",
+      "primaryGenreId": 21,
+      "primaryGenreName": "Rock"
+    }
+  ]
+}
+```
+
+Only get the Artist Name:
+
+```python
+>> b
+{u'resultCount': 1, u'results': [{u'artistType': u'Artist', u'amgArtistId': 468749, u'wrapperType': u'artist', u'artistId': 909253, u'artistLinkUrl': u'https://itunes.apple.com/us/artist/jack-johnson/909253?uo=4', u'artistName': u'Jack Johnson', u'primaryGenreId': 21, u'primaryGenreName': u'Rock'}]}
+
+>>> b['results'][0]['artistName']
+u'Jack Johnson'
+```
+
+Printing out the Artist Name and Genre with String Formatting:
+
+```python
+>>> print('Artist: {artist_name}, Genre: {genre_name}'.format(artist_name=b['results'][0]['artistName'], genre_name=b['results'][0]['primaryGenreName']))
+Artist: Jack Johnson, Genre: Rock
+```

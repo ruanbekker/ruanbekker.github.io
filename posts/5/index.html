@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="I was busy setting up a docker-volume-netshare plugin to use NFS Volumes for Docker, which relies on the nfs-utils/nfs-common package, and when &hellip;">
+  <meta name="description" content="I have a 3 Node MySQL Galera Cluster that faced a shutdown on all 3 nodes at the same time, luckily this is only a testing environment, but at that &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,157 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/12/10/rejoining-or-bootstrapping-mysql-galera-cluster-nodes-after-shutdown/">Rejoining or Bootstrapping MySQL Galera Cluster Nodes After Shutdown</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-12-10T18:03:44-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>6:03 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>I have a 3 Node MySQL Galera Cluster that faced a shutdown on all 3 nodes at the same time, luckily this is only a testing environment, but at that time it was down and did not want to start up.</p>
+
+<h2>Issues Faced</h2>
+
+<p>When trying to start MySQL the only error visible was:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>/etc/init.d/mysql restart
+</span><span class='line'> * MySQL server PID file could not be found!
+</span><span class='line'>Starting MySQL
+</span><span class='line'>........ * The server quit without updating PID file <span class="o">(</span>/var/run/mysqld/mysqld.pid<span class="o">)</span>.
+</span><span class='line'> * Failed to restart server.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At that time I can see that the galera port is started, but not mysql:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ps aux <span class="p">|</span> grep mysql
+</span><span class='line'>root     <span class="m">23580</span>  0.0  0.0   <span class="m">4508</span>  <span class="m">1800</span> pts/0    S    00:37   0:00 /bin/sh /usr/bin/mysqld_safe --datadir<span class="o">=</span>/var/lib/mysql --pid-file<span class="o">=</span>/var/run/mysqld/mysqld.pid
+</span><span class='line'>mysql    <span class="m">24144</span>  0.7 22.2 <span class="m">1185116</span> <span class="m">455660</span> pts/0  Sl   00:38   0:00 /usr/sbin/mysqld --basedir<span class="o">=</span>/usr --datadir<span class="o">=</span>/var/lib/mysql --plugin-dir<span class="o">=</span>/usr/lib/mysql/plugin --user<span class="o">=</span>mysql --log-error<span class="o">=</span>/var/log/mysql/error.log --pid-file<span class="o">=</span>/var/run/mysqld/mysqld.pid --socket<span class="o">=</span>/var/run/mysqld/mysqld.sock --port<span class="o">=</span><span class="m">3306</span> --wsrep_start_position<span class="o">=</span>long:string
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>netstat -tulpn
+</span><span class='line'>Active Internet connections <span class="o">(</span>only servers<span class="o">)</span>
+</span><span class='line'>Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 0.0.0.0:4567            0.0.0.0:*               LISTEN      25507/mysqld
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Why?</h2>
+
+<p>More in detail is explained on a <a href="https://severalnines.com/blog/how-bootstrap-mysqlmariadb-galera-cluster">SeveralNines Blog Post</a>, but due to the fact that all the nodes left the cluster, one of the nodes needs to be started as a referencing point, before the other nodes can rejoin or bootstrapped to the cluster.</p>
+
+<h2>Rejoining the Cluster</h2>
+
+<p>Consult the blog for more information, but from my end, I had a look at the node with the highest seqno and then updated <code>safe_to_bootstrap</code> to <code>1</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /var/lib/mysql/grastate.dat
+</span><span class='line'><span class="c"># GALERA saved state</span>
+</span><span class='line'>version: 2.1
+</span><span class='line'>uuid:    e9f9cf6a-87a1-11e7-9fb4-52612b906897
+</span><span class='line'>seqno:   123512
+</span><span class='line'>safe_to_bootstrap: 1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then made sure that no mysql processes are running, then did a bootstrap:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>/etc/init.d/mysql bootstrap
+</span><span class='line'>Bootstrapping the cluster
+</span><span class='line'>Starting MySQL
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then restarted mysql on the other nodes.</p>
+
+<h2>Verifying</h2>
+
+<p>To verify that all your nodes has checked in, I have 3 nodes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">SHOW</span> <span class="n">STATUS</span> <span class="k">LIKE</span> <span class="s1">&#39;wsrep_%&#39;</span><span class="p">;</span>
+</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Variable_name</span>                <span class="o">|</span> <span class="n">Value</span>                                             <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_local_recv_queue_avg</span>   <span class="o">|</span> <span class="mi">0</span><span class="p">.</span><span class="mi">000000</span>                                          <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_local_state_comment</span>    <span class="o">|</span> <span class="n">Synced</span>                                            <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_incoming_addresses</span>     <span class="o">|</span> <span class="mi">10</span><span class="p">.</span><span class="mi">3</span><span class="p">.</span><span class="mi">132</span><span class="p">.</span><span class="mi">91</span><span class="p">:</span><span class="mi">3306</span><span class="p">,</span><span class="mi">10</span><span class="p">.</span><span class="mi">4</span><span class="p">.</span><span class="mi">1</span><span class="p">.</span><span class="mi">201</span><span class="p">:</span><span class="mi">3306</span><span class="p">,</span><span class="mi">10</span><span class="p">.</span><span class="mi">4</span><span class="p">.</span><span class="mi">113</span><span class="p">.</span><span class="mi">21</span><span class="p">:</span><span class="mi">3306</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_evs_state</span>              <span class="o">|</span> <span class="n">OPERATIONAL</span>                                       <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_cluster_size</span>           <span class="o">|</span> <span class="mi">3</span>                                                 <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_cluster_status</span>         <span class="o">|</span> <span class="k">Primary</span>                                           <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_connected</span>              <span class="o">|</span> <span class="k">ON</span>                                                <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>or a shorter version:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">SHOW</span> <span class="k">GLOBAL</span> <span class="n">STATUS</span> <span class="k">LIKE</span> <span class="s1">&#39;wsrep_cluster_size&#39;</span><span class="p">;</span>
+</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="n">Variable_name</span>                <span class="o">|</span> <span class="n">Value</span>                                             <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="n">wsrep_cluster_size</span>           <span class="o">|</span> <span class="mi">3</span>                                                 <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">------------------------------+---------------------------------------------------+</span>
+</span></code></pre></td></tr></table></div></figure>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2768,172 +2919,6 @@ UDP: <code>4567</code></p>
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/11/22/using-elasticsearch-curator-to-reindex-data/">Using Elasticsearch Curator to Reindex Data</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-11-22T09:09:28-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>22</span><span class='date-suffix'>nd</span>, <span class='date-year'>2017</span></span> <span class='time'>9:09 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Today I was using Elasticsearch Curator to reindex indices that was created on a daily basis, to reindex all the data to one index. I used this route as the old data will not be accessed frequently.</p>
-
-<h2>Install Elasticsearch Curator</h2>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -it python:2.7-alpine sh
-</span><span class='line'><span class="nv">$ </span>pip install elasticsearch-curator
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create Configs:</h2>
-
-<p>Create the curator config:</p>
-
-<figure class='code'><figcaption><span>config.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="c1"># Remember, leave a key empty if there is no value.  None will be a string,</span>
-</span><span class='line'><span class="c1"># not a Python &quot;NoneType&quot;</span>
-</span><span class='line'><span class="l-Scalar-Plain">client</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">hosts</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">es.endpoint.com</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">use_ssl</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">True</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">ssl_no_validate</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">http_auth</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">admin:pass</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">timeout</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">30</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">master_only</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">loglevel</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">INFO</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">logfile</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">logformat</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">blacklist</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;urllib3&#39;</span><span class="p-Indicator">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the action config:</p>
-
-<figure class='code'><figcaption><span>action-reindex.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="c1"># Remember, leave a key empty if there is no value.  None will be a string,</span>
-</span><span class='line'><span class="c1"># not a Python &quot;NoneType&quot;</span>
-</span><span class='line'><span class="c1">#</span>
-</span><span class='line'><span class="c1"># Also remember that all examples have &#39;disable_action&#39; set to True.  If you</span>
-</span><span class='line'><span class="c1"># want to use this action as a template, be sure to set this to False after</span>
-</span><span class='line'><span class="c1"># copying it.</span>
-</span><span class='line'><span class="l-Scalar-Plain">actions</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">1</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">description</span><span class="p-Indicator">:</span> <span class="s">&quot;Reindex</span><span class="nv"> </span><span class="s">index-2017.10.{30,31}</span><span class="nv"> </span><span class="s">into</span><span class="nv"> </span><span class="s">new-index-2017.10&quot;</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">action</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">reindex</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">options</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">disable_action</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">wait_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">9</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">max_wait</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-1</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">request_body</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">index</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;index-2017.10.*&#39;</span><span class="p-Indicator">]</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">dest</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">index</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">new-index-2017.10</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">filters</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">filtertype</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">none</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the Elasticsearch Index:</h2>
-
-<p>Create the Index where we will reindex the data to:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPUT http://es.endpoint.com/new-index-2017.10 -d <span class="s1">&#39;{&quot;settings&quot;: {&quot;number_of_shards&quot;: 5, &quot;number_of_replicas&quot;: 1}}&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Run the Curator:</h2>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curator --config curator.yml action-reindex.yml
-</span><span class='line'>
-</span><span class='line'>2017-11-22 14:18:15,138 INFO      Task <span class="s2">&quot;reindex from [index-2017.10.*] to [index-2017.10]&quot;</span> with task_id <span class="s2">&quot;Za-sn0z3Q9-75xCMRwJ3-A:15782886&quot;</span> has been running <span class="k">for</span> 928.948195354 seconds
-</span><span class='line'>2017-11-22 14:18:24,152 INFO      GET https://es.endpoint.com:443/_tasks/Za-sn0z3Q9-75xCMRwJ3-A%3A15782886 <span class="o">[</span>status:200 request:0.005s<span class="o">]</span>
-</span><span class='line'>2017-11-22 14:18:24,153 INFO      Task <span class="s2">&quot;reindex from [index-2017.10.*] to [new-index-2017.10]&quot;</span> with task_id <span class="s2">&quot;Za-sn0z3Q9-75xCMRwJ3-A:15782886&quot;</span> has been running <span class="k">for</span> 937.962740393 seconds
-</span><span class='line'>2017-11-22 14:22:23,171 INFO      Action ID: 1, <span class="s2">&quot;reindex&quot;</span> completed.
-</span><span class='line'>2017-11-22 14:22:23,171 INFO      Job completed.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.elastic.co/guide/en/elasticsearch/client/curator/current/index.html">https://www.elastic.co/guide/en/elasticsearch/client/curator/current/index.html</a></li>
-<li><a href="https://qbox.io/blog/logstash-elasticsearch-curator-data-retention">https://qbox.io/blog/logstash-elasticsearch-curator-data-retention</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/6">&larr; Older</a>
@@ -2951,6 +2936,10 @@ UDP: <code>4567</code></p>
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/05/08/use-python-requests-to-interact-with-the-itunes-api-to-search-for-music-info/">Use Python Requests to Interact With the iTunes API to Search for Music Info</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/05/02/setup-the-elasticsearch-log-driver-on-docker-swarm/">Setup the Elasticsearch Log Driver on Docker Swarm</a>
       </li>
     
@@ -2964,10 +2953,6 @@ UDP: <code>4567</code></p>
     
       <li class="post">
         <a href="/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing/">Running a 3 Node Elasticsearch Cluster With Docker Compose on Your Laptop for Testing</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/04/29/using-the-bulk-api-with-elasticsearch/">Using the Bulk API With Elasticsearch</a>
       </li>
     
   </ul>

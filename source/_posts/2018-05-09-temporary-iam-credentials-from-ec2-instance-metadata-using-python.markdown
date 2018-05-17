@@ -3,7 +3,7 @@ layout: post
 title: "Temporary IAM Credentials from EC2 Instance Metadata using Python"
 date: 2018-05-09 12:14:11 -0400
 comments: true
-categories: ["aws", "ec2". "iam", "security", "python", "boto3", "dynamodb", "credentials"] 
+categories: ["aws", "ec2", "iam", "security", "python", "boto3", "dynamodb", "credentials"] 
 ---
 
 From a Best Practice Perspective its good not having to pass sensitive information around, and especially not hard coding them.

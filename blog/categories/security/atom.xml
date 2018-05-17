@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Security | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/security/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-05-17T16:29:20-04:00</updated>
+  <updated>2018-05-17T16:31:55-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,71 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Temporary IAM Credentials From EC2 Instance Metadata Using Python]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/05/09/temporary-iam-credentials-from-ec2-instance-metadata-using-python/"/>
+    <updated>2018-05-09T12:14:11-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/05/09/temporary-iam-credentials-from-ec2-instance-metadata-using-python</id>
+    <content type="html"><![CDATA[<p>From a Best Practice Perspective its good not having to pass sensitive information around, and especially not hard coding them.</p>
+
+<h2>Best Practice: Security</h2>
+
+<p>One good way is to use SSM with KMS to Encrypt/Decrypt them, but since EC2 has a <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp.html">Metadata Service</a> available, we can make use of that to retrieve <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp.html">temporary credentials</a>. One requirement though, is that the instance will require an IAM Role where the code will be executed on. The IAM Role also needs to have sufficient privileges to be able to execute, whatever you need to do.</p>
+
+<p>The <a href="https://12factor.net/">12 Factor</a> Methodology however states to use config in your environment variables, but from the application logic, its easy to save it in our environment.</p>
+
+<h2>Scenario: Applications on AWS EC2</h2>
+
+<p>When you run applications on Amazon EC2 the nodes has access to the EC2 Metadata Service, so in this case our IAM Role has a Policy that authorizes GetItem on our DynamoDB table, therefore we can define our code with no sensitive information, as the code will do all the work to get the credentials and use the credentials to access DynamoDB.</p>
+
+<h2>Use Temporary Credentials to Read from DynamoDB</h2>
+
+<p>In this example we will get the temporary credentials from the metadata service, then define the temporary credentials in our session to authorize our request against dynamodb to read from our table:</p>
+
+<pre><code class="python">&gt;&gt;&gt; import boto3
+&gt;&gt;&gt; from botocore.utils import InstanceMetadataFetcher
+&gt;&gt;&gt; from botocore.credentials import InstanceMetadataProvider
+&gt;&gt;&gt; provider = InstanceMetadataProvider(iam_role_fetcher=InstanceMetadataFetcher(timeout=1000, num_attempts=2))
+&gt;&gt;&gt; creds = provider.load()
+
+&gt;&gt;&gt; session = boto3.Session(
+    aws_access_key_id=creds.access_key,
+    aws_secret_access_key=creds.secret_key,
+    aws_session_token=creds.token
+)
+
+&gt;&gt;&gt; ddb = session.client('dynamodb')
+
+&gt;&gt;&gt; response = ddb.get_item(
+    TableName='my-dynamodb-table',
+    Key={
+        'node_type': {
+            'S': 'primary_manager'
+        }
+    }
+)
+
+&gt;&gt;&gt; print(response['Item']['ip']['S'])
+'10.0.0.32
+</code></pre>
+
+<p>Also, when you are logged onto the EC2 instance, you can use curl to see the temporary credentials information:</p>
+
+<pre><code class="bash">$ iam_role_name=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+$ curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/${iam_role_name}
+{
+  "Code" : "Success",
+  "LastUpdated" : "2018-05-09T14:25:48Z",
+  "Type" : "AWS-HMAC",
+  "AccessKeyId" : "",
+  "SecretAccessKey" : "",
+  "Token" : "",
+  "Expiration" : "2018-05-09T20:46:55Z"
+}
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Encryption and Decryption With the PyCrypto Module Using the AES Cipher in Python]]></title>
@@ -394,131 +459,6 @@ An error occurred (AccessDenied) when calling the ListObjects operation: Access 
 <ul>
 <li><a href="https://aws.amazon.com/blogs/security/writing-iam-policies-how-to-grant-access-to-an-amazon-s3-bucket/">https://aws.amazon.com/blogs/security/writing-iam-policies-how-to-grant-access-to-an-amazon-s3-bucket/</a></li>
 </ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup HAProxy Load Balancer for MySQL Galera With IP Whitelisting and Backup Servers]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/08/31/setup-haproxy-load-balancer-for-mysql-galera-with-ip-whitelisting-and-backup-servers/"/>
-    <updated>2017-08-31T19:15:50-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/08/31/setup-haproxy-load-balancer-for-mysql-galera-with-ip-whitelisting-and-backup-servers</id>
-    <content type="html"><![CDATA[<p>Today we will setup a HAProxy Service for our 3 Node MySQL Galera Cluster</p>
-
-<h2>Our Setup:</h2>
-
-<ul>
-<li>3 Node Galera MySQL Cluster</li>
-<li>3 HAProxy Services (Each HAProxy Service Running on the MySQL Nodes)</li>
-<li>MySQL Listens on Port 3307</li>
-<li>HAProxy Listens on Port 3306 and Proxies through to 3307</li>
-</ul>
-
-
-<p>I have setup HAProxy on the same node as the MySQL Servers for my use case, but you can also setup HAProxy on a node outside the MySQL Host.</p>
-
-<p>So essentially our MySQL Galera Cluster is a Multi Master Setup, but for now we will only accept connections from Node-A, and have Node-B and Node-C as Backup servers. Should Node-A go down, HAProxy will route connections to Node-B, and if Node-B also goes down, connections will be routed to Node-C.</p>
-
-<p>If the Primary Node, which is Node-A recovers, connections will be restored to Node-A.</p>
-
-<h2>Security:</h2>
-
-<p>We use iptables to allow traffic between the nodes for port TCP/3307 and allow all traffic for Port TCP/3306, as HAProxy will allow the IP Based Access:</p>
-
-<pre><code class="bash Iptables for Each Node">$ iptables -I INPUT -s {Node-A} -p tcp --dport 3307 -j ACCEPT
-$ iptables -I INPUT -s {Node-B} -p tcp --dport 3307 -j ACCEPT
-$ iptables -I INPUT -s {Node-C} -p tcp --dport 3307 -j ACCEPT
-$ iptables -A INPUT -p tcp --dport 3306 -j ACCEPT
-$ iptables -A INPUT -p tcp --dport 3307 -j DROP
-</code></pre>
-
-<h2>HAProxy:</h2>
-
-<p>Installing HAProxy on Ubuntu:</p>
-
-<pre><code class="bash Install HAProxy">$ sudo apt update 
-$ sudo apt install haproxy -y
-</code></pre>
-
-<p>Configure HAProxy with a Port 3306 listener, specify your source addresses that you would like to be authorized to communicate with MySQL and then specify the servers to proxy the connections to our MySQL Galera Cluster, specifying 2 backup servers:</p>
-
-<pre><code class="bash /etc/haproxy/haproxy.cfg">global
-  log         127.0.0.1 local2
-  chroot      /var/lib/haproxy
-  pidfile     /var/run/haproxy.pid
-  maxconn     1020
-  user        haproxy
-  group       haproxy
-  daemon
-
-  stats socket /var/lib/haproxy/stats.sock mode 600 level admin
-  stats timeout 2m
-
-defaults
-  mode    tcp
-  log     global
-  option  dontlognull
-  option  redispatch
-  retries                   3
-  timeout queue             45s
-  timeout connect           5s
-  timeout client            1m
-  timeout server            1m
-  timeout check             10s
-  maxconn                   1020
-
-listen stats
-  bind    *:80
-  mode    http
-  stats   enable
-  stats   show-legends
-  stats   refresh           5s
-  stats   uri               /
-  stats   realm             Haproxy\ Statistics
-  stats   auth              admin:secret
-  stats   admin             if TRUE
-
-listen galera-lb
-  bind    *:3306
-  mode    tcp
-  acl     network_allowed src 10.10.1.0/24 10.32.15.2/32
-  tcp-request               content accept if network_allowed
-  tcp-request               content reject
-  default_backend           galera-cluster
-
-backend galera-cluster
-  balance roundrobin
-  server  scw-mysql-1 10.0.0.2:3307  check
-  server  scw-mysql-2 10.0.0.3:3307  check backup
-  server  scw-mysql-3 10.0.0.4:3307  check backup
-</code></pre>
-
-<p>Start HAProxy:</p>
-
-<pre><code class="bash Start HAProxy Service">$ sudo systemctl enable haproxy
-$ sudo systemctl restart haproxy
-</code></pre>
-
-<h2>Authorize HAProxy Hostnames to Connect to MySQL:</h2>
-
-<p>In this case we need to allow the Hostnames to be able to connect to mysql:</p>
-
-<pre><code class="sql">mysql&gt; GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'secrets' WITH GRANT OPTION;
-mysql&gt; FLUSH PRIVILEGES;
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://raymii.org/s/snippets/haproxy_restrict_specific_urls_to_specific_ip_addresses.html">https://raymii.org/s/snippets/haproxy_restrict_specific_urls_to_specific_ip_addresses.html</a></li>
-</ul>
-
-
-<center>
-        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-
 
 ]]></content>
   </entry>

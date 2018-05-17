@@ -99,6 +99,122 @@ This has also been reccored, which can be viewed here:
 
 - https://asciinema.org/a/BYmZQ0pBiyI8ogVF9t0smczRu
 
+## Using Bulk with Auto Generated ID's
+
+As you might know when you do a POST request to the type, the `_id` field gets auto populated. Timo, one of my friends had the requirement to use the Bulk API to post auto generated Id's and not the static id's that is given in the example dataset.
+
+I have answered this on Elastic's discuss page: https://discuss.elastic.co/t/looking-for-working-example-data-set-to-bulk-index-into-es6/128678/3
+
+I will provide the steps below as well:
+
+```python convert.py 
+#!/usr/bin/env python
+
+src_file = 'src_file.json'
+dest_file = 'dest_file.json'
+metadata = '{"index": {"_index": "bank_accounts", "_type": "account"}}'
+
+with open(src_file) as open_file:
+    lines = open_file.readlines()
+
+lines = [line.replace(' ', '') for line in lines]
+
+with open(dest_file, 'w') as f:
+    for each_line in lines:
+        f.write(metadata + '\n')
+        f.writelines(each_line)
+``` 
+
+The original file:
+
+```bash
+$ head -4 file.json 
+{"index":{"_id":"1"}}
+{"account_number":1,"balance":39225,"firstname":"Amber","lastname":"Duke","age":32,"gender":"M","address":"880 Holmes Lane","employer":"Pyrami","email":"amberduke@pyrami.com","city":"Brogan","state":"IL"}
+{"index":{"_id":"6"}}
+{"account_number":6,"balance":5686,"firstname":"Hattie","lastname":"Bond","age":36,"gender":"M","address":"671 Bristol Street","employer":"Netagy","email":"hattiebond@netagy.com","city":"Dante","state":"TN"}
+```
+
+Removing the initial metadata:
+
+```bash
+$ cat file.json | grep account_number >> src_file.json
+$ ./convert.py 
+```
+
+Previewing the destination file:
+
+```bash
+$ head -4 dest_file.json 
+{"index": {"_index": "bank_accounts", "_type": "account"}}
+{"account_number":1,"balance":39225,"firstname":"Amber","lastname":"Duke","age":32,"gender":"M","address":"880HolmesLane","employer":"Pyrami","email":"amberduke@pyrami.com","city":"Brogan","state":"IL"}
+{"index": {"_index": "bank_accounts", "_type": "account"}}
+{"account_number":6,"balance":5686,"firstname":"Hattie","lastname":"Bond","age":36,"gender":"M","address":"671BristolStreet","employer":"Netagy","email":"hattiebond@netagy.com","city":"Dante","state":"TN"}
+```
+
+Looking at my current indices:
+
+```bash
+$ curl http://localhost:9200/_cat/indices?v
+health status index                       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   .monitoring-es-6-2018.05.06 3OgdIbDWQWCR8WJlQTXr9Q   1   1     114715            6      104mb           50mb
+```
+
+Ingesting the data via Bulk API:
+
+```bash
+$ curl -s -H 'Content-Type: application/json' -XPOST localhost:9200/_bulk --data-binary @dest_file.json 
+```
+
+Looking at my indices to verify that the index exist:
+
+```bash
+$ curl http://localhost:9200/_cat/indices?v
+health status index                       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   bank_accounts               u37MQvzhSPe97BJzp1u49Q   5   1       1000            0    296.4kb           690b
+green  open   .monitoring-es-6-2018.05.06 3OgdIbDWQWCR8WJlQTXr9Q   1   1     114750            6    103.9mb         49.9mb
+```
+
+Looking at one document: :smiley:
+
+```bash
+$ curl 'http://localhost:9200/bank_accounts/_search?pretty&size=1'
+{
+  "took" : 641,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 1000,
+    "max_score" : 1.0,
+    "hits" : [
+      {
+        "_index" : "bank_accounts",
+        "_type" : "account",
+        "_id" : "cohJN2MBCa89A-FEmiJs",
+        "_score" : 1.0,
+        "_source" : {
+          "account_number" : 6,
+          "balance" : 5686,
+          "firstname" : "Hattie",
+          "lastname" : "Bond",
+          "age" : 36,
+          "gender" : "M",
+          "address" : "671BristolStreet",
+          "employer" : "Netagy",
+          "email" : "hattiebond@netagy.com",
+          "city" : "Dante",
+          "state" : "TN"
+        }
+      }
+    ]
+  }
+}
+```
 ## Resources:
 
 - https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-bulk.html

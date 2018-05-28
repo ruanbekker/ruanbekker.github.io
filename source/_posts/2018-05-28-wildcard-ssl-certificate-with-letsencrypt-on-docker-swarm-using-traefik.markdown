@@ -1,0 +1,195 @@
+---
+layout: post
+title: "Wildcard SSL Certificate with Letsencrypt on Docker Swarm using Traefik"
+date: 2018-05-28 17:36:17 -0400
+comments: true
+categories: ["docker", "swarm", "letsencrypt", "ssl", "traefik", "certificates"] 
+---
+
+With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is doing HTTPS Termination to our Applications thats running in our Swarm.
+
+## Architectural Design:
+
+At the moment we have 3 Manager Nodes, and 5 Worker Nodes:
+
+- Using a Dummy Domain example.com which is set to the 3 Public IP's of our Manager Nodes 
+- DNS is set for: `example.com` A Record to: `52.10.1.10`, `52.10.1.11`, `52.10.1.12`
+- DNS is set for: `*.example.com` CNAME to `example.com`
+- Any application that is spawned into our Swarm, will be labeled with a `traefik.frontend.rule` which will be routed to the service and redirected from HTTP to HTTPS
+
+## Create the Overlay Network:
+
+Create the overlay network that will be used for our stack:
+
+```bash
+$ docker network create --driver overlay appnet
+```
+
+## Create the Compose Files for our Stacks:
+
+Create the Traefik Service Compose file, we will deploy it in Global Mode, constraint to our Manager Nodes, so that every manager node has a copy of traefik running.
+
+```bash
+$ cat > traefik-compose.yml << EOF
+
+version: "3.4"
+services:
+  proxy:
+    image: traefik:latest
+    command:
+      - "--api"
+      - "--entrypoints=Name:http Address::80 Redirect.EntryPoint:https"
+      - "--entrypoints=Name:https Address::443 TLS"
+      - "--defaultentrypoints=http,https"
+      - "--acme"
+      - "--acme.storage=/etc/traefik/acme/acme.json"
+      - "--acme.entryPoint=https"
+      - "--acme.httpChallenge.entryPoint=http"
+      - "--acme.onHostRule=true"
+      - "--acme.onDemand=false"
+      - "--acme.email=me@example.com"
+      - "--docker"
+      - "--docker.swarmMode"
+      - "--docker.domain=example.com"
+      - "--docker.watch"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/traefik/acme.json:/etc/traefik/acme/acme.json
+    networks:
+      - appnet
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+      - target: 8080
+        published: 8080
+        mode: host
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+networks:
+  appnet:
+    external: true
+
+EOF
+```
+
+Create the Application Compose file, in this example we will be deploying a Ghost Blog:
+
+```bash
+$ cat > ghost-compose.yml << EOF
+
+version: '3.4'
+
+services:
+  blog:
+    image: ghost:1.22.7-alpine
+    networks:
+      - appnet
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: 
+          - node.role == worker
+      labels:
+        - "traefik.backend.loadbalancer.sticky=false"
+        - "traefik.backend.loadbalancer.swarm=true"
+        - "traefik.backend=blog-1"
+        - "traefik.docker.network=appnet"
+        - "traefik.entrypoints=https"
+        - "traefik.frontend.passHostHeader=true"
+        - "traefik.frontend.rule=Host:blog.example.com"
+        - "traefik.port=2368"
+
+networks:
+  appnet:
+    external: true
+
+EOF
+```
+
+## Prepare the Path for Traefik:
+
+We have a [replicated volume](https://sysadmins.co.za/tag/glusterfs/) under our `/mnt` partition, so that all our managers can read from that path, create the file and provide the sufficient permissions:
+
+```bash
+$ mkdir -p /mnt/traefik
+$ touch /mnt/traefik/acme.json
+$ chmod 600 /mnt/traefik/acme.json
+```
+
+## Deploy the Stacks:
+
+Deploy the Traefik Stack:
+
+```bash
+$ docker stack deploy -c traefik-compose.yml traefik
+```
+
+Wait until the services are deployed:
+
+```bash
+$ docker stack services traefik
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+f8ru5gbcgd2v        traefik_proxy       global              3/3                 traefik:latest
+```
+
+Deploy the Application Stack:
+
+```bash
+$ docker stack deploy -c ghost-compose.yml apps
+```
+
+Verify that the Application Stack has been deployed:
+
+```bash
+$ docker stack services apps
+ID                  NAME                MODE                REPLICAS            IMAGE                          PORTS
+516zlfs2cfdv        apps_blog           replicated          1/1                 ghost:1.22.7-alpine
+```
+
+At the moment we will have 2 stacks in our Swarm:
+
+```bash
+$ docker stack ls
+NAME                SERVICES
+apps                1
+traefik             1
+```
+
+## Test the Application:
+
+Let's test our blog to see if we get redirected to HTTPS:
+
+```bash
+$ curl -iL http://blog.example.com
+HTTP/1.1 302 Found
+Location: https://blog.example.com:443/
+Date: Mon, 28 May 2018 22:02:41 GMT
+Content-Length: 5
+Content-Type: text/plain; charset=utf-8
+
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=0
+Content-Type: text/html; charset=utf-8
+Date: Mon, 28 May 2018 22:02:42 GMT
+Etag: W/"4166-J2ooSIa8gtTkYjbnr7vnPUFlRJI"
+Vary: Accept-Encoding
+X-Powered-By: Express
+Transfer-Encoding: chunked
+```
+
+Works liek a charm! Traefik FTW!
+
+

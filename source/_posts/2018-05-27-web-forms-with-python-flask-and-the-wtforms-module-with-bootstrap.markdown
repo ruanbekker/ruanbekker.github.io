@@ -73,7 +73,7 @@ if __name__ == "__main__":
 
 `templates/index.html`
 
-```html templates/index.html
+```jinja templates/index.html
 <html>
   <head>
      <title>Demo Form</title>

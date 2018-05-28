@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-05-28T03:51:38-04:00</updated>
+  <updated>2018-05-28T18:07:10-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,315 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Wildcard SSL Certificate With Letsencrypt on Docker Swarm Using Traefik]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/"/>
+    <updated>2018-05-28T17:36:17-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik</id>
+    <content type="html"><![CDATA[<p>With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is doing HTTPS Termination to our Applications thats running in our Swarm.</p>
+
+<h2>Architectural Design:</h2>
+
+<p>At the moment we have 3 Manager Nodes, and 5 Worker Nodes:</p>
+
+<ul>
+<li>Using a Dummy Domain example.com which is set to the 3 Public IP&rsquo;s of our Manager Nodes</li>
+<li>DNS is set for: <code>example.com</code> A Record to: <code>52.10.1.10</code>, <code>52.10.1.11</code>, <code>52.10.1.12</code></li>
+<li>DNS is set for: <code>*.example.com</code> CNAME to <code>example.com</code></li>
+<li>Any application that is spawned into our Swarm, will be labeled with a <code>traefik.frontend.rule</code> which will be routed to the service and redirected from HTTP to HTTPS</li>
+</ul>
+
+
+<h2>Create the Overlay Network:</h2>
+
+<p>Create the overlay network that will be used for our stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker network create --driver overlay appnet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Compose Files for our Stacks:</h2>
+
+<p>Create the Traefik Service Compose file, we will deploy it in Global Mode, constraint to our Manager Nodes, so that every manager node has a copy of traefik running.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; traefik-compose.yml <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">version: &quot;3.4&quot;</span>
+</span><span class='line'><span class="s">services:</span>
+</span><span class='line'><span class="s">  proxy:</span>
+</span><span class='line'><span class="s">    image: traefik:latest</span>
+</span><span class='line'><span class="s">    command:</span>
+</span><span class='line'><span class="s">      - &quot;--api&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--entrypoints=Name:http Address::80 Redirect.EntryPoint:https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--entrypoints=Name:https Address::443 TLS&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--defaultentrypoints=http,https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.storage=/etc/traefik/acme/acme.json&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.entryPoint=https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.httpChallenge.entryPoint=http&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.onHostRule=true&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.onDemand=false&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.email=me@example.com&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.swarmMode&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.domain=example.com&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.watch&quot;</span>
+</span><span class='line'><span class="s">    volumes:</span>
+</span><span class='line'><span class="s">      - /var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'><span class="s">      - /mnt/traefik/acme.json:/etc/traefik/acme/acme.json</span>
+</span><span class='line'><span class="s">    networks:</span>
+</span><span class='line'><span class="s">      - appnet</span>
+</span><span class='line'><span class="s">    ports:</span>
+</span><span class='line'><span class="s">      - target: 80</span>
+</span><span class='line'><span class="s">        published: 80</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">      - target: 443</span>
+</span><span class='line'><span class="s">        published: 443</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">      - target: 8080</span>
+</span><span class='line'><span class="s">        published: 8080</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">    deploy:</span>
+</span><span class='line'><span class="s">      mode: global</span>
+</span><span class='line'><span class="s">      placement:</span>
+</span><span class='line'><span class="s">        constraints:</span>
+</span><span class='line'><span class="s">          - node.role == manager</span>
+</span><span class='line'><span class="s">      update_config:</span>
+</span><span class='line'><span class="s">        parallelism: 1</span>
+</span><span class='line'><span class="s">        delay: 10s</span>
+</span><span class='line'><span class="s">      restart_policy:</span>
+</span><span class='line'><span class="s">        condition: on-failure</span>
+</span><span class='line'><span class="s">networks:</span>
+</span><span class='line'><span class="s">  appnet:</span>
+</span><span class='line'><span class="s">    external: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Application Compose file, in this example we will be deploying a Ghost Blog:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; ghost-compose.yml <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">version: &#39;3.4&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">services:</span>
+</span><span class='line'><span class="s">  blog:</span>
+</span><span class='line'><span class="s">    image: ghost:1.22.7-alpine</span>
+</span><span class='line'><span class="s">    networks:</span>
+</span><span class='line'><span class="s">      - appnet</span>
+</span><span class='line'><span class="s">    deploy:</span>
+</span><span class='line'><span class="s">      mode: replicated</span>
+</span><span class='line'><span class="s">      replicas: 1</span>
+</span><span class='line'><span class="s">      placement:</span>
+</span><span class='line'><span class="s">        constraints: </span>
+</span><span class='line'><span class="s">          - node.role == worker</span>
+</span><span class='line'><span class="s">      labels:</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend.loadbalancer.sticky=false&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend.loadbalancer.swarm=true&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend=blog-1&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.docker.network=appnet&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.entrypoints=https&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.frontend.passHostHeader=true&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.frontend.rule=Host:blog.example.com&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.port=2368&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">networks:</span>
+</span><span class='line'><span class="s">  appnet:</span>
+</span><span class='line'><span class="s">    external: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Prepare the Path for Traefik:</h2>
+
+<p>We have a <a href="https://sysadmins.co.za/tag/glusterfs/">replicated volume</a> under our <code>/mnt</code> partition, so that all our managers can read from that path, create the file and provide the sufficient permissions:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p /mnt/traefik
+</span><span class='line'><span class="nv">$ </span>touch /mnt/traefik/acme.json
+</span><span class='line'><span class="nv">$ </span>chmod <span class="m">600</span> /mnt/traefik/acme.json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the Stacks:</h2>
+
+<p>Deploy the Traefik Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c traefik-compose.yml traefik
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Wait until the services are deployed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services traefik
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+</span><span class='line'>f8ru5gbcgd2v        traefik_proxy       global              3/3                 traefik:latest
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the Application Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c ghost-compose.yml apps
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that the Application Stack has been deployed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services apps
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                          PORTS
+</span><span class='line'>516zlfs2cfdv        apps_blog           replicated          1/1                 ghost:1.22.7-alpine
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At the moment we will have 2 stacks in our Swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack ls
+</span><span class='line'>NAME                SERVICES
+</span><span class='line'>apps                1
+</span><span class='line'>traefik             1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the Application:</h2>
+
+<p>Let&rsquo;s test our blog to see if we get redirected to <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -iL http://blog.example.com
+</span><span class='line'>HTTP/1.1 <span class="m">302</span> Found
+</span><span class='line'>Location: https://blog.example.com:443/
+</span><span class='line'>Date: Mon, <span class="m">28</span> May <span class="m">2018</span> 22:02:41 GMT
+</span><span class='line'>Content-Length: 5
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Cache-Control: public, max-age<span class="o">=</span>0
+</span><span class='line'>Content-Type: text/html<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>Date: Mon, <span class="m">28</span> May <span class="m">2018</span> 22:02:42 GMT
+</span><span class='line'>Etag: W/<span class="s2">&quot;4166-J2ooSIa8gtTkYjbnr7vnPUFlRJI&quot;</span>
+</span><span class='line'>Vary: Accept-Encoding
+</span><span class='line'>X-Powered-By: Express
+</span><span class='line'>Transfer-Encoding: chunked
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Works liek a charm! Traefik FTW!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Web Forms With Python Flask and the WTForms Module With Bootstrap]]></title>
@@ -4030,69 +4339,6 @@
 </span><span class='line'><span class="nv">$ </span>docker run -it ruan:test
 </span><span class='line'>env var: NOT_DEFINED
 </span></code></pre></td></tr></table></div></figure>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Docker Environment Substitution With Dockerfile]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/04/07/docker-environment-substitution-with-dockerfile/"/>
-    <updated>2018-04-07T09:18:20-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/04/07/docker-environment-substitution-with-dockerfile</id>
-    <content type="html"><![CDATA[<p>The <a href="https://12factor.net/">12 Factor</a> way, is a general guideline that provides best practices when building applications. One of them is using environment variables to store application configuration.</p>
-
-<h2>What will we be doing:</h2>
-
-<p>In this post we will build a simple docker application that returns the environment variable&rsquo;s value to standard out. We are using environment substitution, so if the environment variable is not provided, we will set a default value of <code>NOT_DEFINED</code>.</p>
-
-<p>We will have the environment variable <code>OWNER</code> and when no value is set for that Environment Variable, the <code>NOT_DEFINED</code> value will be returned.</p>
-
-<h2>The Dockerfile</h2>
-
-<p>Our Dockerfile:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='dockerfile'><span class='line'><span class="k">FROM</span> alpine:edge
-</span><span class='line'><span class="k">ENV</span> <span class="nv">OWNER</span><span class="o">=</span><span class="k">${</span><span class="nv">OWNER</span><span class="k">:-</span><span class="nv">NOT_DEFINED</span><span class="k">}</span>
-</span><span class='line'><span class="k">CMD</span> <span class="o">[</span><span class="s2">&quot;sh&quot;</span>, <span class="s2">&quot;-c&quot;</span>, <span class="s2">&quot;echo env var: ${OWNER}&quot;</span><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Building the image:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker build -t <span class="nb">test</span>:envs .
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Putting it to action:</h2>
-
-<p>Now we will run a container and pass the <code>OWNER</code> environment variable as an option:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -it -e <span class="nv">OWNER</span><span class="o">=</span>ruan <span class="nb">test</span>:envs .
-</span><span class='line'>env var: ruan
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we run a container without specifying the environment variable:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -it ruan:test
-</span><span class='line'>env var: NOT_DEFINED
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://stackify.com/config-values-docker-containers-environment-variables/">https://stackify.com/config-values-docker-containers-environment-variables/</a></li>
-<li><a href="https://tryolabs.com/blog/2015/03/26/configurable-docker-containers-for-multiple-environments/">https://tryolabs.com/blog/2015/03/26/configurable-docker-containers-for-multiple-environments/</a></li>
-</ul>
 
 ]]></content>
   </entry>

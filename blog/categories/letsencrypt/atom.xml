@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Letsencrypt | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/letsencrypt/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-05-28T03:51:38-04:00</updated>
+  <updated>2018-05-28T18:07:10-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,192 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Wildcard SSL Certificate With Letsencrypt on Docker Swarm Using Traefik]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/"/>
+    <updated>2018-05-28T17:36:17-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik</id>
+    <content type="html"><![CDATA[<p>With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is doing HTTPS Termination to our Applications thats running in our Swarm.</p>
+
+<h2>Architectural Design:</h2>
+
+<p>At the moment we have 3 Manager Nodes, and 5 Worker Nodes:</p>
+
+<ul>
+<li>Using a Dummy Domain example.com which is set to the 3 Public IP&rsquo;s of our Manager Nodes</li>
+<li>DNS is set for: <code>example.com</code> A Record to: <code>52.10.1.10</code>, <code>52.10.1.11</code>, <code>52.10.1.12</code></li>
+<li>DNS is set for: <code>*.example.com</code> CNAME to <code>example.com</code></li>
+<li>Any application that is spawned into our Swarm, will be labeled with a <code>traefik.frontend.rule</code> which will be routed to the service and redirected from HTTP to HTTPS</li>
+</ul>
+
+
+<h2>Create the Overlay Network:</h2>
+
+<p>Create the overlay network that will be used for our stack:</p>
+
+<pre><code class="bash">$ docker network create --driver overlay appnet
+</code></pre>
+
+<h2>Create the Compose Files for our Stacks:</h2>
+
+<p>Create the Traefik Service Compose file, we will deploy it in Global Mode, constraint to our Manager Nodes, so that every manager node has a copy of traefik running.</p>
+
+<pre><code class="bash">$ cat &gt; traefik-compose.yml &lt;&lt; EOF
+
+version: "3.4"
+services:
+  proxy:
+    image: traefik:latest
+    command:
+      - "--api"
+      - "--entrypoints=Name:http Address::80 Redirect.EntryPoint:https"
+      - "--entrypoints=Name:https Address::443 TLS"
+      - "--defaultentrypoints=http,https"
+      - "--acme"
+      - "--acme.storage=/etc/traefik/acme/acme.json"
+      - "--acme.entryPoint=https"
+      - "--acme.httpChallenge.entryPoint=http"
+      - "--acme.onHostRule=true"
+      - "--acme.onDemand=false"
+      - "--acme.email=me@example.com"
+      - "--docker"
+      - "--docker.swarmMode"
+      - "--docker.domain=example.com"
+      - "--docker.watch"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/traefik/acme.json:/etc/traefik/acme/acme.json
+    networks:
+      - appnet
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+      - target: 8080
+        published: 8080
+        mode: host
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+networks:
+  appnet:
+    external: true
+
+EOF
+</code></pre>
+
+<p>Create the Application Compose file, in this example we will be deploying a Ghost Blog:</p>
+
+<pre><code class="bash">$ cat &gt; ghost-compose.yml &lt;&lt; EOF
+
+version: '3.4'
+
+services:
+  blog:
+    image: ghost:1.22.7-alpine
+    networks:
+      - appnet
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: 
+          - node.role == worker
+      labels:
+        - "traefik.backend.loadbalancer.sticky=false"
+        - "traefik.backend.loadbalancer.swarm=true"
+        - "traefik.backend=blog-1"
+        - "traefik.docker.network=appnet"
+        - "traefik.entrypoints=https"
+        - "traefik.frontend.passHostHeader=true"
+        - "traefik.frontend.rule=Host:blog.example.com"
+        - "traefik.port=2368"
+
+networks:
+  appnet:
+    external: true
+
+EOF
+</code></pre>
+
+<h2>Prepare the Path for Traefik:</h2>
+
+<p>We have a <a href="https://sysadmins.co.za/tag/glusterfs/">replicated volume</a> under our <code>/mnt</code> partition, so that all our managers can read from that path, create the file and provide the sufficient permissions:</p>
+
+<pre><code class="bash">$ mkdir -p /mnt/traefik
+$ touch /mnt/traefik/acme.json
+$ chmod 600 /mnt/traefik/acme.json
+</code></pre>
+
+<h2>Deploy the Stacks:</h2>
+
+<p>Deploy the Traefik Stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c traefik-compose.yml traefik
+</code></pre>
+
+<p>Wait until the services are deployed:</p>
+
+<pre><code class="bash">$ docker stack services traefik
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+f8ru5gbcgd2v        traefik_proxy       global              3/3                 traefik:latest
+</code></pre>
+
+<p>Deploy the Application Stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c ghost-compose.yml apps
+</code></pre>
+
+<p>Verify that the Application Stack has been deployed:</p>
+
+<pre><code class="bash">$ docker stack services apps
+ID                  NAME                MODE                REPLICAS            IMAGE                          PORTS
+516zlfs2cfdv        apps_blog           replicated          1/1                 ghost:1.22.7-alpine
+</code></pre>
+
+<p>At the moment we will have 2 stacks in our Swarm:</p>
+
+<pre><code class="bash">$ docker stack ls
+NAME                SERVICES
+apps                1
+traefik             1
+</code></pre>
+
+<h2>Test the Application:</h2>
+
+<p>Let&rsquo;s test our blog to see if we get redirected to <a href="HTTPS:">HTTPS:</a></p>
+
+<pre><code class="bash">$ curl -iL http://blog.example.com
+HTTP/1.1 302 Found
+Location: https://blog.example.com:443/
+Date: Mon, 28 May 2018 22:02:41 GMT
+Content-Length: 5
+Content-Type: text/plain; charset=utf-8
+
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=0
+Content-Type: text/html; charset=utf-8
+Date: Mon, 28 May 2018 22:02:42 GMT
+Etag: W/"4166-J2ooSIa8gtTkYjbnr7vnPUFlRJI"
+Vary: Accept-Encoding
+X-Powered-By: Express
+Transfer-Encoding: chunked
+</code></pre>
+
+<p>Works liek a charm! Traefik FTW!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[HTTPS Termination Using LetsEncrypt With Traefik on Docker Swarm]]></title>

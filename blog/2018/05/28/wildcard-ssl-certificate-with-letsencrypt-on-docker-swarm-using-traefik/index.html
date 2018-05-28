@@ -1,0 +1,573 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Wildcard SSL Certificate With Letsencrypt on Docker Swarm Using Traefik - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="http://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My HowTo Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Wildcard SSL Certificate With Letsencrypt on Docker Swarm Using Traefik</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-05-28T17:36:17-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>28</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>5:36 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p>With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is doing HTTPS Termination to our Applications thats running in our Swarm.</p>
+
+<h2>Architectural Design:</h2>
+
+<p>At the moment we have 3 Manager Nodes, and 5 Worker Nodes:</p>
+
+<ul>
+<li>Using a Dummy Domain example.com which is set to the 3 Public IP&rsquo;s of our Manager Nodes</li>
+<li>DNS is set for: <code>example.com</code> A Record to: <code>52.10.1.10</code>, <code>52.10.1.11</code>, <code>52.10.1.12</code></li>
+<li>DNS is set for: <code>*.example.com</code> CNAME to <code>example.com</code></li>
+<li>Any application that is spawned into our Swarm, will be labeled with a <code>traefik.frontend.rule</code> which will be routed to the service and redirected from HTTP to HTTPS</li>
+</ul>
+
+
+<h2>Create the Overlay Network:</h2>
+
+<p>Create the overlay network that will be used for our stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker network create --driver overlay appnet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Compose Files for our Stacks:</h2>
+
+<p>Create the Traefik Service Compose file, we will deploy it in Global Mode, constraint to our Manager Nodes, so that every manager node has a copy of traefik running.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; traefik-compose.yml <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">version: &quot;3.4&quot;</span>
+</span><span class='line'><span class="s">services:</span>
+</span><span class='line'><span class="s">  proxy:</span>
+</span><span class='line'><span class="s">    image: traefik:latest</span>
+</span><span class='line'><span class="s">    command:</span>
+</span><span class='line'><span class="s">      - &quot;--api&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--entrypoints=Name:http Address::80 Redirect.EntryPoint:https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--entrypoints=Name:https Address::443 TLS&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--defaultentrypoints=http,https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.storage=/etc/traefik/acme/acme.json&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.entryPoint=https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.httpChallenge.entryPoint=http&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.onHostRule=true&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.onDemand=false&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.email=me@example.com&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.swarmMode&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.domain=example.com&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.watch&quot;</span>
+</span><span class='line'><span class="s">    volumes:</span>
+</span><span class='line'><span class="s">      - /var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'><span class="s">      - /mnt/traefik/acme.json:/etc/traefik/acme/acme.json</span>
+</span><span class='line'><span class="s">    networks:</span>
+</span><span class='line'><span class="s">      - appnet</span>
+</span><span class='line'><span class="s">    ports:</span>
+</span><span class='line'><span class="s">      - target: 80</span>
+</span><span class='line'><span class="s">        published: 80</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">      - target: 443</span>
+</span><span class='line'><span class="s">        published: 443</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">      - target: 8080</span>
+</span><span class='line'><span class="s">        published: 8080</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">    deploy:</span>
+</span><span class='line'><span class="s">      mode: global</span>
+</span><span class='line'><span class="s">      placement:</span>
+</span><span class='line'><span class="s">        constraints:</span>
+</span><span class='line'><span class="s">          - node.role == manager</span>
+</span><span class='line'><span class="s">      update_config:</span>
+</span><span class='line'><span class="s">        parallelism: 1</span>
+</span><span class='line'><span class="s">        delay: 10s</span>
+</span><span class='line'><span class="s">      restart_policy:</span>
+</span><span class='line'><span class="s">        condition: on-failure</span>
+</span><span class='line'><span class="s">networks:</span>
+</span><span class='line'><span class="s">  appnet:</span>
+</span><span class='line'><span class="s">    external: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Application Compose file, in this example we will be deploying a Ghost Blog:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; ghost-compose.yml <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">version: &#39;3.4&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">services:</span>
+</span><span class='line'><span class="s">  blog:</span>
+</span><span class='line'><span class="s">    image: ghost:1.22.7-alpine</span>
+</span><span class='line'><span class="s">    networks:</span>
+</span><span class='line'><span class="s">      - appnet</span>
+</span><span class='line'><span class="s">    deploy:</span>
+</span><span class='line'><span class="s">      mode: replicated</span>
+</span><span class='line'><span class="s">      replicas: 1</span>
+</span><span class='line'><span class="s">      placement:</span>
+</span><span class='line'><span class="s">        constraints: </span>
+</span><span class='line'><span class="s">          - node.role == worker</span>
+</span><span class='line'><span class="s">      labels:</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend.loadbalancer.sticky=false&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend.loadbalancer.swarm=true&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend=blog-1&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.docker.network=appnet&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.entrypoints=https&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.frontend.passHostHeader=true&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.frontend.rule=Host:blog.example.com&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.port=2368&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">networks:</span>
+</span><span class='line'><span class="s">  appnet:</span>
+</span><span class='line'><span class="s">    external: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Prepare the Path for Traefik:</h2>
+
+<p>We have a <a href="https://sysadmins.co.za/tag/glusterfs/">replicated volume</a> under our <code>/mnt</code> partition, so that all our managers can read from that path, create the file and provide the sufficient permissions:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p /mnt/traefik
+</span><span class='line'><span class="nv">$ </span>touch /mnt/traefik/acme.json
+</span><span class='line'><span class="nv">$ </span>chmod <span class="m">600</span> /mnt/traefik/acme.json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the Stacks:</h2>
+
+<p>Deploy the Traefik Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c traefik-compose.yml traefik
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Wait until the services are deployed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services traefik
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+</span><span class='line'>f8ru5gbcgd2v        traefik_proxy       global              3/3                 traefik:latest
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the Application Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c ghost-compose.yml apps
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that the Application Stack has been deployed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services apps
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                          PORTS
+</span><span class='line'>516zlfs2cfdv        apps_blog           replicated          1/1                 ghost:1.22.7-alpine
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At the moment we will have 2 stacks in our Swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack ls
+</span><span class='line'>NAME                SERVICES
+</span><span class='line'>apps                1
+</span><span class='line'>traefik             1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the Application:</h2>
+
+<p>Let&rsquo;s test our blog to see if we get redirected to <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -iL http://blog.example.com
+</span><span class='line'>HTTP/1.1 <span class="m">302</span> Found
+</span><span class='line'>Location: https://blog.example.com:443/
+</span><span class='line'>Date: Mon, <span class="m">28</span> May <span class="m">2018</span> 22:02:41 GMT
+</span><span class='line'>Content-Length: 5
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Cache-Control: public, max-age<span class="o">=</span>0
+</span><span class='line'>Content-Type: text/html<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>Date: Mon, <span class="m">28</span> May <span class="m">2018</span> 22:02:42 GMT
+</span><span class='line'>Etag: W/<span class="s2">&quot;4166-J2ooSIa8gtTkYjbnr7vnPUFlRJI&quot;</span>
+</span><span class='line'>Vary: Accept-Encoding
+</span><span class='line'>X-Powered-By: Express
+</span><span class='line'>Transfer-Encoding: chunked
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Works liek a charm! Traefik FTW!</p>
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2018-05-28T17:36:17-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>28</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>5:36 pm</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/certificates/'>certificates</a>, <a class='category' href='/blog/categories/docker/'>docker</a>, <a class='category' href='/blog/categories/letsencrypt/'>letsencrypt</a>, <a class='category' href='/blog/categories/ssl/'>ssl</a>, <a class='category' href='/blog/categories/swarm/'>swarm</a>, <a class='category' href='/blog/categories/traefik/'>traefik</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2018/05/27/web-forms-with-python-flask-and-the-wtforms-module-with-bootstrap/" title="Previous Post: Web Forms with Python Flask and the WTForms Module with Bootstrap">&laquo; Web Forms with Python Flask and the WTForms Module with Bootstrap</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/">Wildcard SSL Certificate With Letsencrypt on Docker Swarm Using Traefik</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/05/27/web-forms-with-python-flask-and-the-wtforms-module-with-bootstrap/">Web Forms With Python Flask and the WTForms Module With Bootstrap</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/05/23/generate-random-characters-with-python-using-random-and-string-modules/">Generate Random Characters With Python Using Random and String Modules</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/05/09/manage-scaleway-instances-via-their-api-like-a-boss-with-their-command-line-tool-scw/">Manage Scaleway Instances via Their API Like a Boss With Their Command Line Tool Scw</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/05/09/temporary-iam-credentials-from-ec2-instance-metadata-using-python/">Temporary IAM Credentials From EC2 Instance Metadata Using Python</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2018 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>

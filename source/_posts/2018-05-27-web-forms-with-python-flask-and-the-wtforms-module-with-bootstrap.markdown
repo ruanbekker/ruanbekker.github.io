@@ -74,6 +74,7 @@ if __name__ == "__main__":
 `templates/index.html`
 
 ```jinja templates/index.html
+{% raw %}
 <html>
   <head>
      <title>Demo Form</title>
@@ -144,6 +145,7 @@ if __name__ == "__main__":
     </div>
   </body>
 </html>
+{% endraw %}
 ```
 
 This will result in a basic web form like this:

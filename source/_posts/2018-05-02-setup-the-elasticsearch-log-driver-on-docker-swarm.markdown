@@ -6,6 +6,8 @@ comments: true
 categories: ["docker", "docker-swarm", "elasticsearch", "devops"]
 ---
 
+![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+
 Today we will look at a Elasticsearch logging driver for Docker.
 
 ## Why a Log Driver?

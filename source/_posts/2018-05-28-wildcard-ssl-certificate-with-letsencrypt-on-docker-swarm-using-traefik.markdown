@@ -190,6 +190,6 @@ X-Powered-By: Express
 Transfer-Encoding: chunked
 ```
 
-Works liek a charm! Traefik FTW!
+Works like a charm! Traefik FTW!
 
 

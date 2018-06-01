@@ -32,6 +32,9 @@ if __name__ == '__main__':
     app.run()
 ```
 
+To get the headers, you can use `headers.get("X-Api-Key")` or `headers["X-Api-Key"]`
+
+
 Create a virtual environment, install flask and run the app:
 
 ```bash

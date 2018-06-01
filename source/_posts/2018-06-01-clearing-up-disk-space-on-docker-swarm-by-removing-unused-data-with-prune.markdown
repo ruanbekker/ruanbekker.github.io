@@ -1,0 +1,57 @@
+---
+layout: post
+title: "Clearing Up Disk Space on Docker Swarm by Removing Unused Data with Prune"
+date: 2018-06-01 02:19:21 -0400
+comments: true
+categories: ["docker", "swarm", "prune", "sysadmin"] 
+---
+
+![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+
+After some time, your system can run out of disk space when running a lot of containers / volumes etc. You will find that at times, you will have a lot of unused containers, stopped containers, unused images, unused networks that is just sitting there, which consumes data on your nodes.
+
+One way to clean them is by using `docker system prune`. 
+
+## Check Docker Disk Space
+
+The command below will show the amount of disk space consumed, and how much is reclaimable:
+
+```bash
+$ docker system df
+TYPE                TOTAL               ACTIVE              SIZE                RECLAIMABLE
+Images              229                 125                 23.94GB             14.65GB (61%)
+Containers          322                 16                  8.229GB             8.222GB (99%)
+Local Volumes       77                  41                  698MB               19.13MB (2%)
+Build Cache                                                 0B                  0B
+```
+
+## Removing Unsued Data:
+
+By using Prune, we can remove the unused resources that is consuming data:
+
+```bash
+$ docker system prune
+
+WARNING! This will remove:
+        - all stopped containers
+        - all networks not used by at least one container
+        - all dangling images
+        - all build cache
+Are you sure you want to continue? [y/N] y
+
+Deleted Containers:
+a3d7db158e065d0c86160fd5d688875f8b7435848ea91db57ed007
+47890dcfea4a105f43e790dd8ad3c6d7c4ad7e738186c034d7a46b
+
+Deleted Networks:
+traefik-net
+app_appnet
+
+Deleted Images:
+deleted: sha256:5b9909c10e93afec
+deleted: sha256:d81eesdfihweo3rk
+
+Total reclaimed space: 14.18GB
+```
+
+For related [Docker](https://goo.gl/L2NYxU) posts.

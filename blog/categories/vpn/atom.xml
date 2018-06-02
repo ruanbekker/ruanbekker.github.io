@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Vpn | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/vpn/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-06-01T08:26:38-04:00</updated>
+  <updated>2018-06-02T14:43:03-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,147 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Peer to Peer VPN With VPNCloud on Ubuntu]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/06/02/setup-a-peer-to-peer-vpn-with-vpncloud-on-ubuntu/"/>
+    <updated>2018-06-02T14:15:33-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/06/02/setup-a-peer-to-peer-vpn-with-vpncloud-on-ubuntu</id>
+    <content type="html"><![CDATA[<p>So I got 3 Dedicated Servers each having its own Static IP and I wanted a way to build a private network between these servers.</p>
+
+<h2>The Scenario:</h2>
+
+<p>3 Servers with the following IP&rsquo;s (not real IP addresses):</p>
+
+<pre><code>- Server 1: 52.1.99.10
+- Server 2: 52.1.84.20
+- Server 3: 52.1.49.30
+</code></pre>
+
+<p>So I want to have a private network, so that I can have the following internal network:</p>
+
+<pre><code>- Server 1: 10.0.1.1
+- Server 2: 10.0.1.2
+- Server 3: 10.0.1.3
+</code></pre>
+
+<p>A couple of years ago, I accomplished the end goal using GRE Tunnels, which works well, but wanted to try something different.</p>
+
+<h2>VPNCloud</h2>
+
+<p>So I stumbled upon VPNCloud.rs, which is a peer to peer VPN. Their description, quoted from their Github page:</p>
+
+<p>&ldquo;VpnCloud is a simple VPN over UDP. It creates a virtual network interface on the host and forwards all received data via UDP to the destination. VpnCloud establishes a fully-meshed VPN network in a peer-to-peer manner. It can work on TUN devices (IP based) and TAP devices (Ethernet based).&rdquo;</p>
+
+<p>This is exactly what I was looking for.</p>
+
+<h2>Setting up a 3 node Private Network:</h2>
+
+<p>Given the IP configuration above, we will setup a Private network between our 3 hosts.</p>
+
+<p>Do some updates then grab the package from <a href="https://github.com/dswd/vpncloud.rs/releases">Github</a> and install VPNCloud:</p>
+
+<pre><code class="bash ">$ apt update &amp;&amp; apt ugprade -y
+$ wget https://github.com/dswd/vpncloud.rs/releases/download/v0.8.1/vpncloud_0.8.1_amd64.deb
+$ dpkg -i ./vpncloud_0.8.1_amd64.deb
+</code></pre>
+
+<p>Let&rsquo;s start the configuration on Server-1, this config should also be setup on the other 2 servers, the config will remain the same, except for the <code>ifup</code> command. The other servers will look like:</p>
+
+<pre><code>Server-2: -&gt; ifup: "ifconfig $IFNAME 10.0.1.2/24 mtu 1400"
+Server-3: -&gt; ifup: "ifconfig $IFNAME 10.0.1.3/24 mtu 1400"
+</code></pre>
+
+<p>Getting back to the Server-1 config:</p>
+
+<pre><code class="bash">$ vim /etc/vpncloud/private.net
+</code></pre>
+
+<p>Example Config that I am using:</p>
+
+<pre><code># each vpn running on their own port
+port: 3210
+
+# members of our private network
+peers:
+  - srv2.domain.com:3210
+  - srv3.domain.com:3210
+
+# timeouts
+peer_timeout: 1800
+dst_timeout: 300
+
+# token that identifies the network and helps to distinguish from other networks
+magic: "1234abcd"
+
+# pre shared key
+shared_key: "VeryStrongPreSharedKey_ThatShouldBeChanged"
+
+# encryption
+crypto: aes256
+
+# device info
+device_name: "vpncloud%d"
+device_type: tap
+
+# vpn modes: ['hub', 'switch', 'router', 'normal']
+mode: normal
+
+# subnet to be used for our private network
+subnets:
+  - 10.0.1.0/24
+
+# command to setup the network
+ifup: "ifconfig $IFNAME 10.0.1.1/24 mtu 1400"
+ifdown: "ifconfig $IFNAME down"
+
+# user/group owning the process
+user: "root"
+group: "root"
+</code></pre>
+
+<p>Repeat the config on the other servers.</p>
+
+<h2>Start the VPN Service:</h2>
+
+<p>Restart the VPNCloud Service on all the Servers:</p>
+
+<pre><code class="bash">$ service vpncloud@private start
+</code></pre>
+
+<p>Check the status:</p>
+
+<pre><code class="bash">$ service vpncloud@private status
+</code></pre>
+
+<p>Check if the interface is up:</p>
+
+<pre><code class="bash">$ ifconfig vpncloud0
+vpncloud0 Link encap:Ethernet  HWaddr aa:bb:cc:dd:ee:ff
+          inet addr:10.0.1.1  Bcast:10.0.1.255  Mask:255.255.255.0
+          UP BROADCAST RUNNING MULTICAST  MTU:1400  Metric:1
+          RX packets:55 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:71 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:5046 (5.0 KB)  TX bytes:5526 (5.5 KB)
+</code></pre>
+
+<p>Ping the 3rd server via the private network:</p>
+
+<pre><code class="bash">$ ping -c 3 10.0.1.3
+PING 10.0.1.2 (10.0.1.3) 56(84) bytes of data.
+64 bytes from 10.0.1.3: icmp_seq=1 ttl=64 time=0.852 ms
+64 bytes from 10.0.1.3: icmp_seq=2 ttl=64 time=0.831 ms
+64 bytes from 10.0.1.3: icmp_seq=3 ttl=64 time=0.800 ms
+
+--- 10.0.1.3 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2028ms
+rtt min/avg/max/mdev = 0.800/0.827/0.852/0.039 ms
+</code></pre>
+
+<p>Awesome service, please check their <a href="https://github.com/dswd/vpncloud.rs">Github Repo</a> out.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Site to Site IPsec VPN With Strongswan and PreShared Key Authentication]]></title>

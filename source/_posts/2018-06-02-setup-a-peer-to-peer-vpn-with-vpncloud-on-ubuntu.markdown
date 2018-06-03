@@ -89,7 +89,7 @@ crypto: aes256
 device_name: "vpncloud%d"
 device_type: tap
 
-# vpn modes: ['hub', 'switch', 'router', 'normal']
+# vpn modes: hub / switch / router / normal
 mode: normal
 
 # subnet to be used for our private network

@@ -63,7 +63,7 @@ $ vim /etc/vpncloud/private.net
 
 Example Config that I am using:
 
-```
+```bash
 # each vpn running on their own port
 port: 3210
 

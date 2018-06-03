@@ -29,7 +29,7 @@ $ ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -i /path/to/key.
 
 Now with SSH Config, open up the config file:
 
-``` ~/.ssh/config
+``` 
 $ vim ~/.ssh/config
 ``` 
 

@@ -77,7 +77,7 @@ peer_timeout: 1800
 dst_timeout: 300
 
 # token that identifies the network and helps to distinguish from other networks
-magic: "1234abcd"
+magic: "76706e01"
 
 # pre shared key
 shared_key: "VeryStrongPreSharedKey_ThatShouldBeChanged"

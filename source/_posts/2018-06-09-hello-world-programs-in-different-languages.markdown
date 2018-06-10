@@ -45,7 +45,7 @@ sys	  0m0.001s
 
 Code
 
-```golang
+```go
 package main
 
 import "fmt"

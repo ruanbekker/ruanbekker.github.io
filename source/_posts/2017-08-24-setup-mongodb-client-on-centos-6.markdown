@@ -37,6 +37,12 @@ Install the MongoDB Shell Client:
 $ sudo yum install mongodb-shell -y
 ```
 
+Update: Thanks to Rick, when you use CentOS 7, you can install the Shell Client as instructed below:
+
+```
+$ sudo yum install mongodb-org-shell -y
+```
+
 ## Connect to your Remote MongoDB Instance:
 
 ```

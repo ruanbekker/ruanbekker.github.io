@@ -1,0 +1,370 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Ceph | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/ceph/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2018-06-13T20:10:08-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 3 Node Ceph Storage Cluster on Ubuntu 16]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/06/13/setup-a-3-node-ceph-storage-cluster-on-ubuntu-16/"/>
+    <updated>2018-06-13T18:22:06-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/06/13/setup-a-3-node-ceph-storage-cluster-on-ubuntu-16</id>
+    <content type="html"><![CDATA[<p><img src="https://ceph.com/wp-content/uploads/2016/07/Ceph_Logo_Standard_RGB_120411_fa.png" alt="" /></p>
+
+<p>For some time now, I wanted to do a setup of Ceph, and I finally got the time to do it. This setup was done on Ubuntu 16.04</p>
+
+<h2>What is Ceph</h2>
+
+<p>Ceph is a storage platform that implements object storage on a single distributed computer cluster and provides interfaces for object, block and file-level storage.</p>
+
+<ul>
+<li>Object Storage:</li>
+</ul>
+
+
+<p>Ceph provides seemless access to objects via native language bindings or via the REST interface, RadosGW and also compatible for applications written for S3 and Swift.</p>
+
+<ul>
+<li>Block Storage:</li>
+</ul>
+
+
+<p>Ceph&rsquo;s Rados Block Device (RBD) provides access to block device images that are replicated and striped across the storage cluster.</p>
+
+<ul>
+<li>File System:</li>
+</ul>
+
+
+<p>Ceph provides a network file system (CephFS) that aims for high performance.</p>
+
+<h2>Our Setup</h2>
+
+<p>We will have 4 nodes. 1 Admin node where we will deploy our cluster with, and 3 nodes that will hold the data:</p>
+
+<ul>
+<li>ceph-admin (10.0.8.2)</li>
+<li>ceph-node1 (10.0.8.3)</li>
+<li>ceph-node2 (10.0.8.4)</li>
+<li>ceph-node3 (10.0.8.5)</li>
+</ul>
+
+
+<h2>Host Entries</h2>
+
+<p>If you don&rsquo;t have dns for your servers, setup the hosts files so that the names can resolves to the ip addresses:</p>
+
+<pre><code class="bash /etc/hosts">10.0.8.2 ceph-admin
+10.0.8.3 ceph-node1
+10.0.8.4 ceph-node2
+10.0.8.5 ceph-node3
+</code></pre>
+
+<h2>User Accounts and Passwordless SSH</h2>
+
+<p>Setup the <code>ceph-system</code> user accounts on all the servers:</p>
+
+<pre><code>$ useradd -d /home/ceph-system -s /bin/bash -m ceph-system
+$ passwd ceph-system
+</code></pre>
+
+<p>Setup the created user part of the sudoers that is able to issue sudo commands without a pssword:</p>
+
+<pre><code>$ echo "ceph-system ALL = (root) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/ceph-system
+$ chmod 0440 /etc/sudoers.d/ceph-system
+</code></pre>
+
+<p>Switch user to <code>ceph-system</code> and generate SSH keys and copy the keys from the <code>ceph-admin</code> server to the ceph-nodes:</p>
+
+<pre><code>$ sudo su - ceph-system
+$ ssh-keygen -t rsa -f ~/.ssh/id_rsa -P ""
+$ ssh-copy-id ceph-system@ceph-node1
+$ ssh-copy-id ceph-system@ceph-node2
+$ ssh-copy-id ceph-system@ceph-node3
+$ ssh-copy-id ceph-system@ceph-admin
+</code></pre>
+
+<h2>Pre-Requisite Software:</h2>
+
+<p>Install Python and Ceph Deploy on each node:</p>
+
+<pre><code>$ sudo apt-get install python -y
+$ sudo apt install ceph-deploy -y
+</code></pre>
+
+<p>Note: Please skip this section if you have additional disks on your servers.</p>
+
+<p>The instances that im using to test this setup only has one disk, so I will be creating loop block devices using allocated files. This is not recommended as when the disk fails, all the (files/block device images) will be gone with that. But since im demonstrating this, I will create the block devices from a file:</p>
+
+<p>I will be creating a 12GB file on each node</p>
+
+<pre><code>$ sudo mkdir /raw-disks 
+$ sudo dd if=/dev/zero of=/raw-disks/rd0 bs=1M count=12288
+</code></pre>
+
+<p>The use losetup to create the loop0 block device:</p>
+
+<pre><code>$ sudo losetup /dev/loop0 /raw-disks/rd0
+</code></pre>
+
+<p>As you can see the loop device is showing when listing the block devices:</p>
+
+<pre><code>$ lsblk
+NAME      MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+loop0       7:0    0   12G  0 loop
+</code></pre>
+
+<h2>Install Ceph</h2>
+
+<p>Now let&rsquo;s install ceph using ceph-deploy to all our nodes:</p>
+
+<pre><code>$ sudo apt update &amp;&amp; sudo apt upgrade -y
+$ ceph-deploy install ceph-admin ceph-node1 ceph-node2 ceph-node3
+</code></pre>
+
+<p>The version I was running at the time:</p>
+
+<pre><code>$ ceph --version
+ceph version 10.2.9
+</code></pre>
+
+<h2>Initialize Ceph</h2>
+
+<p>Initialize the Cluster with 3 Monitors:</p>
+
+<pre><code>$ ceph-deploy new ceph-node1 ceph-node2 ceph-node3
+</code></pre>
+
+<p>Add the initial monitors and gather the keys from the previous command:</p>
+
+<pre><code>$ ceph-deploy mon create-initial
+</code></pre>
+
+<p>At this point, we should be able to scan the block devices on our nodes:</p>
+
+<pre><code>$ ceph-deploy disk list ceph-node3
+[ceph-node3][INFO  ] Running command: sudo /usr/sbin/ceph-disk list
+[ceph-node3][DEBUG ] /dev/loop0 other
+</code></pre>
+
+<h2>Prepare the Disks:</h2>
+
+<p>First we will zap the block devices and then prepare to create the partitions:</p>
+
+<pre><code>$ ceph-deploy disk zap ceph-node1:/dev/loop0 ceph-node2:/dev/loop0 ceph-node3:/dev/loop0
+$ ceph-deploy osd prepare ceph-node1:/dev/loop0 ceph-node2:/dev/loop0 ceph-node3:/dev/loop0
+[ceph_deploy.osd][DEBUG ] Host ceph-node1 is now ready for osd use.
+[ceph_deploy.osd][DEBUG ] Host ceph-node2 is now ready for osd use.
+[ceph_deploy.osd][DEBUG ] Host ceph-node3 is now ready for osd use.
+</code></pre>
+
+<p>When you scan the nodes for their disks, you will notice that the partitions has been created:</p>
+
+<pre><code>$ ceph-deploy disk list ceph-node1 
+[ceph-node1][DEBUG ] /dev/loop0p2 ceph journal, for /dev/loop0p1 
+[ceph-node1][DEBUG ] /dev/loop0p1 ceph data, active, cluster ceph, osd.0, journal /dev/loop0p2
+</code></pre>
+
+<p>Now let&rsquo;s activate the OSD&rsquo;s by using the data partitions:</p>
+
+<pre><code>$ ceph-deploy osd activate ceph-node1:/dev/loop0p1 ceph-node2:/dev/loop0p1 ceph-node3:/dev/loop0p1
+</code></pre>
+
+<h2>Redistribute Keys:</h2>
+
+<p>Copy the configuration files and admin key to your admin node and ceph data nodes:</p>
+
+<pre><code>$ ceph-deploy admin ceph-admin ceph-node1 ceph-node2 ceph-node3
+</code></pre>
+
+<p>If you would like to add more OSD&rsquo;s (not tested):</p>
+
+<pre><code>$ ceph-deploy disk zap ceph-node1:/dev/loop1 ceph-node2:/dev/loop1 ceph-node3:/dev/loop1
+$ ceph-deploy osd prepare ceph-node1:/dev/loop1 ceph-node2:/dev/loop1 ceph-node3:/dev/loop1 
+$ ceph-deploy osd activate ceph-node2:/dev/loop1p1:/dev/loop1p2 ceph-node2:/dev/loop1p1:/dev/loop1p2 ceph-node3:/dev/loop1p1:/dev/loop1p2
+$ ceph-deploy admin ceph-node1 ceph-node2 ceph-node3
+</code></pre>
+
+<h2>Ceph Status:</h2>
+
+<p>Have a look at your cluster status:</p>
+
+<pre><code>$ sudo ceph -s
+    cluster 8d704c8a-ac19-4454-a89f-89a5d5b7d94d
+     health HEALTH_OK
+     monmap e1: 3 mons at {ceph-node1=10.0.8.3:6789/0,ceph-node2=10.0.8.4:6789/0,ceph-node3=10.0.8.5:6789/0}
+            election epoch 10, quorum 0,1,2 ceph-node2,ceph-node3,ceph-node1
+     osdmap e14: 3 osds: 3 up, 3 in
+            flags sortbitwise,require_jewel_osds
+      pgmap v29: 64 pgs, 1 pools, 0 bytes data, 0 objects
+            100 MB used, 18298 MB / 18398 MB avail
+                  64 active+clean
+</code></pre>
+
+<p>Everything looks good. Also change the permissions on this file, on all the nodes in order to execute the ceph, rados commands:</p>
+
+<pre><code>$ sudo chmod +r /etc/ceph/ceph.client.admin.keyring
+</code></pre>
+
+<h2>Storage Pools:</h2>
+
+<p>List your pool in your Ceph Cluster:</p>
+
+<pre><code>$ rados lspools
+rbd
+</code></pre>
+
+<p>Let&rsquo;s create a new storage pool called <code>mypool</code>:</p>
+
+<pre><code>$ ceph osd pool create mypool 32 32 
+pool 'mypool' created
+</code></pre>
+
+<p>Let&rsquo;s the list the storage pools again:</p>
+
+<pre><code>$ rados lspools 
+rbd 
+mypool
+</code></pre>
+
+<p>You can also use the ceph command to list the pools:</p>
+
+<pre><code>$ ceph osd pool ls 
+rbd 
+mypool
+</code></pre>
+
+<p>Create a Block Device Image:</p>
+
+<pre><code>$ rbd create --size 1024 mypool/disk1 --image-feature layering
+</code></pre>
+
+<p>List the Block Device Images under your Pool:</p>
+
+<pre><code>$ rbd list mypool
+disk1
+</code></pre>
+
+<p>Retrieve information from your image:</p>
+
+<pre><code>$ rbd info mypool/disk1
+rbd image 'disk1':
+        size 1024 MB in 256 objects
+        order 22 (4096 kB objects)
+        block_name_prefix: rbd_data.1021643c9869
+        format: 2
+        features: layering
+        flags:
+        create_timestamp: Thu Jun  7 23:48:23 2018
+</code></pre>
+
+<p>Create a local mapping of the image to a block device:</p>
+
+<pre><code>$ sudo rbd map mypool/disk1
+/dev/rbd0
+</code></pre>
+
+<p>Now we have a block device available at <code>/dev/rbd0</code>. Go ahead and mount it to <code>/mnt</code>:</p>
+
+<pre><code>$ sudo mount /dev/rbd0 /mnt
+</code></pre>
+
+<p>We can then see it when we list our mounted disk partitions:</p>
+
+<pre><code>$ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        19G   13G  5.2G  72% /
+/dev/rbd0       976M  1.3M  908M   1% /mnt
+</code></pre>
+
+<p>We can also resize the disk on the fly, let&rsquo;s resize it from 1GB to 2GB:</p>
+
+<pre><code>$ rbd resize mypool/disk1 --size 2048
+Resizing image: 100% complete...done.
+</code></pre>
+
+<p>To grow the space we can use resize2fs for ext4 partitions and xfs_growfs for xfs partitions:</p>
+
+<pre><code>$ sudo resize2fs /dev/rbd0 
+resize2fs 1.42.13 (17-May-2015)
+Filesystem at /dev/rbd0 is mounted on /mnt; on-line resizing required
+old_desc_blocks = 1, new_desc_blocks = 1
+The filesystem on /dev/rbd0 is now 524288 (4k) blocks long.
+</code></pre>
+
+<p>When we look at our mounted partitions, you will notice that the size of our mounted partition has been increased in size:</p>
+
+<pre><code>$ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        19G   13G  5.2G   72% /
+/dev/rbd0       2.0G  1.5M  1.9G   1% /mnt
+</code></pre>
+
+<h2>Object Storage RadosGW</h2>
+
+<p>Let&rsquo;s create a new pool where we will store our objects:</p>
+
+<pre><code>$ ceph osd pool create object-pool 32 32
+pool 'object-pool' created
+</code></pre>
+
+<p>We will now create a local file, push the file to our object storage service, then delete our local file, download the file as a file with a different name, and read the contents:</p>
+
+<p>Create the local file:</p>
+
+<pre><code>$ echo "ok" &gt; test.txt
+</code></pre>
+
+<p>Push the local file to our pool in our object storage:</p>
+
+<pre><code>$ rados put objects/data/test.txt ./test.txt --pool object-pool
+</code></pre>
+
+<p>List the pool (note that this can be executed from any node):</p>
+
+<pre><code>$ $ rados ls --pool object-pool
+objects/data/test.txt
+</code></pre>
+
+<p>Delete the local file, download the file from our object storage and read the contents:</p>
+
+<pre><code>$ rm -rf test.txt 
+
+$ rados get objects/data/test.txt ./newfile.txt --pool object-pool
+
+$ cat ./newfile.txt 
+ok
+</code></pre>
+
+<p>View the disk space from our storage-pool:</p>
+
+<pre><code>$ rados df --pool object-pool
+pool name                 KB      objects       clones     degraded      unfound           rd        rd KB           wr        wr KB
+object-pool                1            1            0            0            0            0            0            1            1
+  total used          261144           37
+  total avail       18579372
+  total space       18840516
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://stackoverflow.com/questions/39589696/ceph-too-many-pgs-per-osd-all-you-need-to-know">https://stackoverflow.com/questions/39589696/ceph-too-many-pgs-per-osd-all-you-need-to-know</a></li>
+<li><a href="https://github.com/lucj/swarm-rexray-ceph">https://github.com/lucj/swarm-rexray-ceph</a></li>
+<li><a href="http://docs.ceph.com/docs/mimic/rbd/">http://docs.ceph.com/docs/mimic/rbd/</a></li>
+<li><a href="http://docs.ceph.com/docs/mimic/radosgw/">http://docs.ceph.com/docs/mimic/radosgw/</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

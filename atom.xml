@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-06-09T21:16:37-04:00</updated>
+  <updated>2018-06-13T20:10:08-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,515 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 3 Node Ceph Storage Cluster on Ubuntu 16]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/06/13/setup-a-3-node-ceph-storage-cluster-on-ubuntu-16/"/>
+    <updated>2018-06-13T18:22:06-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/06/13/setup-a-3-node-ceph-storage-cluster-on-ubuntu-16</id>
+    <content type="html"><![CDATA[<p><img src="https://ceph.com/wp-content/uploads/2016/07/Ceph_Logo_Standard_RGB_120411_fa.png" alt="" /></p>
+
+<p>For some time now, I wanted to do a setup of Ceph, and I finally got the time to do it. This setup was done on Ubuntu 16.04</p>
+
+<h2>What is Ceph</h2>
+
+<p>Ceph is a storage platform that implements object storage on a single distributed computer cluster and provides interfaces for object, block and file-level storage.</p>
+
+<ul>
+<li>Object Storage:</li>
+</ul>
+
+
+<p>Ceph provides seemless access to objects via native language bindings or via the REST interface, RadosGW and also compatible for applications written for S3 and Swift.</p>
+
+<ul>
+<li>Block Storage:</li>
+</ul>
+
+
+<p>Ceph&rsquo;s Rados Block Device (RBD) provides access to block device images that are replicated and striped across the storage cluster.</p>
+
+<ul>
+<li>File System:</li>
+</ul>
+
+
+<p>Ceph provides a network file system (CephFS) that aims for high performance.</p>
+
+<h2>Our Setup</h2>
+
+<p>We will have 4 nodes. 1 Admin node where we will deploy our cluster with, and 3 nodes that will hold the data:</p>
+
+<ul>
+<li>ceph-admin (10.0.8.2)</li>
+<li>ceph-node1 (10.0.8.3)</li>
+<li>ceph-node2 (10.0.8.4)</li>
+<li>ceph-node3 (10.0.8.5)</li>
+</ul>
+
+
+<h2>Host Entries</h2>
+
+<p>If you don&rsquo;t have dns for your servers, setup the hosts files so that the names can resolves to the ip addresses:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>10.0.8.2 ceph-admin
+</span><span class='line'>10.0.8.3 ceph-node1
+</span><span class='line'>10.0.8.4 ceph-node2
+</span><span class='line'>10.0.8.5 ceph-node3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>User Accounts and Passwordless SSH</h2>
+
+<p>Setup the <code>ceph-system</code> user accounts on all the servers:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>useradd -d /home/ceph-system -s /bin/bash -m ceph-system
+</span><span class='line'><span class="nv">$ </span>passwd ceph-system
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup the created user part of the sudoers that is able to issue sudo commands without a pssword:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s2">&quot;ceph-system ALL = (root) NOPASSWD:ALL&quot;</span> <span class="p">|</span> sudo tee /etc/sudoers.d/ceph-system
+</span><span class='line'><span class="nv">$ </span>chmod <span class="m">0440</span> /etc/sudoers.d/ceph-system
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Switch user to <code>ceph-system</code> and generate SSH keys and copy the keys from the <code>ceph-admin</code> server to the ceph-nodes:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo su - ceph-system
+</span><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa -f ~/.ssh/id_rsa -P <span class="s2">&quot;&quot;</span>
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id ceph-system@ceph-node1
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id ceph-system@ceph-node2
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id ceph-system@ceph-node3
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id ceph-system@ceph-admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Pre-Requisite Software:</h2>
+
+<p>Install Python and Ceph Deploy on each node:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt-get install python -y
+</span><span class='line'><span class="nv">$ </span>sudo apt install ceph-deploy -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note: Please skip this section if you have additional disks on your servers.</p>
+
+<p>The instances that im using to test this setup only has one disk, so I will be creating loop block devices using allocated files. This is not recommended as when the disk fails, all the (files/block device images) will be gone with that. But since im demonstrating this, I will create the block devices from a file:</p>
+
+<p>I will be creating a 12GB file on each node</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo mkdir /raw-disks
+</span><span class='line'><span class="nv">$ </span>sudo dd <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>/raw-disks/rd0 <span class="nv">bs</span><span class="o">=</span>1M <span class="nv">count</span><span class="o">=</span>12288
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The use losetup to create the loop0 block device:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo losetup /dev/loop0 /raw-disks/rd0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see the loop device is showing when listing the block devices:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME      MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>loop0       7:0    <span class="m">0</span>   12G  <span class="m">0</span> loop
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p></p>
+
+<h2>Install Ceph</h2>
+
+<p>Now let&rsquo;s install ceph using ceph-deploy to all our nodes:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>ceph-deploy install ceph-admin ceph-node1 ceph-node2 ceph-node3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The version I was running at the time:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph --version
+</span><span class='line'>ceph version 10.2.9
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Initialize Ceph</h2>
+
+<p>Initialize the Cluster with 3 Monitors:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy new ceph-node1 ceph-node2 ceph-node3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Add the initial monitors and gather the keys from the previous command:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy mon create-initial
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At this point, we should be able to scan the block devices on our nodes:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy disk list ceph-node3
+</span><span class='line'><span class="o">[</span>ceph-node3<span class="o">][</span>INFO  <span class="o">]</span> Running <span class="nb">command</span>: sudo /usr/sbin/ceph-disk list
+</span><span class='line'><span class="o">[</span>ceph-node3<span class="o">][</span>DEBUG <span class="o">]</span> /dev/loop0 other
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Prepare the Disks:</h2>
+
+<p>First we will zap the block devices and then prepare to create the partitions:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy disk zap ceph-node1:/dev/loop0 ceph-node2:/dev/loop0 ceph-node3:/dev/loop0
+</span><span class='line'><span class="nv">$ </span>ceph-deploy osd prepare ceph-node1:/dev/loop0 ceph-node2:/dev/loop0 ceph-node3:/dev/loop0
+</span><span class='line'><span class="o">[</span>ceph_deploy.osd<span class="o">][</span>DEBUG <span class="o">]</span> Host ceph-node1 is now ready <span class="k">for</span> osd use.
+</span><span class='line'><span class="o">[</span>ceph_deploy.osd<span class="o">][</span>DEBUG <span class="o">]</span> Host ceph-node2 is now ready <span class="k">for</span> osd use.
+</span><span class='line'><span class="o">[</span>ceph_deploy.osd<span class="o">][</span>DEBUG <span class="o">]</span> Host ceph-node3 is now ready <span class="k">for</span> osd use.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you scan the nodes for their disks, you will notice that the partitions has been created:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy disk list ceph-node1
+</span><span class='line'><span class="o">[</span>ceph-node1<span class="o">][</span>DEBUG <span class="o">]</span> /dev/loop0p2 ceph journal, <span class="k">for</span> /dev/loop0p1
+</span><span class='line'><span class="o">[</span>ceph-node1<span class="o">][</span>DEBUG <span class="o">]</span> /dev/loop0p1 ceph data, active, cluster ceph, osd.0, journal /dev/loop0p2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let&rsquo;s activate the OSD&rsquo;s by using the data partitions:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy osd activate ceph-node1:/dev/loop0p1 ceph-node2:/dev/loop0p1 ceph-node3:/dev/loop0p1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Redistribute Keys:</h2>
+
+<p>Copy the configuration files and admin key to your admin node and ceph data nodes:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy admin ceph-admin ceph-node1 ceph-node2 ceph-node3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you would like to add more OSD&rsquo;s (not tested):</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph-deploy disk zap ceph-node1:/dev/loop1 ceph-node2:/dev/loop1 ceph-node3:/dev/loop1
+</span><span class='line'><span class="nv">$ </span>ceph-deploy osd prepare ceph-node1:/dev/loop1 ceph-node2:/dev/loop1 ceph-node3:/dev/loop1
+</span><span class='line'><span class="nv">$ </span>ceph-deploy osd activate ceph-node2:/dev/loop1p1:/dev/loop1p2 ceph-node2:/dev/loop1p1:/dev/loop1p2 ceph-node3:/dev/loop1p1:/dev/loop1p2
+</span><span class='line'><span class="nv">$ </span>ceph-deploy admin ceph-node1 ceph-node2 ceph-node3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Ceph Status:</h2>
+
+<p>Have a look at your cluster status:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo ceph -s
+</span><span class='line'>    cluster 8d704c8a-ac19-4454-a89f-89a5d5b7d94d
+</span><span class='line'>     health HEALTH_OK
+</span><span class='line'>     monmap e1: <span class="m">3</span> mons at <span class="o">{</span>ceph-node1<span class="o">=</span>10.0.8.3:6789/0,ceph-node2<span class="o">=</span>10.0.8.4:6789/0,ceph-node3<span class="o">=</span>10.0.8.5:6789/0<span class="o">}</span>
+</span><span class='line'>            election epoch 10, quorum 0,1,2 ceph-node2,ceph-node3,ceph-node1
+</span><span class='line'>     osdmap e14: <span class="m">3</span> osds: <span class="m">3</span> up, <span class="m">3</span> in
+</span><span class='line'>            flags sortbitwise,require_jewel_osds
+</span><span class='line'>      pgmap v29: <span class="m">64</span> pgs, <span class="m">1</span> pools, <span class="m">0</span> bytes data, <span class="m">0</span> objects
+</span><span class='line'>            <span class="m">100</span> MB used, <span class="m">18298</span> MB / <span class="m">18398</span> MB avail
+</span><span class='line'>                  <span class="m">64</span> active+clean
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Everything looks good. Also change the permissions on this file, on all the nodes in order to execute the ceph, rados commands:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo chmod +r /etc/ceph/ceph.client.admin.keyring
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Storage Pools:</h2>
+
+<p>List your pool in your Ceph Cluster:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rados lspools
+</span><span class='line'>rbd
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s create a new storage pool called <code>mypool</code>:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph osd pool create mypool <span class="m">32</span> <span class="m">32</span>
+</span><span class='line'>pool <span class="s1">&#39;mypool&#39;</span> created
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s the list the storage pools again:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rados lspools
+</span><span class='line'>rbd
+</span><span class='line'>mypool
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can also use the ceph command to list the pools:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph osd pool ls
+</span><span class='line'>rbd
+</span><span class='line'>mypool
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a Block Device Image:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rbd create --size <span class="m">1024</span> mypool/disk1 --image-feature layering
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the Block Device Images under your Pool:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rbd list mypool
+</span><span class='line'>disk1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Retrieve information from your image:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rbd info mypool/disk1
+</span><span class='line'>rbd image <span class="s1">&#39;disk1&#39;</span>:
+</span><span class='line'>        size <span class="m">1024</span> MB in <span class="m">256</span> objects
+</span><span class='line'>        order <span class="m">22</span> <span class="o">(</span><span class="m">4096</span> kB objects<span class="o">)</span>
+</span><span class='line'>        block_name_prefix: rbd_data.1021643c9869
+</span><span class='line'>        format: 2
+</span><span class='line'>        features: layering
+</span><span class='line'>        flags:
+</span><span class='line'>        create_timestamp: Thu Jun  <span class="m">7</span> 23:48:23 2018
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a local mapping of the image to a block device:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo rbd map mypool/disk1
+</span><span class='line'>/dev/rbd0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we have a block device available at <code>/dev/rbd0</code>. Go ahead and mount it to <code>/mnt</code>:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo mount /dev/rbd0 /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can then see it when we list our mounted disk partitions:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/sda1        19G   13G  5.2G  72% /
+</span><span class='line'>/dev/rbd0       976M  1.3M  908M   1% /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also resize the disk on the fly, let&rsquo;s resize it from 1GB to 2GB:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rbd resize mypool/disk1 --size 2048
+</span><span class='line'>Resizing image: 100% complete...done.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To grow the space we can use resize2fs for ext4 partitions and xfs_growfs for xfs partitions:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo resize2fs /dev/rbd0
+</span><span class='line'>resize2fs 1.42.13 <span class="o">(</span>17-May-2015<span class="o">)</span>
+</span><span class='line'>Filesystem at /dev/rbd0 is mounted on /mnt<span class="p">;</span> on-line resizing required
+</span><span class='line'><span class="nv">old_desc_blocks</span> <span class="o">=</span> 1, <span class="nv">new_desc_blocks</span> <span class="o">=</span> 1
+</span><span class='line'>The filesystem on /dev/rbd0 is now <span class="m">524288</span> <span class="o">(</span>4k<span class="o">)</span> blocks long.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When we look at our mounted partitions, you will notice that the size of our mounted partition has been increased in size:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/sda1        19G   13G  5.2G   72% /
+</span><span class='line'>/dev/rbd0       2.0G  1.5M  1.9G   1% /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Object Storage RadosGW</h2>
+
+<p>Let&rsquo;s create a new pool where we will store our objects:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ceph osd pool create object-pool <span class="m">32</span> 32
+</span><span class='line'>pool <span class="s1">&#39;object-pool&#39;</span> created
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We will now create a local file, push the file to our object storage service, then delete our local file, download the file as a file with a different name, and read the contents:</p>
+
+<p>Create the local file:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s2">&quot;ok&quot;</span> &gt; test.txt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Push the local file to our pool in our object storage:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rados put objects/data/test.txt ./test.txt --pool object-pool
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the pool (note that this can be executed from any node):</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ $ </span>rados ls --pool object-pool
+</span><span class='line'>objects/data/test.txt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Delete the local file, download the file from our object storage and read the contents:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rm -rf test.txt
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>rados get objects/data/test.txt ./newfile.txt --pool object-pool
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>cat ./newfile.txt
+</span><span class='line'>ok
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>View the disk space from our storage-pool:</p>
+
+<figure class='code'><figcaption><span>/etc/hosts</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rados df --pool object-pool
+</span><span class='line'>pool name                 KB      objects       clones     degraded      unfound           rd        rd KB           wr        wr KB
+</span><span class='line'>object-pool                <span class="m">1</span>            <span class="m">1</span>            <span class="m">0</span>            <span class="m">0</span>            <span class="m">0</span>            <span class="m">0</span>            <span class="m">0</span>            <span class="m">1</span>            1
+</span><span class='line'>  total used          <span class="m">261144</span>           37
+</span><span class='line'>  total avail       18579372
+</span><span class='line'>  total space       18840516
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://stackoverflow.com/questions/39589696/ceph-too-many-pgs-per-osd-all-you-need-to-know">https://stackoverflow.com/questions/39589696/ceph-too-many-pgs-per-osd-all-you-need-to-know</a></li>
+<li><a href="https://github.com/lucj/swarm-rexray-ceph">https://github.com/lucj/swarm-rexray-ceph</a></li>
+<li><a href="http://docs.ceph.com/docs/mimic/rbd/">http://docs.ceph.com/docs/mimic/rbd/</a></li>
+<li><a href="http://docs.ceph.com/docs/mimic/radosgw/">http://docs.ceph.com/docs/mimic/radosgw/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Hello World Programs in Different Languages]]></title>
@@ -3760,398 +4269,6 @@
 
 <ul>
 <li><a href="https://pypi.org/project/sshtunnel/">SSHTunnel</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Basic RESTFul API Server With Python Flask]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/04/21/basic-restful-api-server-with-python-flask/"/>
-    <updated>2018-04-21T19:35:34-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/04/21/basic-restful-api-server-with-python-flask</id>
-    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/flask.png" alt="" /></p>
-
-<p>A Basic RESTFul API Service with Python Flask. We will be using the Flask, jsonify and request classes to build our API service.</p>
-
-<h2>Description of this demonstration:</h2>
-
-<p>Our API will be able to do the following:</p>
-
-<ul>
-<li>Create, Read, Update, Delete</li>
-</ul>
-
-
-<p>In this demonstration, we will add some information about people to our API, then go through each method that is mentioned above.</p>
-
-<h2>Getting the Dependencies:</h2>
-
-<p>Setup the virtualenv and install the dependencies:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virtualenv .venv
-</span><span class='line'><span class="nv">$ </span><span class="nb">source</span> .venv/bin/activate
-</span><span class='line'><span class="nv">$ </span>pip install flask
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>The API Server Code:</h2>
-
-<p>Here&rsquo;s the complete code, as you can see I have a couple of decorators for each url endpoint, and a <code>id_generator</code> function, that will generate id&rsquo;s for each document. The id will be used for getting users information, updates and deletes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span><span class="p">,</span> <span class="n">request</span>
-</span><span class='line'><span class="kn">from</span> <span class="nn">multiprocessing</span> <span class="kn">import</span> <span class="n">Value</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">counter</span> <span class="o">=</span> <span class="n">Value</span><span class="p">(</span><span class="s">&#39;i&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
-</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">a</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span class='line'><span class="n">help_message</span> <span class="o">=</span> <span class="s">&quot;&quot;&quot;</span>
-</span><span class='line'><span class="s">API Usage:</span>
-</span><span class='line'><span class="s"> </span>
-</span><span class='line'><span class="s">- GET    /api/list</span>
-</span><span class='line'><span class="s">- POST   /api/add data={&quot;key&quot;: &quot;value&quot;}</span>
-</span><span class='line'><span class="s">- GET    /api/get/&lt;id&gt;</span>
-</span><span class='line'><span class="s">- PUT    /api/update/&lt;id&gt; data={&quot;key&quot;: &quot;value_to_replace&quot;}</span>
-</span><span class='line'><span class="s">- DELETE /api/delete/&lt;id&gt; </span>
-</span><span class='line'>
-</span><span class='line'><span class="s">&quot;&quot;&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">id_generator</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">with</span> <span class="n">counter</span><span class="o">.</span><span class="n">get_lock</span><span class="p">():</span>
-</span><span class='line'>        <span class="n">counter</span><span class="o">.</span><span class="n">value</span> <span class="o">+=</span> <span class="mi">1</span>
-</span><span class='line'>        <span class="k">return</span> <span class="n">counter</span><span class="o">.</span><span class="n">value</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;GET&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">help</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">help_message</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/list&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;GET&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">list</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/add&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;POST&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
-</span><span class='line'>    <span class="n">payload</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span>
-</span><span class='line'>    <span class="n">payload</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">id_generator</span><span class="p">()</span>
-</span><span class='line'>    <span class="n">a</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="s">&quot;Created: {} </span><span class="se">\n</span><span class="s">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/get&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;GET&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">get_none</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ID Required: /api/get/&lt;id&gt; </span><span class="se">\n</span><span class="s">&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/get/&lt;int:_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;GET&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="n">_id</span><span class="p">):</span>
-</span><span class='line'>    <span class="k">for</span> <span class="n">user</span> <span class="ow">in</span> <span class="n">a</span><span class="p">:</span>
-</span><span class='line'>        <span class="k">if</span> <span class="n">_id</span> <span class="o">==</span> <span class="n">user</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]:</span>
-</span><span class='line'>            <span class="n">selected_user</span> <span class="o">=</span> <span class="n">user</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">(</span><span class="n">selected_user</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/update&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;PUT&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">update_none</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ID and Desired K/V in Payload required: /api/update/&lt;id&gt; -d </span><span class="se">\&#39;</span><span class="s">{&quot;name&quot;: &quot;john&quot;}</span><span class="se">\&#39;</span><span class="s"> </span><span class="se">\n</span><span class="s">&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/update/&lt;int:_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;PUT&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">update</span><span class="p">(</span><span class="n">_id</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">update_req</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span>
-</span><span class='line'>    <span class="n">key_to_update</span> <span class="o">=</span> <span class="n">update_req</span><span class="o">.</span><span class="n">keys</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
-</span><span class='line'>    <span class="n">update_val</span> <span class="o">=</span> <span class="p">(</span><span class="n">item</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">a</span> <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">_id</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()[</span><span class="n">key_to_update</span><span class="p">]</span> <span class="o">=</span> <span class="n">update_req</span><span class="o">.</span><span class="n">values</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
-</span><span class='line'>    <span class="n">update_resp</span> <span class="o">=</span> <span class="p">(</span><span class="n">item</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">a</span> <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">_id</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-</span><span class='line'>    <span class="k">return</span> <span class="s">&quot;Updated: {} </span><span class="se">\n</span><span class="s">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">update_resp</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/api/delete/&lt;int:_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;DELETE&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">delete</span><span class="p">(</span><span class="n">_id</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">deleted_user</span> <span class="o">=</span> <span class="p">(</span><span class="n">item</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">a</span> <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">_id</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-</span><span class='line'>    <span class="n">a</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">deleted_user</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="s">&quot;Deleted: {} </span><span class="se">\n</span><span class="s">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">deleted_user</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Demo Time:</h2>
-
-<p>Retrieving the Help output:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api
-</span><span class='line'>
-</span><span class='line'>API Usage:
-</span><span class='line'>
-</span><span class='line'>- GET    /api/list
-</span><span class='line'>- POST   /api/add <span class="nv">data</span><span class="o">={</span><span class="s2">&quot;key&quot;</span>: <span class="s2">&quot;value&quot;</span><span class="o">}</span>
-</span><span class='line'>- GET    /api/get/&lt;id&gt;
-</span><span class='line'>- PUT    /api/update/&lt;id&gt; <span class="nv">data</span><span class="o">={</span><span class="s2">&quot;key&quot;</span>: <span class="s2">&quot;value_to_replace&quot;</span><span class="o">}</span>
-</span><span class='line'>- DELETE /api/delete/&lt;id&gt;
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Doing a list, to list all the users, its expected for it to be empty as we have not added any info to our API:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/list
-</span><span class='line'><span class="o">[]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Adding our first user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/add -d <span class="s1">&#39;{&quot;name&quot;: &quot;ruan&quot;, &quot;country&quot;: &quot;south africa&quot;, &quot;age&quot;: 30}&#39;</span>
-</span><span class='line'>Created: <span class="o">{</span>u<span class="s1">&#39;country&#39;</span>: u<span class="s1">&#39;south africa&#39;</span>, u<span class="s1">&#39;age&#39;</span>: 30, u<span class="s1">&#39;name&#39;</span>: u<span class="s1">&#39;ruan&#39;</span>, <span class="s1">&#39;id&#39;</span>: 1<span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Adding our second user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/add -d <span class="s1">&#39;{&quot;name&quot;: &quot;stefan&quot;, &quot;country&quot;: &quot;south africa&quot;, &quot;age&quot;: 29}&#39;</span>
-</span><span class='line'>Created: <span class="o">{</span>u<span class="s1">&#39;country&#39;</span>: u<span class="s1">&#39;south africa&#39;</span>, u<span class="s1">&#39;age&#39;</span>: 29, u<span class="s1">&#39;name&#39;</span>: u<span class="s1">&#39;stefan&#39;</span>, <span class="s1">&#39;id&#39;</span>: 2<span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Doing a list again, will retrieve all our users:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/list
-</span><span class='line'><span class="o">[</span>
-</span><span class='line'>  <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;age&quot;</span>: 30,
-</span><span class='line'>    <span class="s2">&quot;country&quot;</span>: <span class="s2">&quot;south africa&quot;</span>,
-</span><span class='line'>    <span class="s2">&quot;id&quot;</span>: 1,
-</span><span class='line'>    <span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;ruan&quot;</span>
-</span><span class='line'>  <span class="o">}</span>,
-</span><span class='line'>  <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;age&quot;</span>: 29,
-</span><span class='line'>    <span class="s2">&quot;country&quot;</span>: <span class="s2">&quot;south africa&quot;</span>,
-</span><span class='line'>    <span class="s2">&quot;id&quot;</span>: 2,
-</span><span class='line'>    <span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;stefan&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Doing a GET on the userid, to only display the users info:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/get/2
-</span><span class='line'><span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;age&quot;</span>: 29,
-</span><span class='line'>  <span class="s2">&quot;country&quot;</span>: <span class="s2">&quot;south africa&quot;</span>,
-</span><span class='line'>  <span class="s2">&quot;id&quot;</span>: 2,
-</span><span class='line'>  <span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;stefan&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now, let&rsquo;s update some details. Let&rsquo;s say that Stefan relocated to New Zealand. We will need to provide his <code>id</code> and also the key/value that we want to update:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPUT -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/update/2 -d <span class="s1">&#39;{&quot;country&quot;: &quot;new zealand&quot;}&#39;</span>
-</span><span class='line'>Updated: <span class="o">{</span>u<span class="s1">&#39;country&#39;</span>: u<span class="s1">&#39;new zealand&#39;</span>, u<span class="s1">&#39;age&#39;</span>: 29, u<span class="s1">&#39;name&#39;</span>: u<span class="s1">&#39;stefan&#39;</span>, <span class="s1">&#39;id&#39;</span>: 2<span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see the response confirmed that the value was updated, but let&rsquo;s verify the output, by doing a get on his id:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/get/2
-</span><span class='line'><span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;age&quot;</span>: 29,
-</span><span class='line'>  <span class="s2">&quot;country&quot;</span>: <span class="s2">&quot;new zealand&quot;</span>,
-</span><span class='line'>  <span class="s2">&quot;id&quot;</span>: 2,
-</span><span class='line'>  <span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;stefan&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And lastly, lets delete our user, which will only require the userid:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XDELETE -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/delete/2
-</span><span class='line'>Deleted: <span class="o">{</span>u<span class="s1">&#39;country&#39;</span>: u<span class="s1">&#39;new zealand&#39;</span>, u<span class="s1">&#39;age&#39;</span>: 29, u<span class="s1">&#39;name&#39;</span>: u<span class="s1">&#39;stefan&#39;</span>, <span class="s1">&#39;id&#39;</span>: 2<span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To verify this, list all the users:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET -H <span class="s1">&#39;Content-Type: application/json&#39;</span> http://localhost:5000/api/list
-</span><span class='line'><span class="o">[</span>
-</span><span class='line'>  <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;age&quot;</span>: 30,
-</span><span class='line'>    <span class="s2">&quot;country&quot;</span>: <span class="s2">&quot;south africa&quot;</span>,
-</span><span class='line'>    <span class="s2">&quot;id&quot;</span>: 1,
-</span><span class='line'>    <span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;ruan&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Using Python Requests:</h2>
-
-<p>We can also use python&rsquo;s requests module to do the same, to give a demonstration I will create a new user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install requests
-</span><span class='line'><span class="nv">$ </span>python
-</span></code></pre></td></tr></table></div></figure>
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">base_url</span> <span class="o">=</span> <span class="s">&#39;http://localhost:5000/api/add&#39;</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span><span class="s">&quot;Content-Type&quot;</span><span class="p">:</span> <span class="s">&quot;application/json&quot;</span><span class="p">}</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">payload</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;shaun&quot;</span><span class="p">,</span> <span class="s">&quot;country&quot;</span><span class="p">:</span> <span class="s">&quot;australia&quot;</span><span class="p">,</span> <span class="s">&quot;age&quot;</span><span class="p">:</span> <span class="mi">24</span><span class="p">})</span>
-</span><span class='line'>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">payload</span><span class="p">)</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">r</span><span class="o">.</span><span class="n">content</span>
-</span><span class='line'><span class="n">Created</span><span class="p">:</span> <span class="p">{</span><span class="s">u&#39;country&#39;</span><span class="p">:</span> <span class="s">u&#39;australia&#39;</span><span class="p">,</span> <span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">24</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;shaun&#39;</span><span class="p">,</span> <span class="s">&#39;id&#39;</span><span class="p">:</span> <span class="mi">4</span><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Thats it. I&rsquo;ve stumbled upon <a href="https://flask-restful.readthedocs.io/en/latest/">Flask-Restful</a> which I still want to check out, and as soon as I do, I will do a post on it, maybe baked with a NoSQL db or something like that.</p>
-
-<p>Cheers!</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://stackoverflow.com/a/8653568">Python Generator Expressions</a></li>
-<li><a href="http://flask.pocoo.org/docs/0.12/api/#flask.Request">Flask Docs</a></li>
 </ul>
 
 ]]></content>

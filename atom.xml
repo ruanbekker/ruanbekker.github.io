@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-06-13T20:13:09-04:00</updated>
+  <updated>2018-06-14T06:12:56-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,271 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Deploy Docker Swarm Using Ansible]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/06/14/deploy-docker-swarm-using-ansible/"/>
+    <updated>2018-06-14T06:05:46-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/06/14/deploy-docker-swarm-using-ansible</id>
+    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
+
+<p>In this setup we will use Ansible to Deploy Docker Swarm.</p>
+
+<p>With this setup, I have a client node, which will be my jump box, as it will be used to ssh with the docker user to my swarm nodes with passwordless ssh access.</p>
+
+<p>The repository for the source code can be found on my <a href="https://github.com/ruanbekker/ansible-docker-swarm">Github Repository</a></p>
+
+<h2>Pre-Check</h2>
+
+<p>Hosts file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/hosts
+</span><span class='line'>10.0.8.2 client
+</span><span class='line'>192.168.1.10 swarm-manager
+</span><span class='line'>192.168.1.11 swarm-worker-1
+</span><span class='line'>192.168.1.12 swarm-worker-2</span></code></pre></td></tr></table></div></figure>
+
+
+<p>SSH Config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ~/.ssh/config 
+</span><span class='line'>Host client
+</span><span class='line'>  Hostname client
+</span><span class='line'>  User root
+</span><span class='line'>  IdentityFile /tmp/key.pem
+</span><span class='line'>  StrictHostKeyChecking no
+</span><span class='line'>  UserKnownHostsFile /dev/null
+</span><span class='line'>
+</span><span class='line'>Host swarm-manager
+</span><span class='line'>  Hostname swarm-manager
+</span><span class='line'>  User root
+</span><span class='line'>  IdentityFile /tmp/key.pem
+</span><span class='line'>  StrictHostKeyChecking no
+</span><span class='line'>  UserKnownHostsFile /dev/null
+</span><span class='line'>
+</span><span class='line'>Host swarm-worker-1
+</span><span class='line'>  Hostname swarm-worker-1
+</span><span class='line'>  User root
+</span><span class='line'>  IdentityFile /tmp/key.pem
+</span><span class='line'>  StrictHostKeyChecking no
+</span><span class='line'>  UserKnownHostsFile /dev/null
+</span><span class='line'>
+</span><span class='line'>Host swarm-worker-2
+</span><span class='line'>  Hostname swarm-worker-2
+</span><span class='line'>  User root
+</span><span class='line'>  IdentityFile /tmp/key.pem
+</span><span class='line'>  StrictHostKeyChecking no
+</span><span class='line'>  UserKnownHostsFile /dev/null</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Install Ansible:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt install python-setuptools -y
+</span><span class='line'>$ easy_install pip
+</span><span class='line'>$ pip install ansible</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure passwordless ssh is working:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible -i inventory.ini -u root -m ping all
+</span><span class='line'>client | SUCCESS =&gt; {
+</span><span class='line'>    "changed": false, 
+</span><span class='line'>    "ping": "pong"
+</span><span class='line'>}
+</span><span class='line'>swarm-manager | SUCCESS =&gt; {
+</span><span class='line'>    "changed": false, 
+</span><span class='line'>    "ping": "pong"
+</span><span class='line'>}
+</span><span class='line'>swarm-worker-2 | SUCCESS =&gt; {
+</span><span class='line'>    "changed": false, 
+</span><span class='line'>    "ping": "pong"
+</span><span class='line'>}
+</span><span class='line'>swarm-worker-1 | SUCCESS =&gt; {
+</span><span class='line'>    "changed": false, 
+</span><span class='line'>    "ping": "pong"
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy Docker Swarm</h2>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible-playbook -i inventory.ini -u root deploy-swarm.yml 
+</span><span class='line'>PLAY RECAP 
+</span><span class='line'>
+</span><span class='line'>client                     : ok=11   changed=3    unreachable=0    failed=0   
+</span><span class='line'>swarm-manager              : ok=18   changed=4    unreachable=0    failed=0   
+</span><span class='line'>swarm-worker-1             : ok=15   changed=1    unreachable=0    failed=0   
+</span><span class='line'>swarm-worker-2             : ok=15   changed=1    unreachable=0    failed=0   </span></code></pre></td></tr></table></div></figure>
+
+
+<p>SSH to the Swarm Manager and List the Nodes:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker node ls
+</span><span class='line'>ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+</span><span class='line'>0ead0jshzkpyrw7livudrzq9o *   swarm-manager       Ready               Active              Leader              18.03.1-ce
+</span><span class='line'>iwyp6t3wcjdww0r797kwwkvvy     swarm-worker-1      Ready               Active                                  18.03.1-ce
+</span><span class='line'>ytcc86ixi0kuuw5mq5xxqamt1     swarm-worker-2      Ready               Active                                  18.03.1-ce</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test Application on Swarm</h2>
+
+<p>Create a Nginx Demo Service:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker network create --driver overlay appnet
+</span><span class='line'>$ docker service create --name nginx --publish 80:80 --network appnet --replicas 6 nginx
+</span><span class='line'>$ docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+</span><span class='line'>k3vwvhmiqbfk        nginx               replicated          6/6                 nginx:latest        *:80-&gt;80/tcp
+</span><span class='line'>
+</span><span class='line'>$ docker service ps nginx
+</span><span class='line'>ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+</span><span class='line'>tspsypgis3qe        nginx.1             nginx:latest        swarm-manager       Running             Running 34 seconds ago                       
+</span><span class='line'>g2f0ytwb2jjg        nginx.2             nginx:latest        swarm-worker-1      Running             Running 34 seconds ago                       
+</span><span class='line'>clcmew8bcvom        nginx.3             nginx:latest        swarm-manager       Running             Running 34 seconds ago                       
+</span><span class='line'>q293r8zwu692        nginx.4             nginx:latest        swarm-worker-2      Running             Running 34 seconds ago                       
+</span><span class='line'>sv7bqa5e08zw        nginx.5             nginx:latest        swarm-worker-1      Running             Running 34 seconds ago                       
+</span><span class='line'>r7qg9nk0a9o2        nginx.6             nginx:latest        swarm-worker-2      Running             Running 34 seconds ago   </span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test the Application:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -i http://192.168.1.10
+</span><span class='line'>HTTP/1.1 200 OK
+</span><span class='line'>Server: nginx/1.15.0
+</span><span class='line'>Date: Thu, 14 Jun 2018 10:01:34 GMT
+</span><span class='line'>Content-Type: text/html
+</span><span class='line'>Content-Length: 612
+</span><span class='line'>Last-Modified: Tue, 05 Jun 2018 12:00:18 GMT
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>ETag: "5b167b52-264"
+</span><span class='line'>Accept-Ranges: bytes</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Delete the Service:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>$ docker service rm nginx
+</span><span class='line'>nginx</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Delete the Swarm:</h2>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible-playbook -i inventory.ini -u root delete-swarm.yml 
+</span><span class='line'>
+</span><span class='line'>PLAY RECAP 
+</span><span class='line'>swarm-manager              : ok=2    changed=1    unreachable=0    failed=0   
+</span><span class='line'>swarm-worker-1             : ok=2    changed=1    unreachable=0    failed=0   
+</span><span class='line'>swarm-worker-2             : ok=2    changed=1    unreachable=0    failed=0   </span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure the Nodes is removed from the Swarm, SSH to your Swarm Manager:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker node ls
+</span><span class='line'>Error response from daemon: This node is not a swarm manager. Use "docker swarm init" or "docker swarm join" to connect this node to swarm and try again.</span></code></pre></td></tr></table></div></figure>
+
+
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a 3 Node Ceph Storage Cluster on Ubuntu 16]]></title>
@@ -4145,131 +4410,6 @@
 </span></code></pre></td></tr></table></div></figure>
 
 
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup a SSH Tunnel With the Sshtunnel Module in Python]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/04/23/setup-a-ssh-tunnel-with-the-sshtunnel-module-in-python/"/>
-    <updated>2018-04-23T11:56:46-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/04/23/setup-a-ssh-tunnel-with-the-sshtunnel-module-in-python</id>
-    <content type="html"><![CDATA[<p>Sometimes we need to restrict access to a port, where a port should listen on localhost, but you want to access that port from a remote source. One secure way of doing that, is to establish a SSH Tunnel to the remote side, and forward to port via the SSH Tunnel.</p>
-
-<p>Today we will setup a Flask Web Service on our Remote Server (Side B) which will be listening on <code>127.0.0.1:5000</code> and setup the SSH Tunnel with the <code>sshtunnel</code> module in Python from our client side (Side A). Then we will make a GET request on our client side to the port that we are forwarding via the tunnel to our remote side.</p>
-
-<h2>Remote Side:</h2>
-
-<p>Our Demo Python Flask Application:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;OK&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;127.0.0.1&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Run the server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
-</span><span class='line'>Listening on 127.0.0.1:5000
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Client Side:</h2>
-
-<p>From our client side we first need to install sshtunnel via pip:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install sshtunnel requests --user
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our code for our client that will establish the tunnel and do the GET request:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">sshtunnel</span> <span class="kn">import</span> <span class="n">SSHTunnelForwarder</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">remote_user</span> <span class="o">=</span> <span class="s">&#39;ubuntu&#39;</span>
-</span><span class='line'><span class="n">remote_host</span> <span class="o">=</span> <span class="s">&#39;192.168.10.10&#39;</span>
-</span><span class='line'><span class="n">remote_port</span> <span class="o">=</span> <span class="mi">22</span>
-</span><span class='line'><span class="n">local_host</span> <span class="o">=</span> <span class="s">&#39;127.0.0.1&#39;</span>
-</span><span class='line'><span class="n">local_port</span> <span class="o">=</span> <span class="mi">5000</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">server</span> <span class="o">=</span> <span class="n">SSHTunnelForwarder</span><span class="p">(</span>
-</span><span class='line'>   <span class="p">(</span><span class="n">remote_host</span><span class="p">,</span> <span class="n">remote_port</span><span class="p">),</span>
-</span><span class='line'>   <span class="n">ssh_username</span><span class="o">=</span><span class="n">remote_user</span><span class="p">,</span>
-</span><span class='line'>   <span class="n">ssh_private_key</span><span class="o">=</span><span class="s">&#39;/home/ubuntu/.ssh/mykey.pem&#39;</span><span class="p">,</span>
-</span><span class='line'>   <span class="n">remote_bind_address</span><span class="o">=</span><span class="p">(</span><span class="n">local_host</span><span class="p">,</span> <span class="n">local_port</span><span class="p">),</span>
-</span><span class='line'>   <span class="n">local_bind_address</span><span class="o">=</span><span class="p">(</span><span class="n">local_host</span><span class="p">,</span> <span class="n">local_port</span><span class="p">),</span>
-</span><span class='line'>   <span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">server</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">headers</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;User-Agent&#39;</span><span class="p">:</span> <span class="s">&#39;Mozilla/5.0 (Windows NT 6.0; WOW64; rv:24.0) Gecko/20100101 Firefox/24.0&#39;</span><span class="p">}</span>
-</span><span class='line'><span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;http://127.0.0.1:5000&#39;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">)</span><span class="o">.</span><span class="n">content</span>
-</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
-</span><span class='line'><span class="n">server</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Running our app:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python ssh_tunnel.py
-</span><span class='line'>OK
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So we have sucessfully established our ssh tunnel to our remote side, and able to access the network restricted port via the tunnel.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://pypi.org/project/sshtunnel/">SSHTunnel</a></li>
-</ul>
 
 ]]></content>
   </entry>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Swarm | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/swarm/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-06-13T20:13:09-04:00</updated>
+  <updated>2018-06-14T06:12:56-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,169 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Deploy Docker Swarm Using Ansible]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/06/14/deploy-docker-swarm-using-ansible/"/>
+    <updated>2018-06-14T06:05:46-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/06/14/deploy-docker-swarm-using-ansible</id>
+    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
+
+<p>In this setup we will use Ansible to Deploy Docker Swarm.</p>
+
+<p>With this setup, I have a client node, which will be my jump box, as it will be used to ssh with the docker user to my swarm nodes with passwordless ssh access.</p>
+
+<p>The repository for the source code can be found on my <a href="https://github.com/ruanbekker/ansible-docker-swarm">Github Repository</a></p>
+
+<h2>Pre-Check</h2>
+
+<p>Hosts file:</p>
+
+<pre><code>$ cat /etc/hosts
+10.0.8.2 client
+192.168.1.10 swarm-manager
+192.168.1.11 swarm-worker-1
+192.168.1.12 swarm-worker-2
+</code></pre>
+
+<p>SSH Config:</p>
+
+<pre><code>$ cat ~/.ssh/config 
+Host client
+  Hostname client
+  User root
+  IdentityFile /tmp/key.pem
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+
+Host swarm-manager
+  Hostname swarm-manager
+  User root
+  IdentityFile /tmp/key.pem
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+
+Host swarm-worker-1
+  Hostname swarm-worker-1
+  User root
+  IdentityFile /tmp/key.pem
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+
+Host swarm-worker-2
+  Hostname swarm-worker-2
+  User root
+  IdentityFile /tmp/key.pem
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+</code></pre>
+
+<p>Install Ansible:</p>
+
+<pre><code>$ apt install python-setuptools -y
+$ easy_install pip
+$ pip install ansible
+</code></pre>
+
+<p>Ensure passwordless ssh is working:</p>
+
+<pre><code>$ ansible -i inventory.ini -u root -m ping all
+client | SUCCESS =&gt; {
+    "changed": false, 
+    "ping": "pong"
+}
+swarm-manager | SUCCESS =&gt; {
+    "changed": false, 
+    "ping": "pong"
+}
+swarm-worker-2 | SUCCESS =&gt; {
+    "changed": false, 
+    "ping": "pong"
+}
+swarm-worker-1 | SUCCESS =&gt; {
+    "changed": false, 
+    "ping": "pong"
+}
+</code></pre>
+
+<h2>Deploy Docker Swarm</h2>
+
+<pre><code>$ ansible-playbook -i inventory.ini -u root deploy-swarm.yml 
+PLAY RECAP 
+
+client                     : ok=11   changed=3    unreachable=0    failed=0   
+swarm-manager              : ok=18   changed=4    unreachable=0    failed=0   
+swarm-worker-1             : ok=15   changed=1    unreachable=0    failed=0   
+swarm-worker-2             : ok=15   changed=1    unreachable=0    failed=0   
+</code></pre>
+
+<p>SSH to the Swarm Manager and List the Nodes:</p>
+
+<pre><code>$ docker node ls
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+0ead0jshzkpyrw7livudrzq9o *   swarm-manager       Ready               Active              Leader              18.03.1-ce
+iwyp6t3wcjdww0r797kwwkvvy     swarm-worker-1      Ready               Active                                  18.03.1-ce
+ytcc86ixi0kuuw5mq5xxqamt1     swarm-worker-2      Ready               Active                                  18.03.1-ce
+</code></pre>
+
+<h2>Test Application on Swarm</h2>
+
+<p>Create a Nginx Demo Service:</p>
+
+<pre><code>$ docker network create --driver overlay appnet
+$ docker service create --name nginx --publish 80:80 --network appnet --replicas 6 nginx
+$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+k3vwvhmiqbfk        nginx               replicated          6/6                 nginx:latest        *:80-&gt;80/tcp
+
+$ docker service ps nginx
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+tspsypgis3qe        nginx.1             nginx:latest        swarm-manager       Running             Running 34 seconds ago                       
+g2f0ytwb2jjg        nginx.2             nginx:latest        swarm-worker-1      Running             Running 34 seconds ago                       
+clcmew8bcvom        nginx.3             nginx:latest        swarm-manager       Running             Running 34 seconds ago                       
+q293r8zwu692        nginx.4             nginx:latest        swarm-worker-2      Running             Running 34 seconds ago                       
+sv7bqa5e08zw        nginx.5             nginx:latest        swarm-worker-1      Running             Running 34 seconds ago                       
+r7qg9nk0a9o2        nginx.6             nginx:latest        swarm-worker-2      Running             Running 34 seconds ago   
+</code></pre>
+
+<p>Test the Application:</p>
+
+<pre><code>$ curl -i http://192.168.1.10
+HTTP/1.1 200 OK
+Server: nginx/1.15.0
+Date: Thu, 14 Jun 2018 10:01:34 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 05 Jun 2018 12:00:18 GMT
+Connection: keep-alive
+ETag: "5b167b52-264"
+Accept-Ranges: bytes
+</code></pre>
+
+<p>Delete the Service:</p>
+
+<pre><code>
+$ docker service rm nginx
+nginx
+</code></pre>
+
+<h2>Delete the Swarm:</h2>
+
+<pre><code>$ ansible-playbook -i inventory.ini -u root delete-swarm.yml 
+
+PLAY RECAP 
+swarm-manager              : ok=2    changed=1    unreachable=0    failed=0   
+swarm-worker-1             : ok=2    changed=1    unreachable=0    failed=0   
+swarm-worker-2             : ok=2    changed=1    unreachable=0    failed=0   
+</code></pre>
+
+<p>Ensure the Nodes is removed from the Swarm, SSH to your Swarm Manager:</p>
+
+<pre><code>$ docker node ls
+Error response from daemon: This node is not a swarm manager. Use "docker swarm init" or "docker swarm join" to connect this node to swarm and try again.
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Clearing Up Disk Space on Docker Swarm by Removing Unused Data With Prune]]></title>
@@ -552,94 +715,6 @@ ip       heap.percent ram.percent cpu load_1m load_5m load_15m node.role master 
 10.0.7.2           27          84  15    3.09    2.28     1.49 mdi       *      572c68bca904
 10.0.7.4           29          84  15    3.09    2.28     1.49 mdi       -      5306a0c2ee24
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup RocketChat on Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/10/setup-rocketchat-on-docker-swarm/"/>
-    <updated>2017-09-10T18:45:12-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/10/setup-rocketchat-on-docker-swarm</id>
-    <content type="html"><![CDATA[<p>Rocket Chat, a Self Hosted Alternative, which is very similar to Slack.</p>
-
-<p>We will setup a RocketChat Server which is hosted on Docker Swarm. In future posts, I will also go through the steps on working with the API, Custom Emoji&rsquo;s etc.</p>
-
-<h2>Requirements:</h2>
-
-<p>RocketChat uses MongoDB as its Database, we will keep the database outside of our swarm, if you don&rsquo;t already have a MongoDB Server in place, follow the <a href="http://blog.ruanbekker.com/blog/2017/09/02/setup-a-3-node-mongodb-replica-set-on-ubuntu-16/">Setup a 3 Node MongoDB</a> post to get that sorted.</p>
-
-<p>Another requirement is to have docker swarm running, alternatively, you can also follow <a href="https://rocket.chat/docs/installation/">RocketChat&rsquo;s Documentation</a> if you prefer setting it up elsewhere.</p>
-
-<h2>Setup Rocket Chat</h2>
-
-<p>We will assume MongoDB is accessible via <code>mongodb.domain.com</code> on port <code>27017</code>, with a username and password.</p>
-
-<p>Creating the RocketChat service and associate it to our <code>appnet</code> overlay network:</p>
-
-<pre><code class="bash">docker service create --name rocketchat \
---replicas 1 \
---network appnet \
---env DEPLOY_METHOD=docker \
---env NODE_ENV=production \
---env PORT=3000 \
---env MONGO_URL="mongodb://mongoadmin:mongopass@mongodb.domain.com:27017/rocketchat?authSource=admin" \
---env ROOT_URL=http://rocketchat.domain.com \
---env ADMIN_USERNAME=myadmin \
---env ADMIN_PASS=secret \
---env ADMIN_EMAIL=mail@domain.com \
---env Accounts_AvatarStorePath=/app/uploads \
---secret rocketchat_secret \
-rocketchat/rocket.chat
-</code></pre>
-
-<h2>View the RocketChat Service Logs</h2>
-
-<p>Lets monitor the docker service logs for our rocketchat service:</p>
-
-<pre><code class="bash">$ docker service logs -f rocketchat
-
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Using GridFS for custom sounds storage
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Using GridFS for custom emoji storage
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | ufs: temp directory created at "/tmp/ufs"
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | System startup
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | +--------------------------------------------------------------+
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |                        SERVER RUNNING                        |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | +--------------------------------------------------------------+
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |                                                              |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |  Rocket.Chat Version: 0.58.2                                 |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |       NodeJS Version: 4.8.4 - x64                            |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |             Platform: linux                                  |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |         Process Port: 3000                                   |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |             Site URL: http://rocketchat.domain.com           |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |     ReplicaSet OpLog: Disabled                               |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |          Commit Hash: 988103d449                             |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |        Commit Branch: HEAD                                   |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |                                                              |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | +--------------------------------------------------------------+
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Inserting admin user:
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Name: Administrator
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Email: mail@domain.com
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Username: myadmin
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Password: secret
-</code></pre>
-
-<p>Now you should be able to access Rocket Chat on the <code>ROOT_URL</code> that you have specified.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://rocket.chat/docs/installation/">https://rocket.chat/docs/installation/</a></li>
-<li><a href="https://github.com/RocketChat/Docker.Official.Image">https://github.com/RocketChat/Docker.Official.Image</a></li>
-<li><a href="https://rocket.chat/docs/installation/docker-containers">https://rocket.chat/docs/installation/docker-containers</a></li>
-</ul>
-
-
-<center>
-        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-
-
 ]]></content>
   </entry>
   

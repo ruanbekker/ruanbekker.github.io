@@ -37,9 +37,9 @@ We will have 4 nodes. 1 Admin node where we will deploy our cluster with, and 3 
 
 ## Host Entries
 
-If you don't have dns for your servers, setup the hosts files so that the names can resolves to the ip addresses:
+If you don't have dns for your servers, setup the `/etc/hosts` file so that the names can resolves to the ip addresses:
 
-```bash /etc/hosts
+```bash 
 10.0.8.2 ceph-admin
 10.0.8.3 ceph-node1
 10.0.8.4 ceph-node2
@@ -50,21 +50,21 @@ If you don't have dns for your servers, setup the hosts files so that the names 
 
 Setup the `ceph-system` user accounts on all the servers:
 
-```
+```bash
 $ useradd -d /home/ceph-system -s /bin/bash -m ceph-system
 $ passwd ceph-system
 ```
 
 Setup the created user part of the sudoers that is able to issue sudo commands without a pssword:
 
-```
+```bash
 $ echo "ceph-system ALL = (root) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/ceph-system
 $ chmod 0440 /etc/sudoers.d/ceph-system
 ```
 
 Switch user to `ceph-system` and generate SSH keys and copy the keys from the `ceph-admin` server to the ceph-nodes:
 
-```
+```bash
 $ sudo su - ceph-system
 $ ssh-keygen -t rsa -f ~/.ssh/id_rsa -P ""
 $ ssh-copy-id ceph-system@ceph-node1

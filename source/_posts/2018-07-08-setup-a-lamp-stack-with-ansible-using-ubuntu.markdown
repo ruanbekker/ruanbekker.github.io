@@ -44,7 +44,7 @@ Our `lamp.yml` playbook:
 
 Our `index.html` that will be deployed on our servers:
 
-```bash /tmp/index.html
+```html /tmp/index.html
 <!DOCTYPE html>
 <html>
   <body>
@@ -82,10 +82,5 @@ Test our web server:
 ```bash
 $ curl http://10.0.0.4
 
-<!DOCTYPE html>
-<html>
-<body>
-<h1>Deployed with Ansible</h1>
-</body>
-</html>
+Deployed with Ansible
 ```

@@ -6,6 +6,8 @@ comments: true
 categories: ["ansible", "devops", "ansible-tutorial", "ubuntu"]
 ---
 
+![](https://res.cloudinary.com/rbekker/image/upload/v1531083331/ansible_tojf8l.png)
+
 This is Part-2 of our [Ansible-Tutorial](http://blog.ruanbekker.com/blog/categories/ansible-tutorial) and in this post we will cover how to setup a LAMP Stack on Ubuntu using Ansible. We will only have one host in our inventory, but this can be scaled easily by increasing the number of nodes in your invetory configuration file.
 
 ## Our Playbook:

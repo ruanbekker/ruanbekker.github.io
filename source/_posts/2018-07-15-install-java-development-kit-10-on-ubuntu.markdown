@@ -32,6 +32,8 @@ openjdk version "10" 2018-03-20
 
 ## Installing JDK 10 on Ubuntu:
 
+Installing Java Development Kit 10:
+
 ```bash
 $ apt update && apt upgrade -y
 $ add-apt-repository ppa:linuxuprising/java

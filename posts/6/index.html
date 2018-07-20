@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="I wanted to process a small subset of data, and not wanting to spin up a cluster, so I used nagasuga/docker-hive docker image to run Hive on my Mac. &hellip;">
+  <meta name="description" content="On Amazon Web Services with RDS for MySQL or Aurora with MySQL compatibility, you can authenticate to your Database instance or cluster using IAM for &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,438 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/01/30/authenticate-to-your-aws-mysql-rds-instance-via-iam/">Authenticate to Your AWS MySQL RDS Instance via IAM</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-01-30T10:02:05-05:00'><span class='date'><span class='date-month'>Jan</span> <span class='date-day'>30</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>10:02 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>On Amazon Web Services with RDS for MySQL or Aurora with MySQL compatibility, you can authenticate to your Database instance or cluster using IAM for database authentication. The benefit of using this authentication method is that you don&rsquo;t need to use a password when you connect to your database, but you use your authentication token instead</p>
+
+<ul>
+<li>More info from their <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.html">docs</a></li>
+</ul>
+
+
+<h2>What we will be doing today:</h2>
+
+<p>We will do the following:</p>
+
+<ul>
+<li>Create RDS MySQL Database</li>
+<li>Create IAM Policy that allows a user to connect via a MySQL User</li>
+<li>Create IAM User and associate IAM Policy</li>
+<li>Configure the new user credentials in the awscli credential provider</li>
+<li>Bash script to generate the auth token and authenticate to RDS via Token instead of password</li>
+</ul>
+
+
+<h2>Create the RDS Database:</h2>
+
+<p>In this tutorial I will spin up a <code>db.t2.micro</code> in <code>eu-west-1</code> with <code>IAMDatabaseAuthentication Enabled</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>aws rds create-db-instance <span class="se">\</span>
+</span><span class='line'>    --db-instance-identifier rbtest <span class="se">\</span>
+</span><span class='line'>    --db-instance-class db.t2.micro <span class="se">\</span>
+</span><span class='line'>    --engine MySQL <span class="se">\</span>
+</span><span class='line'>    --allocated-storage <span class="m">20</span> <span class="se">\</span>
+</span><span class='line'>    --master-username dbadmin <span class="se">\</span>
+</span><span class='line'>    --master-user-password mysuperpassword <span class="se">\</span>
+</span><span class='line'>    --region eu-west-1 <span class="se">\</span>
+</span><span class='line'>    --enable-iam-database-authentication
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Give it some time to spin up, then get your database endpoint:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws rds describe-db-instances --db-instance-identifier rbtest <span class="p">|</span> jq -r <span class="s2">&quot;.DBInstances[].Endpoint.Address&quot;</span>
+</span><span class='line'>rbtest.abcdefgh.eu-west-1.rds.amazonaws.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you need to have SSL Enabled, get the bundled certificate as described in the <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html">Using SSL with RDS</a> docs.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>wget -O /tmp/rds.pem https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Database Account:</h2>
+
+<p>Create the database account on the MySQL RDS instance as described from their <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.DBAccounts.html">docs</a>. IAM handles the authentication via AWSAuthenticationPlugin, therefore we do not need to set passwords on the database.</p>
+
+<p>Connect to the database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mysql -u dbadmin -h rbtest.abcdefgh.eu-west-1.rds.amazonaws.com -p
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">CREATE</span> <span class="k">USER</span> <span class="n">mydbaccount</span> <span class="n">IDENTIFIED</span> <span class="k">WITH</span> <span class="n">AWSAuthenticationPlugin</span> <span class="k">AS</span> <span class="s1">&#39;RDS&#39;</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">FLUSH</span> <span class="k">PRIVILEGES</span><span class="p">;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Creating the Databases and Granting Permissions</h2>
+
+<p>While you are on the database, create 2 databases (<code>db1</code> and <code>db2</code>) with some tables, which we will use for our user to have read only access to, and create one database (<code>db3</code>) which the user will not have access to:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">database</span> <span class="n">db1</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">database</span> <span class="n">db2</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">use</span> <span class="n">db1</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">table</span> <span class="n">foo</span> <span class="p">(</span><span class="n">name</span> <span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">20</span><span class="p">),</span> <span class="n">age</span> <span class="nb">INT</span><span class="p">);</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;ruan&#39;</span><span class="p">,</span> <span class="mi">31</span><span class="p">);</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;james&#39;</span><span class="p">,</span> <span class="mi">32</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">use</span> <span class="n">db2</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">table</span> <span class="n">foo</span> <span class="p">(</span><span class="k">location</span> <span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">255</span><span class="p">));</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;south africa&#39;</span><span class="p">);</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;new zealand&#39;</span><span class="p">);</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;australia&#39;</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">grant</span> <span class="k">select</span> <span class="k">on</span> <span class="n">db1</span><span class="p">.</span><span class="o">*</span> <span class="k">to</span> <span class="s1">&#39;mydbuser&#39;</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">grant</span> <span class="k">select</span> <span class="k">on</span> <span class="n">db2</span><span class="p">.</span><span class="o">*</span> <span class="k">to</span> <span class="s1">&#39;mydbuser&#39;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">database</span> <span class="n">db3</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">use</span> <span class="n">db3</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">table</span> <span class="n">foo</span> <span class="p">(</span><span class="n">passwords</span> <span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">255</span><span class="p">));</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;superpassword&#39;</span><span class="p">);</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">foo</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;sekret&#39;</span><span class="p">);</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">flush</span> <span class="k">privileges</span><span class="p">;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>IAM Permissions to allow our user to authenticate to our RDS.</h2>
+
+<p>First to create the user and configure awscli tools. My default profile has administrative access, so we will create our db user in its own profile and configure our awscli tools with its new access key and secret key:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws configure --profile dbuser
+</span><span class='line'>AWS Access Key ID <span class="o">[</span>None<span class="o">]</span>: xxxxxxxxxxxxx
+</span><span class='line'>AWS Secret Access Key <span class="o">[</span>None<span class="o">]</span>: xxxxxxxxxxxxxxxxxx
+</span><span class='line'>Default region name <span class="o">[</span>None<span class="o">]</span>: eu-west-1
+</span><span class='line'>Default output format <span class="o">[</span>None<span class="o">]</span>: json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we need to create a IAM policy to allow our user to authenticate to our RDS Instance via IAM, which we will associate with our Users account.</p>
+
+<p>We need the AWS Account ID, the Database Identifier Resource ID, and the User Account that we created on MySQL.</p>
+
+<p>To get the DB ResourceId:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws rds describe-db-instances --db-instance-identifier rbtest <span class="p">|</span> jq -r <span class="err">&quot;</span>.DBInstances<span class="o">[]</span>.DbiResourceId
+</span><span class='line'>db-123456789ABCDEFGH
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the IAM Policy and associate it with the new user account:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.IAMPolicy.html">More info from the Docs</a>:</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
+</span><span class='line'>   <span class="nt">&quot;Version&quot;</span><span class="p">:</span> <span class="s2">&quot;2012-10-17&quot;</span><span class="p">,</span>
+</span><span class='line'>   <span class="nt">&quot;Statement&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>      <span class="p">{</span>
+</span><span class='line'>           <span class="nt">&quot;Sid&quot;</span><span class="p">:</span> <span class="s2">&quot;RDSIAMAUTH&quot;</span><span class="p">,</span>
+</span><span class='line'>         <span class="nt">&quot;Effect&quot;</span><span class="p">:</span> <span class="s2">&quot;Allow&quot;</span><span class="p">,</span>
+</span><span class='line'>         <span class="nt">&quot;Action&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>             <span class="s2">&quot;rds-db:connect&quot;</span>
+</span><span class='line'>         <span class="p">],</span>
+</span><span class='line'>         <span class="nt">&quot;Resource&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>             <span class="s2">&quot;arn:aws:rds-db:eu-west-1:123456789012:dbuser:db-123456789ABCDEFGH/mydbaccount&quot;</span>
+</span><span class='line'>         <span class="p">]</span>
+</span><span class='line'>      <span class="p">}</span>
+</span><span class='line'>   <span class="p">]</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The bash script will get the authentication token which will be used as the password. Note that the authentication token will expire after 15 minutes after creation. The <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.html">docs</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/bin/bash</span>
+</span><span class='line'><span class="nv">db_endpoint</span><span class="o">=</span><span class="s2">&quot;rbtest.abcdefgh.eu-west-1.rds.amazonaws.com&quot;</span>
+</span><span class='line'><span class="nv">auth_token</span><span class="o">=</span><span class="s2">&quot;$(aws --profile dbuser rds generate-db-auth-token --hostname $RDSHOST --port 3306 --username mydbaccount )&quot;</span>
+</span><span class='line'>mysql --host<span class="o">=</span><span class="nv">$db_endpoint</span> --port<span class="o">=</span><span class="m">3306</span> --enable-cleartext-plugin --user<span class="o">=</span>mydbaccount --password<span class="o">=</span><span class="nv">$auth_token</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Testing it out:</h2>
+
+<p>Now that our policies are in place, credentials from the credential provider has been set and our bash script is setup, lets connect to our database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>./conn-mysql.sh
+</span><span class='line'>
+</span><span class='line'>mysql&gt; show databases<span class="p">;</span>
+</span><span class='line'>+--------------------+
+</span><span class='line'><span class="p">|</span> Database           <span class="p">|</span>
+</span><span class='line'>+--------------------+
+</span><span class='line'><span class="p">|</span> information_schema <span class="p">|</span>
+</span><span class='line'><span class="p">|</span> db1                <span class="p">|</span>
+</span><span class='line'><span class="p">|</span> db2                <span class="p">|</span>
+</span><span class='line'>+--------------------+
+</span><span class='line'><span class="m">3</span> rows in <span class="nb">set</span> <span class="o">(</span>0.16 sec<span class="o">)</span>
+</span><span class='line'>
+</span><span class='line'>mysql&gt; <span class="k">select</span> * from db2.foo<span class="p">;</span>
+</span><span class='line'>+--------------+
+</span><span class='line'><span class="p">|</span> location     <span class="p">|</span>
+</span><span class='line'>+--------------+
+</span><span class='line'><span class="p">|</span> south africa <span class="p">|</span>
+</span><span class='line'><span class="p">|</span> new zealand  <span class="p">|</span>
+</span><span class='line'><span class="p">|</span> australia    <span class="p">|</span>
+</span><span class='line'>+--------------+
+</span><span class='line'>
+</span><span class='line'>mysql&gt; <span class="k">select</span> * from db3.foo<span class="p">;</span>
+</span><span class='line'>ERROR <span class="m">1044</span> <span class="o">(</span>42000<span class="o">)</span>: Access denied <span class="k">for</span> user <span class="s1">&#39;mydbaccount&#39;</span>@<span class="s1">&#39;*&#39;</span> to database <span class="s1">&#39;db3&#39;</span>
+</span><span class='line'>
+</span><span class='line'>mysql&gt; create database test123<span class="p">;</span>
+</span><span class='line'>ERROR <span class="m">1044</span> <span class="o">(</span>42000<span class="o">)</span>: Access denied <span class="k">for</span> user <span class="s1">&#39;mydbaccount&#39;</span>@<span class="s1">&#39;%&#39;</span> to database <span class="s1">&#39;test123&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Changing the IAM Policy to revoke access:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>./conn-mysql.sh
+</span><span class='line'>mysql: <span class="o">[</span>Warning<span class="o">]</span> Using a password on the <span class="nb">command </span>line interface can be insecure.
+</span><span class='line'>ERROR <span class="m">1045</span> <span class="o">(</span>28000<span class="o">)</span>: Access denied <span class="k">for</span> user <span class="s1">&#39;mydbaccount&#39;</span>@<span class="s1">&#39;10.0.0.10&#39;</span> <span class="o">(</span>using password: YES<span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Creating a MySQL Client Wrapper Script:</h2>
+
+<p>Using bash we can create a wrapper script so we can connect to our database like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mysql-iam prod rbtest.eu-west-1.amazonaws.com mydbaccount
+</span><span class='line'>mysql&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Here is the script:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
+</span><span class='line'>
+</span><span class='line'><span class="c"># Wrapper MySQL Client for IAM Based Authentication for MySQL and Amazon Aurora on RDS</span>
+</span><span class='line'><span class="c"># Read: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html</span>
+</span><span class='line'><span class="c"># Usage: [app] [aws_profile] [rds_endpoint] [rds_mysql_username]</span>
+</span><span class='line'>
+</span><span class='line'>command_exists<span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nb">type</span> <span class="s2">&quot;$1&quot;</span> <span class="p">&amp;</span>&gt; /dev/null <span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>check_required_parameters<span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">aws_profile</span><span class="o">=</span><span class="s2">&quot;$1&quot;</span>
+</span><span class='line'>  <span class="nv">rds_hostname</span><span class="o">=</span><span class="s2">&quot;$2&quot;</span>
+</span><span class='line'>  <span class="nv">rds_username</span><span class="o">=</span><span class="s2">&quot;$3&quot;</span>
+</span><span class='line'>  <span class="k">if</span> ! <span class="o">[[</span> -n <span class="s2">&quot;$aws_profile&quot;</span> <span class="o">&amp;&amp;</span> -n <span class="s2">&quot;$rds_username&quot;</span> <span class="o">&amp;&amp;</span> -n <span class="s2">&quot;$rds_username&quot;</span> <span class="o">]]</span>
+</span><span class='line'>    <span class="k">then</span>
+</span><span class='line'>      <span class="nb">echo</span> <span class="s2">&quot;Error: Missing Parameters&quot;</span>
+</span><span class='line'>      <span class="nb">echo</span> <span class="s2">&quot;Expected: $0 aws_profile_name rds_endpoint_name rds_db_username&quot;</span>
+</span><span class='line'>      <span class="nb">echo</span> <span class="s2">&quot;Usage: $0 prod dbname.eu-west-1.amazonaws.com dba&quot;</span>
+</span><span class='line'>      <span class="nb">exit </span>1
+</span><span class='line'>  <span class="k">fi</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>get_auth_token<span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">aws_bin</span><span class="o">=</span><span class="k">$(</span>which aws <span class="p">|</span> head -1<span class="k">)</span>
+</span><span class='line'>  <span class="nv">auth_token</span><span class="o">=</span><span class="s2">&quot;$($aws_bin --profile $aws_profile rds generate-db-auth-token --hostname $rds_hostname --port 3306 --username $rds_username )&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>connect_to_rds<span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">mysql_bin</span><span class="o">=</span><span class="k">$(</span>which mysql <span class="p">|</span> head -1<span class="k">)</span>
+</span><span class='line'>  <span class="nv">$mysql_bin</span> --host<span class="o">=</span><span class="nv">$rds_hostname</span> --port<span class="o">=</span><span class="m">3306</span> --enable-cleartext-plugin --user<span class="o">=</span><span class="nv">$rds_username</span> --password<span class="o">=</span><span class="nv">$auth_token</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="o">[</span> <span class="s2">&quot;$1&quot;</span> <span class="o">==</span> <span class="s2">&quot;help&quot;</span> <span class="o">]</span>
+</span><span class='line'>  <span class="k">then</span>
+</span><span class='line'>    <span class="nb">echo</span> <span class="s2">&quot;Help&quot;</span>
+</span><span class='line'>    <span class="nb">echo</span> <span class="s2">&quot;Expected: $0 aws_profile_name rds_endpoint_name rds_db_username&quot;</span>
+</span><span class='line'>    <span class="nb">echo</span> <span class="s2">&quot;Usage: $0 prod dbname.eu-west-1.amazonaws.com dba_user&quot;</span>
+</span><span class='line'>    <span class="nb">exit </span>0
+</span><span class='line'><span class="k">fi</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> command_exists aws <span class="o">&amp;&amp;</span> command_exists mysql
+</span><span class='line'><span class="k">then</span>
+</span><span class='line'>  check_required_parameters <span class="nv">$1</span> <span class="nv">$2</span> <span class="nv">$3</span>
+</span><span class='line'>  get_auth_token
+</span><span class='line'>  connect_to_rds
+</span><span class='line'><span class="k">else</span>
+</span><span class='line'>  <span class="nb">echo</span> <span class="s2">&quot;Error: Make sure aws-cli and mysql client is installed&quot;</span>
+</span><span class='line'><span class="k">fi</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For more information on this, have a look at the <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html">docs</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1668,143 +2100,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/12/09/unmask-a-masked-service-in-systemd/">Unmask a Masked Service in Systemd</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-12-09T02:02:21-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>9</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>2:02 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>I was busy setting up a <code>docker-volume-netshare</code> plugin to use NFS Volumes for Docker, which relies on the <code>nfs-utils/nfs-common</code> package, and when trying to start the service, I found that the <code>nfs-common</code> service is <code>masked</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl start docker-volume-netshare.service
-</span><span class='line'>Failed to start docker-volume-netshare.service: Unit nfs-common.service is masked.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Looking at the <code>nfs-common</code> service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>sudo systemctl is-enabled nfs-common
-</span><span class='line'>masked
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>nfs-common
-</span><span class='line'>Synchronizing state of nfs-common.service with SysV service script with /lib/systemd/systemd-sysv-install.
-</span><span class='line'>Executing: /lib/systemd/systemd-sysv-install <span class="nb">enable </span>nfs-common
-</span><span class='line'>Failed to <span class="nb">enable </span>unit: Unit file /lib/systemd/system/nfs-common.service is masked.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>It appears that the unit file has a symbolic link to /dev/null:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>file /lib/systemd/system/nfs-common.service
-</span><span class='line'>/lib/systemd/system/nfs-common.service: symbolic link to /dev/null
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I was able to unmask the service by removing the file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo rm /lib/systemd/system/nfs-common.service
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then reloading the daemon:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl daemon-reload
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As we can see the <code>nfs-common</code> service is not running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl status nfs-common
-</span><span class='line'>● nfs-common.service - LSB: NFS support files common to client and server
-</span><span class='line'>   Loaded: loaded <span class="o">(</span>/etc/init.d/nfs-common<span class="p">;</span> generated<span class="p">;</span> vendor preset: enabled<span class="o">)</span>
-</span><span class='line'>   Active: inactive <span class="o">(</span>dead<span class="o">)</span>
-</span><span class='line'>     Docs: man:systemd-sysv-generator<span class="o">(</span>8<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s go ahead and start the service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl start nfs-common
-</span><span class='line'><span class="nv">$ </span>sudo systemctl status nfs-common
-</span><span class='line'>● nfs-common.service - LSB: NFS support files common to client and server
-</span><span class='line'>   Loaded: loaded <span class="o">(</span>/etc/init.d/nfs-common<span class="p">;</span> generated<span class="p">;</span> vendor preset: enabled<span class="o">)</span>
-</span><span class='line'>   Active: active <span class="o">(</span>running<span class="o">)</span> since Sat 2017-12-09 08:59:47 SAST<span class="p">;</span> 2s ago
-</span><span class='line'>     Docs: man:systemd-sysv-generator<span class="o">(</span>8<span class="o">)</span>
-</span><span class='line'>  Process: <span class="m">7382</span> <span class="nv">ExecStart</span><span class="o">=</span>/etc/init.d/nfs-common start <span class="o">(</span><span class="nv">code</span><span class="o">=</span>exited, <span class="nv">status</span><span class="o">=</span>0/SUCCESS<span class="o">)</span>
-</span><span class='line'>      CPU: 162ms
-</span><span class='line'>   CGroup: /system.slice/nfs-common.service
-</span><span class='line'>           └─7403 /usr/sbin/rpc.idmapd
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we can see the serive is unmasked and started, also remember to enable to service on boot:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>nfs-common
-</span><span class='line'>nfs-common.service is not a native service, redirecting to systemd-sysv-install.
-</span><span class='line'>Executing: /lib/systemd/systemd-sysv-install <span class="nb">enable </span>nfs-common
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>sudo systemctl is-enabled nfs-common
-</span><span class='line'>enabled
-</span></code></pre></td></tr></table></div></figure>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -1822,6 +2117,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/07/20/hello-world-ruby-on-rails-app-tutorial-using-mac/">Hello World Ruby on Rails App Tutorial Using Mac</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/07/16/capture-geo-location-data-with-python-flask-and-pygeoip/">Capture Geo Location Data With Python Flask and PyGeoIP</a>
       </li>
     
@@ -1835,10 +2134,6 @@
     
       <li class="post">
         <a href="/blog/2018/07/08/getting-started-with-ansible-on-ubuntu/">Getting Started With Ansible on Ubuntu</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/07/04/salt-and-hash-example-using-python-with-bcrypt-on-alpine/">Salt and Hash Example Using Python With Bcrypt on Alpine</a>
       </li>
     
   </ul>

@@ -3,7 +3,7 @@ layout: post
 title: "Running a 3 Node Elasticsearch Cluster with Docker Compose on your Laptop for testing"
 date: 2018-04-29 13:43:35 -0400
 comments: true
-categories: ["docker", "elasticsearch", "docker-compose", "development"]
+categories: ["docker", "elasticsearch", "docker-compose", "kibana", "development"]
 ---
 
 Having a Elasticsearch cluster on your laptop with Docker for testing is great. And in this post I will show you how quick and easy it is, to have a 3 node elasticsearch cluster running on docker for testing.
@@ -31,6 +31,8 @@ services:
     environment:
       - cluster.name=docker-cluster
       - bootstrap.memory_lock=true
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     ulimits:
       memlock:
@@ -48,6 +50,8 @@ services:
     environment:
       - cluster.name=docker-cluster
       - bootstrap.memory_lock=true
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - "discovery.zen.ping.unicast.hosts=elasticsearch"
     ulimits:
@@ -64,6 +68,8 @@ services:
     environment:
       - cluster.name=docker-cluster
       - bootstrap.memory_lock=true
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - "discovery.zen.ping.unicast.hosts=elasticsearch"
     ulimits:
@@ -75,6 +81,24 @@ services:
     networks:
       - esnet
 
+  kibana:
+    image: 'docker.elastic.co/kibana/kibana:6.3.2'
+    container_name: kibana
+    environment:
+      SERVER_NAME: kibana.local
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    ports:
+      - '5601:5601'
+    networks:
+      - esnet
+ 
+  headPlugin:
+    image: 'mobz/elasticsearch-head:5'
+    container_name: head
+    ports:
+      - '9100:9100'
+    networks:
+      - esnet
 
 volumes:
   esdata1:
@@ -147,6 +171,18 @@ health status index                       uuid                   pri rep docs.co
 green  open   test                        w4p2Q3fTR4uMSYBfpNVPqw   5   2          1            0      3.3kb          1.1kb
 green  open   .monitoring-es-6-2018.04.29 W69lql-rSbORVfHZrj4vug   1   1       1601           38        4mb            2mb
 ```
+
+## Kibana
+
+Kibana is also included in the stack and is accessible via http://localhost:5601/ and you it should look more or less like:
+
+![](https://objects.ruanbekker.com/assets/images/kibana-local-home.png)
+
+## Elasticsearch Head UI
+
+I always prefer working directly with the RESTFul API, but if you would like to use a UI to interact with Elasticsearch, you can access it via http://localhost:9100/ and should look like this:
+
+![](https://objects.ruanbekker.com/assets/images/elasticsearch-head-ui.png)
 
 ## Deleting the Cluster:
 

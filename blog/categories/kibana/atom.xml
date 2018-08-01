@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Kibana | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/kibana/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-07-20T03:37:00-04:00</updated>
+  <updated>2018-08-01T12:16:44-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,194 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Running a 3 Node Elasticsearch Cluster With Docker Compose on Your Laptop for Testing]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing/"/>
+    <updated>2018-04-29T13:43:35-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing</id>
+    <content type="html"><![CDATA[<p>Having a Elasticsearch cluster on your laptop with Docker for testing is great. And in this post I will show you how quick and easy it is, to have a 3 node elasticsearch cluster running on docker for testing.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>We need to set the <code>vm.max_map_count</code> kernel parameter:</p>
+
+<pre><code class="bash">$ sudo sysctl -w vm.max_map_count=262144
+</code></pre>
+
+<p>To set this permanently, add it to <code>/etc/sysctl.conf</code> and reload with <code>sudo sysctl -p</code></p>
+
+<h2>Docker Compose:</h2>
+
+<p>The docker compose file that we will reference:</p>
+
+<pre><code class="yaml">version: '2.2'
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
+    container_name: elasticsearch
+    environment:
+      - cluster.name=docker-cluster
+      - bootstrap.memory_lock=true
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata1:/home/ruan/workspace/docker/elasticsearch/data
+    ports:
+      - 9200:9200
+    networks:
+      - esnet
+  elasticsearch2:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
+    container_name: elasticsearch2
+    environment:
+      - cluster.name=docker-cluster
+      - bootstrap.memory_lock=true
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "discovery.zen.ping.unicast.hosts=elasticsearch"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata2:/home/ruan/workspace/docker/elasticsearch/data
+    networks:
+      - esnet
+  elasticsearch3:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
+    container_name: elasticsearch3
+    environment:
+      - cluster.name=docker-cluster
+      - bootstrap.memory_lock=true
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "discovery.zen.ping.unicast.hosts=elasticsearch"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata3:/home/ruan/workspace/docker/elasticsearch/data
+    networks:
+      - esnet
+
+  kibana:
+    image: 'docker.elastic.co/kibana/kibana:6.3.2'
+    container_name: kibana
+    environment:
+      SERVER_NAME: kibana.local
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    ports:
+      - '5601:5601'
+    networks:
+      - esnet
+
+  headPlugin:
+    image: 'mobz/elasticsearch-head:5'
+    container_name: head
+    ports:
+      - '9100:9100'
+    networks:
+      - esnet
+
+volumes:
+  esdata1:
+    driver: local
+  esdata2:
+    driver: local
+  esdata3:
+    driver: local
+
+networks:
+  esnet:
+</code></pre>
+
+<p>Now make sure the paths exist that we referenced in the compose file, in my case <code>/home/ruan/workspace/docker/elasticsearch/data</code></p>
+
+<h2>Deploy</h2>
+
+<p>Deploy your elasticsearch cluster with docker compose:</p>
+
+<pre><code class="bash">$ docker-compose up
+</code></pre>
+
+<p>This will run in the foreground, and you should see console output.</p>
+
+<h2>Testing Elasticsearch</h2>
+
+<p>Let&rsquo;s run a couple of queries, first up, check the cluster health api:</p>
+
+<pre><code class="bash">$ curl http://127.0.0.1:9200/_cluster/health?pretty
+{
+  "cluster_name" : "docker-cluster",
+  "status" : "green",
+  "timed_out" : false,
+  "number_of_nodes" : 3,
+  "number_of_data_nodes" : 3,
+  "active_primary_shards" : 1,
+  "active_shards" : 2,
+  "relocating_shards" : 0,
+  "initializing_shards" : 0,
+  "unassigned_shards" : 0,
+  "delayed_unassigned_shards" : 0,
+  "number_of_pending_tasks" : 0,
+  "number_of_in_flight_fetch" : 0,
+  "task_max_waiting_in_queue_millis" : 0,
+  "active_shards_percent_as_number" : 100.0
+}
+</code></pre>
+
+<p>Create a index with replication count of 2:</p>
+
+<pre><code class="bash">$ curl -H "Content-Type: application/json" -XPUT http://127.0.0.1:9200/test -d '{"number_of_replicas": 2}'
+</code></pre>
+
+<p>Ingest a document to elasticsearch:</p>
+
+<pre><code class="bash">$ curl -H "Content-Type: application/json" -XPUT http://127.0.0.1:9200/test/docs/1 -d '{"name": "ruan"}'
+{"_index":"test","_type":"docs","_id":"1","_version":1,"result":"created","_shards":{"total":3,"successful":3,"failed":0},"_seq_no":0,"_primary_term":1}
+</code></pre>
+
+<p>View the indices:</p>
+
+<pre><code class="bash">$ curl http://127.0.0.1:9200/_cat/indices?v
+health status index                       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   test                        w4p2Q3fTR4uMSYBfpNVPqw   5   2          1            0      3.3kb          1.1kb
+green  open   .monitoring-es-6-2018.04.29 W69lql-rSbORVfHZrj4vug   1   1       1601           38        4mb            2mb
+</code></pre>
+
+<h2>Kibana</h2>
+
+<p>Kibana is also included in the stack and is accessible via <a href="http://localhost:5601/">http://localhost:5601/</a> and you it should look more or less like:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/kibana-local-home.png" alt="" /></p>
+
+<h2>Elasticsearch Head UI</h2>
+
+<p>I always prefer working directly with the RESTFul API, but if you would like to use a UI to interact with Elasticsearch, you can access it via <a href="http://localhost:9100/">http://localhost:9100/</a> and should look like this:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elasticsearch-head-ui.png" alt="" /></p>
+
+<h2>Deleting the Cluster:</h2>
+
+<p>As its running in the foreground, you can just hit ctrl + c and as we persisted data in our compose, when you spin up the cluster again, the data will still be there.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Nginx Reverse Proxy for Elasticsearch and Kibana 5 on AWS]]></title>

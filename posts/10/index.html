@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Tried out creating a 3 node elasticsearch stack on docker swarm using docker-compose, that sits behind a haproxy service. Environment: Images: &hellip;">
+  <meta name="description" content="Create a Nodejs Application that responds GET requests with its Hostname. Our nodejs application will sit beind a HAProxy Load Balancer, we are &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,265 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/09/24/creating-a-nodejs-hostname-app-with-docker-stacks-on-swarm/">Creating a Nodejs Hostname App With Docker Stacks on Swarm</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-09-24T17:52:51-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>5:52 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>Create a Nodejs Application that responds GET requests with its Hostname.</p>
+
+<p>Our nodejs application will sit beind a HAProxy Load Balancer, we are mounting the <code>docker.sock</code> from the host to the container, so as we scale our web application, our load balancer is aware of the changes, and scales as we scale our web application.</p>
+
+<h2>Creating the Application:</h2>
+
+<p>Our nodejs application:</p>
+
+<figure class='code'><figcaption><span>app.js</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='javascript'><span class='line'><span class="kd">var</span> <span class="nx">http</span> <span class="o">=</span> <span class="nx">require</span><span class="p">(</span><span class="s1">&#39;http&#39;</span><span class="p">);</span>
+</span><span class='line'><span class="kd">var</span> <span class="nx">os</span> <span class="o">=</span> <span class="nx">require</span><span class="p">(</span><span class="s1">&#39;os&#39;</span><span class="p">);</span>
+</span><span class='line'><span class="nx">http</span><span class="p">.</span><span class="nx">createServer</span><span class="p">(</span><span class="kd">function</span> <span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>    <span class="nx">res</span><span class="p">.</span><span class="nx">writeHead</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="p">{</span><span class="s1">&#39;Content-Type&#39;</span><span class="o">:</span> <span class="s1">&#39;text/html&#39;</span><span class="p">});</span>
+</span><span class='line'>    <span class="nx">res</span><span class="p">.</span><span class="nx">end</span><span class="p">(</span><span class="err">`</span><span class="nx">My</span> <span class="nx">Hostname</span><span class="o">:</span> <span class="nx">$</span><span class="p">{</span><span class="nx">os</span><span class="p">.</span><span class="nx">hostname</span><span class="p">()}</span><span class="err">\</span><span class="nx">n</span><span class="err">`</span><span class="p">);</span>
+</span><span class='line'><span class="p">}).</span><span class="nx">listen</span><span class="p">(</span><span class="mi">8080</span><span class="p">);</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our Dockerfile:</p>
+
+<figure class='code'><figcaption><span>Dockerfile</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='docker'><span class='line'><span class="k">FROM</span> node:alpine
+</span><span class='line'><span class="k">ADD</span> app.js /app.js
+</span><span class='line'><span class="k">CMD</span> <span class="o">[</span><span class="s2">&quot;node&quot;</span>, <span class="s2">&quot;/app.js&quot;</span><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Build and Push to your registry, or you could use my image on Dockerhub: <a href="https://hub.docker.com/r/rbekker87/node-containername/">hub.docker.com/r/rbekker87/node-containername</a></p>
+
+<figure class='code'><figcaption><span>Build and Push</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker login
+</span><span class='line'><span class="nv">$ </span>docker build -t &lt;username&gt;/&lt;repo&gt;:&lt;tag&gt; .
+</span><span class='line'><span class="nv">$ </span>docker push  &lt;username&gt;/&lt;repo&gt;:&lt;tag&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Creating the Compose file</h2>
+
+<p>Create the compose file that will define our services:</p>
+
+<figure class='code'><figcaption><span>docker-compose.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>version: <span class="s1">&#39;3&#39;</span>
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  node-app:
+</span><span class='line'>    image: rbekker87/node-containername
+</span><span class='line'>    networks:
+</span><span class='line'>      - nodenet
+</span><span class='line'>    environment:
+</span><span class='line'>      - <span class="nv">SERVICE_PORTS</span><span class="o">=</span>8080
+</span><span class='line'>    deploy:
+</span><span class='line'>      replicas: 20
+</span><span class='line'>      update_config:
+</span><span class='line'>        parallelism: 5
+</span><span class='line'>        delay: 10s
+</span><span class='line'>      restart_policy:
+</span><span class='line'>        condition: on-failure
+</span><span class='line'>        max_attempts: 3
+</span><span class='line'>        window: 120s
+</span><span class='line'>
+</span><span class='line'>  loadbalancer:
+</span><span class='line'>    image: dockercloud/haproxy:latest
+</span><span class='line'>    depends_on:
+</span><span class='line'>      - node-app
+</span><span class='line'>    environment:
+</span><span class='line'>      - <span class="nv">BALANCE</span><span class="o">=</span>leastconn
+</span><span class='line'>    volumes:
+</span><span class='line'>      - /var/run/docker.sock:/var/run/docker.sock
+</span><span class='line'>    ports:
+</span><span class='line'>      - 80:80
+</span><span class='line'>    networks:
+</span><span class='line'>      - nodenet
+</span><span class='line'>    deploy:
+</span><span class='line'>      placement:
+</span><span class='line'>        constraints: <span class="o">[</span>node.role <span class="o">==</span> manager<span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>networks:
+</span><span class='line'>  nodenet:
+</span><span class='line'>    driver: overlay
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Stack:</h2>
+
+<p>Deploy the Stack by specifying the compose file and name of our stack:</p>
+
+<figure class='code'><figcaption><span>Deploy our Stack</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c docker-compose.yml node
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the Services in the Stack:</p>
+
+<figure class='code'><figcaption><span>List Services in our Stack</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack ls
+</span><span class='line'>NAME                SERVICES
+</span><span class='line'>node                2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the Tasks in the Stack:</p>
+
+<figure class='code'><figcaption><span>Tasks in our Stack</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack ps node
+</span><span class='line'>ID                  NAME                  IMAGE                                 NODE     DESIRED STATE       CURRENT STATE            ERROR               PORTS
+</span><span class='line'>l5ryfaedzzaq        node_loadbalancer.1   dockercloud/haproxy:latest            dsm-01   Running             Running <span class="m">40</span> minutes ago
+</span><span class='line'>c8nrrcvek79h        node_node-app.5       rbekker87/node-containername:latest   dsm-01   Running             Running <span class="m">40</span> minutes ago
+</span><span class='line'>dqii18b2q5nn        node_node-app.10      rbekker87/node-containername:latest   dsm-01   Running             Running <span class="m">40</span> minutes ago
+</span><span class='line'>vkpw2rugy0ah        node_node-app.11      rbekker87/node-containername:latest   dsm-01   Running             Running <span class="m">40</span> minutes ago
+</span><span class='line'>mm88nvnvy5lg        node_node-app.12      rbekker87/node-containername:latest   dsm-01   Running             Running <span class="m">40</span> minutes ago
+</span><span class='line'>oyx8rfqc1xl2        node_node-app.16      rbekker87/node-containername:latest   dsm-01   Running             Running <span class="m">41</span> minutes ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test out our Application</h2>
+
+<p>Test out the Service:</p>
+
+<figure class='code'><figcaption><span>GET Requests</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET http://127.0.0.1/
+</span><span class='line'>My Hostname: a6e34246e73b
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>curl -XGET http://127.0.0.1/
+</span><span class='line'>My Hostname: 5de71278be38
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>curl -XGET http://127.0.0.1/
+</span><span class='line'>My Hostname: e0b7316fdd51
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Scaling Out:</h2>
+
+<p>Scale our Application out to 30 replica&rsquo;s</p>
+
+<figure class='code'><figcaption><span>Scaling Up</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service scale node-app<span class="o">=</span>30
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Scale our Application down to 10 replica&rsquo;s</p>
+
+<figure class='code'><figcaption><span>Scaling Down</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service scale node-app<span class="o">=</span>10
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Cleanup</h2>
+
+<p>Remove the Stack:</p>
+
+<figure class='code'><figcaption><span>Delete the Stack</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack rm node
+</span><span class='line'>Removing service node_loadbalancer
+</span><span class='line'>Removing service node_node-app
+</span><span class='line'>Removing network node_nodenet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://github.com/ruanbekker/docker-node-containername">https://github.com/ruanbekker/docker-node-containername</a></li>
+<li><a href="https://hub.docker.com/r/rbekker87/node-containername/">https://hub.docker.com/r/rbekker87/node-containername/</a></li>
+<li><a href="https://medium.com/@nirgn/load-balancing-applications-with-haproxy-and-docker-d719b7c5b231">Resource 1</a> + <a href="http://anokun7.github.io/microservices-demo/">Resource 2</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1788,217 +2047,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/09/09/https-termination-using-letsencrypt-with-traefik-on-docker-swarm/">HTTPS Termination Using LetsEncrypt With Traefik on Docker Swarm</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-09-09T18:40:15-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>9</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>6:40 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="http://obj-cache.cloud.ruanbekker.com/traefik.png" alt="" /></p>
-
-<p>We will setup a HTTPS Termination on Traefik for our Java Web Application using Payara Micro, that will sit behind our Traefik proxy. In this guide, I will be using GitLab&rsquo;s Private Registry for pushing my Images to.</p>
-
-<h2>Traefik Dockerfile:</h2>
-
-<p>Our Traefik Dockerfile:</p>
-
-<figure class='code'><figcaption><span>Traefik Dockerfile</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='docker'><span class='line'><span class="k">FROM</span> traefik
-</span><span class='line'><span class="k">ADD</span> traefik.toml .
-</span><span class='line'><span class="k">EXPOSE</span> <span class="m">80</span>
-</span><span class='line'><span class="k">EXPOSE</span> <span class="m">8080</span>
-</span><span class='line'><span class="k">EXPOSE</span> <span class="m">443</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>traefik.toml</h2>
-
-<p>Our Traefik config: <code>traefik.toml</code></p>
-
-<figure class='code'><figcaption><span>traefik.toml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-</pre></td><td class='code'><pre><code class='toml'><span class='line'><span class="n">defaultEntryPoints</span> <span class="o">=</span> <span class="p">[</span><span class="s">&quot;http&quot;</span><span class="p">,</span> <span class="s">&quot;https&quot;</span><span class="p">]</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">web</span><span class="p">]</span>
-</span><span class='line'><span class="n">address</span> <span class="o">=</span> <span class="s">&quot;:8080&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">entryPoints</span><span class="p">]</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">entryPoints</span><span class="p">.</span><span class="n">http</span><span class="p">]</span>
-</span><span class='line'><span class="n">address</span> <span class="o">=</span> <span class="s">&quot;:80&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">entryPoints</span><span class="p">.</span><span class="n">https</span><span class="p">]</span>
-</span><span class='line'><span class="n">address</span> <span class="o">=</span> <span class="s">&quot;:443&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">entryPoints</span><span class="p">.</span><span class="n">https</span><span class="p">.</span><span class="n">tls</span><span class="p">]</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">acme</span><span class="p">]</span>
-</span><span class='line'><span class="n">email</span> <span class="o">=</span> <span class="s">&quot;recipient@domain.com&quot;</span>
-</span><span class='line'><span class="n">storage</span> <span class="o">=</span> <span class="s">&quot;acme.json&quot;</span>
-</span><span class='line'><span class="n">entryPoint</span> <span class="o">=</span> <span class="s">&quot;https&quot;</span>
-</span><span class='line'><span class="n">onDemand</span> <span class="o">=</span> <span class="kc">false</span>
-</span><span class='line'><span class="n">OnHostRule</span> <span class="o">=</span> <span class="kc">true</span>
-</span><span class='line'>
-</span><span class='line'><span class="p">[</span><span class="n">docker</span><span class="p">]</span>
-</span><span class='line'><span class="n">endpoint</span> <span class="o">=</span> <span class="s">&quot;unix:///var/run/docker.sock&quot;</span>
-</span><span class='line'><span class="n">domain</span> <span class="o">=</span> <span class="s">&quot;apps.domain.com&quot;</span>
-</span><span class='line'><span class="n">watch</span> <span class="o">=</span> <span class="kc">true</span>
-</span><span class='line'><span class="n">exposedbydefault</span> <span class="o">=</span> <span class="kc">false</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Build the Image:</h2>
-
-<p>Login to GitLab&rsquo;s Registry, build and push the image:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker login registry.gitlab.com
-</span><span class='line'><span class="nv">$ </span>docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/traefik:latest .
-</span><span class='line'><span class="nv">$ </span>docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/traefik:latest
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Traefik:</h2>
-
-<p>Create the Traefik Proxy Service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create <span class="se">\</span>
-</span><span class='line'>--name traefik <span class="se">\</span>
-</span><span class='line'>--constraint <span class="s1">&#39;node.role==manager&#39;</span> <span class="se">\</span>
-</span><span class='line'>--publish 80:80 <span class="se">\</span>
-</span><span class='line'>--publish 443:443 <span class="se">\</span>
-</span><span class='line'>--publish 8080:8080 <span class="se">\</span>
-</span><span class='line'>--mount <span class="nb">type</span><span class="o">=</span><span class="nb">bind</span>,source<span class="o">=</span>/var/run/docker.sock,target<span class="o">=</span>/var/run/docker.sock <span class="se">\</span>
-</span><span class='line'>--network appnet <span class="se">\</span>
-</span><span class='line'>--with-registry-auth registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/traefik:latest <span class="se">\</span>
-</span><span class='line'>--docker <span class="se">\</span>
-</span><span class='line'>--docker.swarmmode <span class="se">\</span>
-</span><span class='line'>--docker.domain<span class="o">=</span>apps.domain.com <span class="se">\</span>
-</span><span class='line'>--docker.watch <span class="se">\</span>
-</span><span class='line'>--logLevel<span class="o">=</span>DEBUG <span class="se">\</span>
-</span><span class='line'>--web
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Java Web Application:</h2>
-
-<p>Our Java Web Applications Dockerfile:</p>
-
-<figure class='code'><figcaption><span>Dockerfile</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='docker'><span class='line'><span class="k">FROM</span> payara/micro
-</span><span class='line'>COPY app.war /opt/payara/deployments/app.war
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Build and Push the Image to our GitLab Registry:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/java_web:latest .
-</span><span class='line'><span class="nv">$ </span>docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/java_web:latest
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the Java Web Application on Docker Swarm, specifiying our <code>Host</code>, and also a <code>PathPrefix</code>, so that the Traefik Proxy can accept requests for the <code>Hostname</code>, and anything from <code>/app/</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create <span class="se">\</span>
-</span><span class='line'>--name java_web <span class="se">\</span>
-</span><span class='line'>--label <span class="s1">&#39;traefik.port=8080&#39;</span> <span class="se">\</span>
-</span><span class='line'>--label traefik.frontend.rule<span class="o">=</span><span class="s2">&quot;Host:apps.domain.com; PathPrefix: /app/&quot;</span> <span class="se">\</span>
-</span><span class='line'>--network appnet <span class="se">\</span>
-</span><span class='line'>--with-registry-auth registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/java_web:latest
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we should be able to access our Web Application on <code>https://apps.domain.com/app/</code></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://gist.github.com/nknapp/20c7cd89f1f128b8425dd89cbad0b802">https://gist.github.com/nknapp/20c7cd89f1f128b8425dd89cbad0b802</a></li>
-<li><a href="https://niels.nu/blog/2017/traefik-https-letsencrypt.html">https://niels.nu/blog/2017/traefik-https-letsencrypt.html</a></li>
-</ul>
-
-
-<center>
-        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/11">&larr; Older</a>
@@ -2016,6 +2064,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/08/03/hello-world-web-app-with-java-springboot-and-maven/">Hello World Web App With Java Springboot and Maven</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/07/20/hello-world-ruby-on-rails-app-tutorial-using-mac/">Hello World Ruby on Rails App Tutorial Using Mac</a>
       </li>
     
@@ -2029,10 +2081,6 @@
     
       <li class="post">
         <a href="/blog/2018/07/08/setup-a-lamp-stack-with-ansible-using-ubuntu/">Setup a LAMP Stack With Ansible Using Ubuntu</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/07/08/getting-started-with-ansible-on-ubuntu/">Getting Started With Ansible on Ubuntu</a>
       </li>
     
   </ul>

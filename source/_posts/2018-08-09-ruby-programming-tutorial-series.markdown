@@ -6,7 +6,7 @@ comments: true
 categories: ["ruby", "programming", "ruby-tutorial-series"]
 ---
 
-![](https://objects.ruanbeker.com/assets/images/ruby-tutorial-logo.png)
+![](https://objects.ruanbekker.com/assets/images/ruby-tutorial-logo.png)
 
 Welcome! This will be a multi post ruby tutorial programming series, as I am on a mission learning ruby.
 

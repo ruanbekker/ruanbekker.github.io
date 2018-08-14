@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-08-09T22:04:18-04:00</updated>
+  <updated>2018-08-14T17:10:20-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,468 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Tutorial on DynamoDB Using Bash and the AWS CLI Tools to Interact With a Music Dataset]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/08/14/tutorial-on-dynamodb-using-bash-and-the-aws-cli-tools-to-interact-with-a-music-dataset/"/>
+    <updated>2018-08-14T16:33:22-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/08/14/tutorial-on-dynamodb-using-bash-and-the-aws-cli-tools-to-interact-with-a-music-dataset</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/aws-logo.png" alt="" /></p>
+
+<p>In this tutorial we will be using Amazons DynamoDB (DynamoDB Local) to host a sample dataset consisting of music data that I retrieved from the iTunes API, which we will be using the aws cli tools to interact with the data.</p>
+
+<p>We will be doing the following:</p>
+
+<ul>
+<li>Use Docker to provision a Local DynamoDB Server</li>
+<li>Create a DynamoDB Table with a Hash and Range Key</li>
+<li>List the Table</li>
+<li>Create a Item in DynamoDB</li>
+<li>Read a Item from DynamoDB</li>
+<li>Read a Item from DynamoDB by specifying the details you would like to read</li>
+<li>Batch Write multiple items to DynamoDB</li>
+<li>Scan all your Items from DynamoDB</li>
+<li>Query by Artist</li>
+<li>Query by Artist and Song</li>
+<li>Query all the Songs from an Artist starting with a specific letter</li>
+<li>Indexes</li>
+<li>Delete the Table</li>
+</ul>
+
+
+<p>If you are just getting started with DynamoDB, I recommend having a look at <a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Introduction.html">Amazons DynamoDB Documentation</a> Page first.</p>
+
+<h2>The Music Dataset:</h2>
+
+<p>I used the <a href="https://affiliate.itunes.apple.com/resources/documentation/itunes-store-web-service-search-api/">iTunes API</a> to get the music metadata, but I also have a post on <a href="http://blog.ruanbekker.com/blog/2018/05/08/use-python-requests-to-interact-with-the-itunes-api-to-search-for-music-info/">how to query the iTunes API</a> to get data from them to use.</p>
+
+<p>a Quick way in Python to get the top 10 songs from Guns and Roses, will look like this:</p>
+
+<pre><code class="python">&gt;&gt;&gt; a = 'https://itunes.apple.com/search?term=guns+and+roses&amp;limit=10'
+&gt;&gt;&gt; b = requests.get(a).json()
+&gt;&gt;&gt; print(json.dumps(b, indent=2))
+</code></pre>
+
+<h2>Create the DynamoDB Local Server on Docker:</h2>
+
+<p>If you have a AWS Account you can provision your table from there, but if you want to test it locally, you can provision a local DynamoDB Server using Docker:</p>
+
+<pre><code>$ docker run -it -p 8000:8000 --name dynamodb-local rbekker87/dynamodb-local
+</code></pre>
+
+<h2>Install the AWS CLI Tools:</h2>
+
+<pre><code class="bash">$ pip install awscli
+$ aws configure
+# you can enter random data if you are using dynamodb-local
+</code></pre>
+
+<h2>Create the DynamoDB Table:</h2>
+
+<p>Create a DynamoDB Table named <code>MusicCollection</code> with a <code>Artist (HASH)</code> and <code>SongTitle (RANGE)</code> key attributes:</p>
+
+<pre><code class="bash">$ aws dynamodb create-table --table-name MusicCollection \
+  --attribute-definitions AttributeName=Artist,AttributeType=S AttributeName=SongTitle,AttributeType=S \
+  --key-schema AttributeName=Artist,KeyType=HASH AttributeName=SongTitle,KeyType=RANGE \
+  --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+  --endpoint-url http://localhost:8000
+
+Response:
+{
+    "TableDescription": {
+        "TableArn": "arn:aws:dynamodb:ddblocal:000000000000:table/MusicCollection",
+        "AttributeDefinitions": [
+            {
+                "AttributeName": "Artist",
+                "AttributeType": "S"
+            },
+            {
+                "AttributeName": "SongTitle",
+                "AttributeType": "S"
+            }
+        ],
+        "ProvisionedThroughput": {
+            "NumberOfDecreasesToday": 0,
+            "WriteCapacityUnits": 5,
+            "LastIncreaseDateTime": 0.0,
+            "ReadCapacityUnits": 5,
+            "LastDecreaseDateTime": 0.0
+        },
+        "TableSizeBytes": 0,
+        "TableName": "MusicCollection",
+        "TableStatus": "ACTIVE",
+        "KeySchema": [
+            {
+                "KeyType": "HASH",
+                "AttributeName": "Artist"
+            },
+            {
+                "KeyType": "RANGE",
+                "AttributeName": "SongTitle"
+            }
+        ],
+        "ItemCount": 0,
+        "CreationDateTime": 1525339294.186
+    }
+}
+</code></pre>
+
+<h2>Listing the Tables:</h2>
+
+<p>List the DynamoDB Table that you created:</p>
+
+<pre><code class="bash">$ aws dynamodb list-tables --endpoint-url http://localhost:8000
+
+{
+    "TableNames": [
+        "MusicCollection"
+    ]
+}
+</code></pre>
+
+<h2>Create a Item in DynamoDB:</h2>
+
+<p>Add a song from the band <code>Bring me the Horizon</code> called <code>Sleepwalking</code> from the album <code>Sempiternal</code> to the table by using the <code>PutItem</code> call:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 put-item --table-name MusicCollection \
+  --item '{"Artist": {"S": "Bring me the Horizon"}, "SongTitle": {"S": "Sleepwalking"}, "AlbumTitle": {"S": "Sempiternal"}}'
+</code></pre>
+
+<h2>Read a Item from DynamoDB</h2>
+
+<p>Get the Song Details from the Table by using the <code>GetItem</code> call:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 get-item --table-name MusicCollection \
+  --key  '{"Artist": {"S": "Bring me the Horizon"}, "SongTitle": {"S": "Sleepwalking"}}'
+
+{
+    "Item": {
+        "Artist": {
+            "S": "Bring me the Horizon"
+        },
+        "SongTitle": {
+            "S": "Sleepwalking"
+        },
+        "AlbumTitle": {
+            "S": "Sempiternal"
+        }
+    }
+}
+</code></pre>
+
+<p>To only get specific attributes we can use <code>--aatributes-to-get</code>:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 get-item --table-name MusicCollection \
+  --attributes-to-get '["AlbumTitle", "SongTitle"]' \
+  --key  '{"Artist": {"S": "Bring me the Horizon"}, "SongTitle": {"S": "Sleepwalking"}}'
+
+{
+    "Item": {
+        "SongTitle": {
+            "S": "Sleepwalking"
+        },
+        "AlbumTitle": {
+            "S": "Sempiternal"
+        }
+    }
+}
+</code></pre>
+
+<p>However, AWS Recommends to use the <code>--projection-expression</code> parameter:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 get-item --table-name MusicCollection \
+  --projection-expression "AlbumTitle, SongTitle" \
+  --key  '{"Artist": {"S": "Bring me the Horizon"}, "SongTitle": {"S": "Sleepwalking"}}'
+
+{
+    "Item": {
+        "SongTitle": {
+            "S": "Sleepwalking"
+        },
+        "AlbumTitle": {
+            "S": "Sempiternal"
+        }
+    }
+}
+</code></pre>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LegacyConditionalParameters.AttributesToGet.html">https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LegacyConditionalParameters.AttributesToGet.html</a></li>
+</ul>
+
+
+<h2>Batch Write</h2>
+
+<p>Now lets use the <a href="https://affiliate.itunes.apple.com/resources/documentation/itunes-store-web-service-search-api/">iTunes API</a> to get a collection of some songs, which I will dump into a <a href="https://github.com/ruanbekker/dynamodb-local-docker/blob/master/demo/batch-write-songs.json">json file on github</a>. So now that we have a json file with a collection of songs from multiple artists, we can go ahead and write it into our table using the <code>BatchWriteItem</code> call:</p>
+
+<pre><code class="bash">$ wget https://raw.githubusercontent.com/ruanbekker/dynamodb-local-docker/master/demo/batch-write-songs.json
+$ aws dynamodb batch-write-item --request-items file://music-table/batch-write-songs.json --endpoint-url http://localhost:8000
+</code></pre>
+
+<h2>Scan the Table:</h2>
+
+<p>This can be a very expensive call, as a <code>Scan</code> will return all the items from your table, and depending on the size of your table, you could be throttled, but since we are using dynamodb local and only having 16 items in our table, we can do a scan to return all the items in our table:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 scan --table-name MusicCollection
+{
+    "Count": 16,
+</code></pre>
+
+<h2>Query</h2>
+
+<p>Let&rsquo;s start using the <code>Query</code> call to get all the songs from the Artist: AC/DC</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LegacyConditionalParameters.QueryFilter.html">https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LegacyConditionalParameters.QueryFilter.html</a></li>
+</ul>
+
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 query --select ALL_ATTRIBUTES \
+  --table-name MusicCollection \
+  --key-condition-expression "Artist = :a" \
+  --expression-attribute-values  '{":a":{"S":"AC/DC"}}'
+
+{
+    "Count": 3,
+    "Items": [
+        {
+            "Artist": {
+                "S": "AC/DC"
+            },
+            "SongTitle": {
+                "S": "Back In Black"
+            },
+            "AlbumTitle": {
+                "S": "Back In Black"
+            }
+        },
+        {
+            "Artist": {
+                "S": "AC/DC"
+            },
+            "SongTitle": {
+                "S": "Thunderstruck"
+            },
+            "AlbumTitle": {
+                "S": "The Razors Edge"
+            }
+        },
+        {
+            "Artist": {
+                "S": "AC/DC"
+            },
+            "SongTitle": {
+                "S": "You Shook Me All Night Long"
+            },
+            "AlbumTitle": {
+                "S": "Back in Black"
+            }
+        }
+    ],
+    "ScannedCount": 3,
+    "ConsumedCapacity": null
+}
+</code></pre>
+
+<p>Query to get the details of a specific Song from a specific Artist:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 query --select ALL_ATTRIBUTES \
+  --table-name MusicCollection \
+  --key-condition-expression "Artist = :a and SongTitle = :t" \
+  --expression-attribute-values  '{ ":a": {"S": "AC/DC"}, ":t": {"S": "You Shook Me All Night Long"}}'
+
+{
+    "Count": 1,
+    "Items": [
+        {
+            "Artist": {
+                "S": "AC/DC"
+            },
+            "SongTitle": {
+                "S": "You Shook Me All Night Long"
+            },
+            "AlbumTitle": {
+                "S": "Back in Black"
+            }
+        }
+    ],
+    "ScannedCount": 1,
+    "ConsumedCapacity": null
+}
+</code></pre>
+
+<p>Query to get all the songs from the Beatles that starts with the letter &lsquo;H&rsquo;:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 query --select ALL_ATTRIBUTES \
+  --table-name MusicCollection \
+  --key-condition-expression "Artist = :a and begins_with(SongTitle, :t)" \
+  --expression-attribute-values  '{":a":{"S":"The Beatles"}, ":t": {"S": "h"}}'
+
+{
+    "Count": 2,
+    "Items": [
+        {
+            "Artist": {
+                "S": "The Beatles"
+            },
+            "SongTitle": {
+                "S": "Happy Day"
+            },
+            "AlbumTitle": {
+                "S": "The Beatles 1967-1970 (The Blue Album)"
+            }
+        },
+        {
+            "Artist": {
+                "S": "The Beatles"
+            },
+            "SongTitle": {
+                "S": "Help!"
+            },
+            "AlbumTitle": {
+                "S": "The Beatles Box Set"
+            }
+        }
+    ],
+    "ScannedCount": 2,
+    "ConsumedCapacity": null
+}
+</code></pre>
+
+<p>So our table consists of Artist (HASH) and SongTitle (RANGE), so we can only query based on those attributes. You will find when you try to query on a attribute that is not part of the KeySchema, a exception will be received:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 query --select ALL_ATTRIBUTES --table-name MusicCollection --key-condition-expression "Artist = :a and AlbumTitle = :t" --expression-attribute-values  '{":a":{"S":"AC/DC"}, ":t": {"S": "Back in Black"}}'
+
+An error occurred (ValidationException) when calling the Query operation: Query condition missed key schema element
+</code></pre>
+
+<p>So how do we query on a attribute that is not part of the KeySchema? Let&rsquo;s say you want to query all the songs from a Artist and a specific Album.</p>
+
+<h2>Global Secondary Indexes:</h2>
+
+<p>Add Global Secondary Index, with the Attributes: Artist and AlbumTitle.</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 update-table --table-name MusicCollection \
+  --attribute-definitions AttributeName=Artist,AttributeType=S AttributeName=SongTitle,AttributeType=S AttributeName=AlbumTitle,AttributeType=S \
+  --global-secondary-index-updates "Create={"IndexName"="album-index", "KeySchema"=[ {"AttributeName"="Artist", "KeyType"="HASH"}, {"AttributeName"="AlbumTitle", "KeyType"="RANGE" }], "Projection"={"ProjectionType"="INCLUDE", "NonKeyAttributes"="AlbumTitle"}, "ProvisionedThroughput"= {"ReadCapacityUnits"=1, "WriteCapacityUnits"=1} }"
+
+{
+    "TableDescription": {
+        "TableArn": "arn:aws:dynamodb:ddblocal:000000000000:table/MusicCollection",
+        "AttributeDefinitions": [
+            {
+                "AttributeName": "Artist",
+                "AttributeType": "S"
+            },
+            {
+                "AttributeName": "SongTitle",
+                "AttributeType": "S"
+            },
+            {
+                "AttributeName": "AlbumTitle",
+                "AttributeType": "S"
+            }
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "album-index",
+                "Projection": {
+                    "ProjectionType": "INCLUDE",
+                    "NonKeyAttributes": [
+                        "AlbumTitle"
+                    ]
+                },
+                "ProvisionedThroughput": {
+                    "WriteCapacityUnits": 1,
+                    "ReadCapacityUnits": 1
+                },
+                "IndexStatus": "CREATING",
+                "Backfilling": false,
+                "KeySchema": [
+                    {
+                        "KeyType": "HASH",
+                        "AttributeName": "Artist"
+                    },
+                    {
+                        "KeyType": "RANGE",
+                        "AttributeName": "AlbumTitle"
+                    }
+                ],
+                "IndexArn": "arn:aws:dynamodb:ddblocal:000000000000:table/MusicCollection/index/album-index"
+            }
+        ],
+        "ProvisionedThroughput": {
+            "NumberOfDecreasesToday": 0,
+            "WriteCapacityUnits": 5,
+            "LastIncreaseDateTime": 0.0,
+            "ReadCapacityUnits": 5,
+            "LastDecreaseDateTime": 0.0
+        },
+        "TableSizeBytes": 984,
+        "TableName": "MusicCollection",
+        "TableStatus": "ACTIVE",
+        "KeySchema": [
+            {
+                "KeyType": "HASH",
+                "AttributeName": "Artist"
+            },
+            {
+                "KeyType": "RANGE",
+                "AttributeName": "SongTitle"
+            }
+        ],
+        "ItemCount": 15,
+        "CreationDateTime": 1525339294.186
+    }
+}
+</code></pre>
+
+<p>Now when we use the same query, but we specify our index, we will get the data:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 query \
+  --select ALL_ATTRIBUTES \
+  --table-name MusicCollection \
+  --index-name album-index \
+  --key-condition-expression "Artist = :a and AlbumTitle = :t" \
+  --expression-attribute-values  '{":a":{"S":"AC/DC"}, ":t": {"S": "Back in Black"}}'
+
+{
+    "Count": 1,
+    "Items": [
+        {
+            "Artist": {
+                "S": "AC/DC"
+            },
+            "SongTitle": {
+                "S": "You Shook Me All Night Long"
+            },
+            "AlbumTitle": {
+                "S": "Back in Black"
+            }
+        }
+    ],
+    "ScannedCount": 1,
+    "ConsumedCapacity": null
+}
+</code></pre>
+
+<h2>Delete the Table:</h2>
+
+<p>Delete the Table that we created:</p>
+
+<pre><code class="bash">$ aws dynamodb --endpoint-url http://localhost:8000 delete-table --table-name MusicCollection
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SQLtoNoSQL.ReadData.Query.html">https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SQLtoNoSQL.ReadData.Query.html</a></li>
+<li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SQLtoNoSQL.Indexes.html">https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SQLtoNoSQL.Indexes.html</a></li>
+<li><a href="https://affiliate.itunes.apple.com/resources/documentation/itunes-store-web-service-search-api/">https://affiliate.itunes.apple.com/resources/documentation/itunes-store-web-service-search-api/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Build a REST API War File for Payara With Java Springboot and Maven Part 1]]></title>
@@ -833,210 +1295,6 @@ Transfer-Encoding: chunked
 </code></pre>
 
 <p>Works like a charm! Traefik FTW!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Manage Scaleway Instances via Their API Like a Boss With Their Command Line Tool Scw]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/05/09/manage-scaleway-instances-via-their-api-like-a-boss-with-their-command-line-tool-scw/"/>
-    <updated>2018-05-09T12:31:11-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/05/09/manage-scaleway-instances-via-their-api-like-a-boss-with-their-command-line-tool-scw</id>
-    <content type="html"><![CDATA[<p><img src="https://preview.ibb.co/bBRhn7/scw.png" alt="" /></p>
-
-<p>Let&rsquo;s set things straight: I am a command line fan boy, If I can do the things I have to do with a command line interface, i&rsquo;m happy! And that means automation ftw! :D</p>
-
-<h2>Scaleway Command Line Interface:</h2>
-
-<p>I have been using Scaleway for about 2 years now, and absolutely loving their services! So I recently found their <a href="https://github.com/scaleway/scaleway-cli">command line interface utility: scw</a>, which is written in golang and has a very similar feel to docker.</p>
-
-<h2>Install the SCW CLI Tool:</h2>
-
-<p>A golang environment is needed and I will be using docker to drop myself into a golang environment and then install the scw utility:</p>
-
-<pre><code class="bash">$ docker run -it golang:alpine sh
-$ apk update
-$ apk add openssl git openssh curl
-$ go get -u github.com/scaleway/scaleway-cli/cmd/scw
-</code></pre>
-
-<p>Verify that it was installed:</p>
-
-<pre><code class="bash">$ scw --version
-scw version v1.16+dev, build
-</code></pre>
-
-<p>Awesome sauce!</p>
-
-<h2>Authentication:</h2>
-
-<p>When we authenticate to Scaleway, it will prompt you to upload your public ssh key, as I am doing this in a container I have no ssh keys, so therefore will generate one before I authenticate.</p>
-
-<p>Generate the SSH Key:</p>
-
-<pre><code class="bash">$ ssh-keygen -t rsa
-Generating public/private rsa key pair.
-Enter file in which to save the key (/root/.ssh/id_rsa):
-Enter passphrase (empty for no passphrase):
-Enter same passphrase again:
-Your identification has been saved in /root/.ssh/id_rsa.
-Your public key has been saved in /root/.ssh/id_rsa.pub.
-</code></pre>
-
-<p>Now loging to Scaleway using the cli tools:</p>
-
-<pre><code class="bash">$ scw login
-Login (cloud.scaleway.com): &lt;youremail@domain.com&gt;
-Password:
-Do you want to upload an SSH key ?
-[0] I don't want to upload a key !
-[1] id_rsa.pub
-Which [id]: 1
-
-You are now authenticated on Scaleway.com as Ruan.
-You can list your existing servers using `scw ps` or create a new one using `scw run ubuntu-xenial`.
-You can get a list of all available commands using `scw -h` and get more usage examples on github.com/scaleway/scaleway-cli.
-Happy cloud riding.
-</code></pre>
-
-<p>Sweeet!</p>
-
-<p><img src="https://pics.me.me/hacker-voice-im-in-24303160.png" alt="" /></p>
-
-<h2>Getting Info from Scaleway</h2>
-
-<p>List Instance Types:</p>
-
-<pre><code class="bash">$ scw products servers
-COMMERCIAL TYPE     ARCH     CPUs      RAM  BAREMETAL
-ARM64-128GB        arm64       64   137 GB      false
-ARM64-16GB         arm64       16    17 GB      false
-ARM64-2GB          arm64        4   2.1 GB      false
-ARM64-32GB         arm64       32    34 GB      false
-ARM64-4GB          arm64        6   4.3 GB      false
-ARM64-64GB         arm64       48    69 GB      false
-ARM64-8GB          arm64        8   8.6 GB      false
-C1                   arm        4   2.1 GB       true
-C2L               x86_64        8    34 GB       true
-C2M               x86_64        8    17 GB       true
-C2S               x86_64        4   8.6 GB       true
-START1-L          x86_64        8   8.6 GB      false
-START1-M          x86_64        4   4.3 GB      false
-START1-S          x86_64        2   2.1 GB      false
-START1-XS         x86_64        1   1.1 GB      false
-VC1L              x86_64        6   8.6 GB      false
-VC1M              x86_64        4   4.3 GB      false
-VC1S              x86_64        2   2.1 GB      false
-X64-120GB         x86_64       12   129 GB      false
-X64-15GB          x86_64        6    16 GB      false
-X64-30GB          x86_64        8    32 GB      false
-X64-60GB          x86_64       10    64 GB      false
-</code></pre>
-
-<p>Get a list of available Images, in my case I am just looking for Ubuntu:</p>
-
-<pre><code class="bash">$ scw images | grep -i ubuntu
-Ubuntu_Bionic               latest              a21bb700            11 days             [ams1 par1]         [x86_64]
-Ubuntu_Mini_Xenial_25G      latest              bc75c00b            13 days             [ams1 par1]         [x86_64]
-</code></pre>
-
-<p>List Running Instances:</p>
-
-<pre><code class="bash">$ scw ps
-SERVER ID           IMAGE                       ZONE                CREATED             STATUS              PORTS               NAME                  COMMERCIAL TYPE
-abc123de            Ubuntu_Xenial_16_04_lates   ams1                5 weeks             running             xx.xx.xx.xx         scw-elasticsearch-01  ARM64-4GB
-abc456de            ruan-docker-swarm-17_03     par1                10 months           running             xx.xx.xxx.xxx       scw-swarm-manager-01  VC1M
-...
-</code></pre>
-
-<p>List All Instances (Running, Stopped, Started, etc):</p>
-
-<pre><code class="bash">$ scw ps -a
-SERVER ID           IMAGE                       ZONE                CREATED             STATUS              PORTS               NAME                  COMMERCIAL TYPE
-abc123df            Ubuntu_Xenial_16_04_lates   ams1                5 weeks             stopped             xx.xx.xx.xx         scw-elasticsearch-02  ARM64-4GB
-...
-</code></pre>
-
-<p>List Instances with a filter based on its name:</p>
-
-<pre><code class="bash">$ scw ps -f name=scw-swarm-worker-02
-SERVER ID           IMAGE               ZONE                CREATED             STATUS              PORTS               NAME                COMMERCIAL TYPE
-1234abcd            Ubuntu_Xenial       par1                8 minutes           running             xx.xx.xxx.xxx       scw-swarm-worker-2  START1-XS
-</code></pre>
-
-<p>List the Latest Instance that was created:</p>
-
-<pre><code class="bash">$ scw ps -l
-SERVER ID           IMAGE               ZONE                CREATED             STATUS              PORTS               NAME                COMMERCIAL TYPE
-1234abce            Ubuntu_Xenial       par1                6 minutes           running             xx.xx.xxx.xxx       scw-swarm-worker-3  START1-XS
-</code></pre>
-
-<h2>Create Instances:</h2>
-
-<p>In my scenario, I would like to create a instance named <code>docker-swarm-worker-4</code> with the instance type <code>START1-XS</code> in the Paris datacenter, and I will be using my key that I have uploaded, also the image id that I passed, was retrieved when listing for images:</p>
-
-<pre><code class="bash">$ scw --region=par1 create --commercial-type=START1-XS --ip-address=dynamic --ipv6=false --name="docker-swarm-worker-4" --tmp-ssh-key=false  bc75c00b
-&lt;response: random uuid string&gt;
-</code></pre>
-
-<p>Now that the instance is created, we can start it by calling either the name or the id:</p>
-
-<pre><code class="bash">$ scw start docker-swarm-worker-4
-</code></pre>
-
-<p>To verify the status of the instance, we can do:</p>
-
-<pre><code class="bash">$ scw ps -l
-SERVER ID           IMAGE               ZONE                CREATED             STATUS              PORTS               NAME                   COMMERCIAL TYPE
-102abc34            Ubuntu_Xenial                           28 seconds          starting                                docker-swarm-worker-4  START1-XS
-</code></pre>
-
-<p>At this moment it is still starting, after waiting a minute or so, run it again:</p>
-
-<pre><code class="bash">$ scw ps -l
-SERVER ID           IMAGE               ZONE                CREATED             STATUS              PORTS               NAME                   COMMERCIAL TYPE
-102abc34            Ubuntu_Xenial       par1                About a minute      running             xx.xx.xx.xx         docker-swarm-worker-4  START1-XS
-</code></pre>
-
-<p>As we can see its in a running state, so we are good to access our instance. You have 2 options to access your server, via exec and ssh.</p>
-
-<pre><code>$ scw exec docker-swarm-worker-4 /bin/bash
-root@docker-swarm-worker-4:~
-</code></pre>
-
-<p>or via SSH:</p>
-
-<pre><code>$ ssh root@xx.xx.xx.xx
-root@docker-swarm-worker-4:~
-</code></pre>
-
-<p>If you would like to access your server without uploading your SSH key to your account, you can pass <code>--tmp-ssh-key=true</code> as in:</p>
-
-<pre><code class="bash">$ scw --region=par1 create --commercial-type=START1-XS --ip-address=dynamic --ipv6=false --name="scw-temp-instance" --tmp-ssh-key=true  bc75c00b
-</code></pre>
-
-<h2>Terminating Resources:</h2>
-
-<p>This wil stop, terminate the instance with the associated volumes and reserved ip</p>
-
-<pre><code class="bash">$ scw stop --terminate=true scw-temp-instance 
-scw-temp-instance
-</code></pre>
-
-<p>If you had to remove a volume that is not needed, or unused:</p>
-
-<pre><code>$ scw rmi test-1-snapshot-&lt;long-string&gt;--2018-04-26_12:42
-</code></pre>
-
-<p>To logout:</p>
-
-<pre><code class="bash">$ scw logout
-</code></pre>
-
-<h2>Resources:</h2>
-
-<p>Have a look at <a href="https://github.com/scaleway/scaleway-cli">Scaleway-CLI Documentation</a> and their <a href="https://www.scaleway.com/">Website</a> for more info, and have a look at their new <code>START1-XS</code> instance types, that is only 1.99 Euro&rsquo;s, that is insane!</p>
-
-<p>Personally love what they are doing, feel free to head over to their <a href="https://www.scaleway.com/pricing/">pricing page</a> to see some sweet deals!</p>
 ]]></content>
   </entry>
   

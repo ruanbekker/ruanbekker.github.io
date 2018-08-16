@@ -23,6 +23,12 @@ Its also good to note that our NFS Server will be a single point of failure, the
 
 Setup the NFS Server
 
+*Update:*
+
+In order for the containers to be able to change permissions, you need to set `(rw,async,no_subtree_check,no_wdelay,crossmnt,insecure,all_squash,insecure_locks,sec=sys,anonuid=0,anongid=0)`
+
+- https://github.com/rancher/rancher/issues/6452
+
 ```bash
 $ sudo apt-get install nfs-kernel-server nfs-common -y
 $ mkdir /vol

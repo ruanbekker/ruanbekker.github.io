@@ -55,6 +55,19 @@ volumes:
     external: true
 ```
 
+Environment Variables for the MySQL Docker image is:
+
+```
+- MYSQL_ROOT_PASSWORD
+- MYSQL_DATABASE
+- MYSQL_USER, MYSQL_PASSWORD
+- MYSQL_ALLOW_EMPTY_PASSWORD
+- MYSQL_RANDOM_ROOT_PASSWORD
+- MYSQL_ONETIME_PASSWORD
+```
+
+More info can be viewed on this resource: [hub.docker.com/_/mysql/](https://hub.docker.com/_/mysql/)
+
 ## Pre-Requirements:
 
 Let's create our pre-requirement:
@@ -145,3 +158,8 @@ Removing mysql_db_1           ... done
 Removing mysql_adminer_1      ... done
 Network docknet is external, skipping
 ```
+
+## Resources:
+
+- https://hub.docker.com/_/mysql/
+

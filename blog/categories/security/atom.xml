@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Security | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/security/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-08-20T02:21:02-04:00</updated>
+  <updated>2018-08-20T04:22:55-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,229 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using IAM Authentication With Amazon Elasticsearch Service]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service/"/>
+    <updated>2018-08-20T04:12:21-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service</id>
+    <content type="html"><![CDATA[<p>Today I will demonstrate how to allow access to Amazons Elasticsearch Service using IAM Authenticationi using AWS Signature Version4.</p>
+
+<h2>Elasticsearch Service Authentication Support:</h2>
+
+<p>When it comes to security, Amazons Elasticsearch Service supports three types of access policies:</p>
+
+<ul>
+<li>Resource Based</li>
+<li>Identity Based</li>
+<li>IP Access Based</li>
+</ul>
+
+
+<p>More information on this can be found below:
+- <a href="https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html">https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html</a></p>
+
+<h2>Securing your Amazon Elasticsearch Search Domain:</h2>
+
+<p>To secure your domain with IAM Based Authentication, the following steps will be neeed:</p>
+
+<ul>
+<li>Create IAM Policy to be associated with a IAM User or Role</li>
+<li>On Elasticsearch Access Policy, associate the ARN to the Resource</li>
+<li>Use the AWS4Auth package to sign the requests as AWS supports Signature Version 4</li>
+</ul>
+
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "es:*"
+            ],
+            "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;"
+        }
+    ]
+}
+</code></pre>
+
+<p>Create the IAM Role with EC2 Identity Provider as a Trusted Relationship eg. es-role and associate the IAM Policy es-policy to the role.</p>
+
+<p>Create/Moodify the Elasticsearch Access Policy, in this example we will be using a combination of IAM Role, IAM User and IP Based access:</p>
+
+<ul>
+<li>IAM Role for EC2 Role Based Services</li>
+<li>IAM User for User/System Account</li>
+<li>IP Based for cients that needs to be whitelisted via IP (ip-based just for demonstration, as the tests will be used only for IAM)</li>
+</ul>
+
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::&lt;ACCOUNT-ID&gt;:role/&lt;IAM-ROLE-NAME&gt;",
+          "arn:aws:iam::&lt;ACCOUNT-ID&gt;:user/&lt;IAM-USER-NAME&gt;"
+        ]
+      },
+      "Action": "es:*",
+      "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;/*"
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "*"
+      },
+      "Action": "es:*",
+      "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;/*",
+      "Condition": {
+        "IpAddress": {
+          "aws:SourceIp": [
+            "x.x.x.x",
+            "x.x.x.x"
+          ]
+        }
+      }
+    }
+  ]
+}
+</code></pre>
+
+<p>After the Access Policy has been updated, the Elasticsearch Domain Status will show <code>Active</code></p>
+
+<h2>Testing from EC2 using IAM Instance Profile:</h2>
+
+<p>Launch a EC2 Instance with the IAM Role eg. es-role, then using Python, we will make a request to our Elasticsearch Domain using boto3, aws4auth and the native elasticsearch client for python via our IAM Role, which we will get the temporary credentials from boto3.Session:</p>
+
+<pre><code class="python">import boto3, json
+from elasticsearch import Elasticsearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
+my_region = 'eu-west-1'
+my_servuce = 'es'
+my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
+
+session = boto3.Session(region_name='eu-west-1')
+credentials = session.get_credentials()
+credentials = credentials.get_frozen_credentials()
+access_key = credentials.access_key
+secret_key = credentials.secret_key
+token = credentials.token
+
+aws_auth = AWS4Auth(
+    access_key,
+    secret_key,
+    my_region,
+    my_service,
+    session_token=token
+)
+
+es = Elasticsearch(
+    hosts = [{'host': my_eshost, 'port': 443}],
+    http_auth=aws_auth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection
+)
+
+print(json.dumps(es.info(), indent=2))
+</code></pre>
+
+<p>Running our piece of code, will result in this:</p>
+
+<pre><code class="bash">$ python get-info-from-role.py
+{
+  "cluster_name": "&lt;ACCOUNT-ID&gt;:&lt;ES-DOMAIN&gt;",
+  "cluster_uuid": "sLUnqFSsQdCMlBLrn7BTUA",
+  "version": {
+    "lucene_version": "6.6.0",
+    "build_hash": "Unknown",
+    "build_snapshot": false,
+    "number": "5.5.2",
+    "build_date": "2017-10-18T04:35:01.381Z"
+  },
+  "name": "KXSwBvT",
+  "tagline": "You Know, for Search"
+}
+</code></pre>
+
+<h2>Testing using IAM Credentials from Credentials Provider:</h2>
+
+<p>Configure your credentials provider:</p>
+
+<pre><code class="bash">$ pip install awscli
+$ aws configure --profile ruan
+AWS Access Key ID [None]: xxxxxxxxx
+AWS Secret Access Key [None]: xxxxxx
+Default region name [None]: eu-west-1
+Default output format [None]: json
+</code></pre>
+
+<p>Using Python, we will get the credentials from the Credential Provider, using our profile name:</p>
+
+<pre><code class="python">import boto3, json
+from elasticsearch import Elasticsearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
+my_service = 'es'
+my_region = 'eu-west-1'
+my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
+
+session = boto3.Session(
+    region_name='eu-west-1',
+    profile_name='ruan'
+)
+
+credentials = session.get_credentials()
+access_key = credentials.access_key
+secret_key = credentials.secret_key
+
+aws_auth = AWS4Auth(
+    access_key,
+    secret_key,
+    my_region,
+    my_service
+)
+
+es = Elasticsearch(
+    hosts = [{'host': my_eshost, 'port': 443}],
+    http_auth=aws_auth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection
+)
+
+print(json.dumps(es.info(), indent=2))
+</code></pre>
+
+<p>Running it will result in:</p>
+
+<pre><code class="bash">$ python get-info-from-user.py
+{
+  "cluster_name": "&lt;ACCOUNT-ID&gt;:&lt;ES-DOMAIN&gt;",
+  "cluster_uuid": "sLUnqFSsQdCMlBLrn7BTUA",
+  "version": {
+    "lucene_version": "6.6.0",
+    "build_hash": "Unknown",
+    "build_snapshot": false,
+    "number": "5.5.2",
+    "build_date": "2017-10-18T04:37:21.381Z"
+  },
+  "name": "KXSwBvT",
+  "tagline": "You Know, for Search"
+}
+</code></pre>
+
+<p>For more blog posts on Elasticsearch have a look at:
+- <a href="http://blog.ruanbekker.com/blog/categories/elasticsearch">blog.ruanbekker.com:elasticsearch</a>
+- <a href="https://sysadmins.co.za/tags/elasticsearch">sysadmins.co.za:elasticsearch</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Add a Authentication Header to Your Python Flask App]]></title>
@@ -283,201 +506,6 @@ print("Decrypted Value: {}".format(response))
 <pre><code class="bash">$ ./decrypt.py asdlaskjdasidausd09q3uoijad09ujd38u309
 Decrypted Value: thisIsMyDecryptedValue
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Nginx Reverse Proxy for Elasticsearch and Kibana 5 on AWS]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/16/nginx-reverse-proxy-for-elasticsearch-and-kibana-5-on-aws/"/>
-    <updated>2017-09-16T17:24:32-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/16/nginx-reverse-proxy-for-elasticsearch-and-kibana-5-on-aws</id>
-    <content type="html"><![CDATA[<p>As up untill today, there&rsquo;s currently no VPC Support for Amazon&rsquo;s Elasticsearch Service.</p>
-
-<p>So for scenarios where you would like to allow private network traffic to Elasticsearch is impossible straight out of the box as Amazon&rsquo;s Elasticsearch Services, only sees Public Internet Traffic.</p>
-
-<p>We will setup 2 configs, one for Kibana and one for Elasticsearch, each one having its own FQDN:</p>
-
-<ul>
-<li>Kibana: <code>http://kibana.domain.com</code></li>
-<li>Elasticsearch: <code>http://elasticsearch.domain.com</code></li>
-</ul>
-
-
-<h2>Workaround:</h2>
-
-<p>There&rsquo;s a couple of workarounds, which includes:</p>
-
-<ul>
-<li>Nginx Reverse Proxy</li>
-<li>NAT Gateway</li>
-<li>Allow IAM Users/Roles</li>
-</ul>
-
-
-<p>Today we will tackle the Nginx Reverse Proxy Route.</p>
-
-<p>The benefit of this, would be to associate an EIP to the Nginx EC2 Instnace, then whitelist your EIP with Elasticsearch, so the only traffic that will be accepted will be the traffic that is coming from the Nginx Instance. We will also apply an additional layer of security, in this case we will use HTTP Basic Authentication, then also authorize network sources on a Security Group level.</p>
-
-<h2>Installing Nginx:</h2>
-
-<p>In this case I am using Ubuntu 16.04, so we will need to install <code>nginx</code> and <code>apache2-utils</code> for creating the Basic HTTP Auth accounts.</p>
-
-<pre><code class="bash">$ apt update &amp;&amp; apt upgrade -y
-$ apt install nginx apache2-utils -y
-</code></pre>
-
-<h2>Configure Nginx:</h2>
-
-<p>Our main config: <code>/etc/nginx/nginx.conf</code>:</p>
-
-<pre><code class="bash /etc/nginx/nginx.conf">user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-error_log /var/log/nginx/error.log;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-
-    # Basic Settings
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    server_names_hash_bucket_size 128;
-
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    # Logging Settings
-        log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-                      '$status $body_bytes_sent "$http_referer" '
-                      '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log /var/log/nginx/access.log main;
-
-    # Gzip Settings
-    gzip on;
-    gzip_disable "msie6";
-
-    # Elasticsearch and Kibana Configs
-    include /etc/nginx/conf.d/elasticsearch.conf;
-    include /etc/nginx/conf.d/kibana.conf;
-}
-</code></pre>
-
-<p>Our <code>/etc/nginx/conf.d/elasticsearch.conf</code> configuration:</p>
-
-<pre><code class="bash /etc/nginx/conf.d/elasticsearch.conf">server {
-
-  listen 80;
-  server_name elasticsearch.domain.com;
-
-  # error logging
-  error_log /var/log/nginx/elasticsearch_error.log;
-
-  # authentication: elasticsearch
-  auth_basic "Elasticsearch Auth";
-  auth_basic_user_file /etc/nginx/.secrets_elasticsearch;
-
-  location / {
-
-    proxy_http_version 1.1;
-    proxy_set_header Host https://search-elasticsearch-name.eu-west-1.es.amazonaws.com;
-    proxy_set_header X-Real-IP &lt;ELASTIC-IP&gt;;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header Authorization "";
-
-    proxy_pass https://search-elasticsearch-name.eu-west-1.es.amazonaws.com/;
-    proxy_redirect https://search-elasticsearch-name.eu-west-1.es.amazonaws.com/ http://&lt;ELASTIC-IP&gt;/;
-
-  }
-
-  # ELB Health Checks
-  location /status {
-    root /usr/share/nginx/html/;
-  }
-
-}
-</code></pre>
-
-<p>Our <code>/etc/nginx/conf.d/kibana.conf</code> configuration:</p>
-
-<pre><code class="bash /etc/nginx/conf.d/kibana.conf">server {
-
-  listen 80;
-  server_name kibana.domain.com;
-
-  # error logging
-  error_log /var/log/nginx/kibana_error.log;
-
-  # authentication: kibana
-  auth_basic "Kibana Auth";
-  auth_basic_user_file /etc/nginx/.secrets_kibana;
-
-  location / {
-
-    proxy_http_version 1.1;
-    proxy_set_header Host https://search.elasticsearch-name.eu-west-1.es.amazonaws.com;
-    proxy_set_header X-Real-IP &lt;ELASTIC-IP&gt;;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header Authorization "";
-
-    proxy_pass https://search.elasticsearch-name.eu-west-1.es.amazonaws.com/_plugin/kibana/;
-    proxy_redirect https://search.elasticsearch-name.eu-west-1.es.amazonaws.com/_plugin/kibana/ http://&lt;ELASTIC-IP&gt;/kibana/;
-
-  }
-
-      location ~ (/app/kibana|/app/timelion|/bundles|/es_admin|/plugins|/api|/ui|/elasticsearch) {
-         proxy_pass              https://search.elasticsearch-name.eu-west-1.es.amazonaws.com;
-         proxy_set_header        Host $host;
-         proxy_set_header        X-Real-IP $remote_addr;
-         proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-         proxy_set_header        X-Forwarded-Proto $scheme;
-         proxy_set_header        X-Forwarded-Host $http_host;
-         proxy_set_header    Authorization  "";
-    }
-}
-</code></pre>
-
-<p>Once you have replaced the elasticsearch endpoint and your EPI values, we can go ahead and create the auth accounts.</p>
-
-<h2>Create User Accounts for HTTP Basic Auth</h2>
-
-<p>Create the 2 accounts for authentication on kibana and elasticsearch:</p>
-
-<pre><code class="bash">$ htpasswd -c /etc/nginx/.secrets_elasticsearch elasticsearch-admin
-$ htpasswd -c /etc/nginx/.secrets_kibana kibana-admin
-</code></pre>
-
-<h2>Restart Nginx:</h2>
-
-<p>Restart and enable Nginx on boot:</p>
-
-<pre><code class="bash">$ systemctl enable nginx
-$ systemctl restart nginx
-</code></pre>
-
-<p>Once your Nginx Service is running, you should be able to access Kibana and Elasticsearch using the credentials that you created.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.nginx.com/blog/tcp-load-balancing-udp-load-balancing-nginx-tips-tricks/">https://www.nginx.com/blog/tcp-load-balancing-udp-load-balancing-nginx-tips-tricks/</a></li>
-<li><a href="https://www.elastic.co/blog/playing-http-tricks-nginx">https://www.elastic.co/blog/playing-http-tricks-nginx</a></li>
-<li><a href="https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/">https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/</a></li>
-</ul>
-
-
-<center>
-<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
-</center>
-
 ]]></content>
   </entry>
   

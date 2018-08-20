@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Iam | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/iam/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-08-20T02:21:02-04:00</updated>
+  <updated>2018-08-20T04:22:55-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,229 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using IAM Authentication With Amazon Elasticsearch Service]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service/"/>
+    <updated>2018-08-20T04:12:21-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service</id>
+    <content type="html"><![CDATA[<p>Today I will demonstrate how to allow access to Amazons Elasticsearch Service using IAM Authenticationi using AWS Signature Version4.</p>
+
+<h2>Elasticsearch Service Authentication Support:</h2>
+
+<p>When it comes to security, Amazons Elasticsearch Service supports three types of access policies:</p>
+
+<ul>
+<li>Resource Based</li>
+<li>Identity Based</li>
+<li>IP Access Based</li>
+</ul>
+
+
+<p>More information on this can be found below:
+- <a href="https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html">https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html</a></p>
+
+<h2>Securing your Amazon Elasticsearch Search Domain:</h2>
+
+<p>To secure your domain with IAM Based Authentication, the following steps will be neeed:</p>
+
+<ul>
+<li>Create IAM Policy to be associated with a IAM User or Role</li>
+<li>On Elasticsearch Access Policy, associate the ARN to the Resource</li>
+<li>Use the AWS4Auth package to sign the requests as AWS supports Signature Version 4</li>
+</ul>
+
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "es:*"
+            ],
+            "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;"
+        }
+    ]
+}
+</code></pre>
+
+<p>Create the IAM Role with EC2 Identity Provider as a Trusted Relationship eg. es-role and associate the IAM Policy es-policy to the role.</p>
+
+<p>Create/Moodify the Elasticsearch Access Policy, in this example we will be using a combination of IAM Role, IAM User and IP Based access:</p>
+
+<ul>
+<li>IAM Role for EC2 Role Based Services</li>
+<li>IAM User for User/System Account</li>
+<li>IP Based for cients that needs to be whitelisted via IP (ip-based just for demonstration, as the tests will be used only for IAM)</li>
+</ul>
+
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::&lt;ACCOUNT-ID&gt;:role/&lt;IAM-ROLE-NAME&gt;",
+          "arn:aws:iam::&lt;ACCOUNT-ID&gt;:user/&lt;IAM-USER-NAME&gt;"
+        ]
+      },
+      "Action": "es:*",
+      "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;/*"
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "*"
+      },
+      "Action": "es:*",
+      "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;/*",
+      "Condition": {
+        "IpAddress": {
+          "aws:SourceIp": [
+            "x.x.x.x",
+            "x.x.x.x"
+          ]
+        }
+      }
+    }
+  ]
+}
+</code></pre>
+
+<p>After the Access Policy has been updated, the Elasticsearch Domain Status will show <code>Active</code></p>
+
+<h2>Testing from EC2 using IAM Instance Profile:</h2>
+
+<p>Launch a EC2 Instance with the IAM Role eg. es-role, then using Python, we will make a request to our Elasticsearch Domain using boto3, aws4auth and the native elasticsearch client for python via our IAM Role, which we will get the temporary credentials from boto3.Session:</p>
+
+<pre><code class="python">import boto3, json
+from elasticsearch import Elasticsearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
+my_region = 'eu-west-1'
+my_servuce = 'es'
+my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
+
+session = boto3.Session(region_name='eu-west-1')
+credentials = session.get_credentials()
+credentials = credentials.get_frozen_credentials()
+access_key = credentials.access_key
+secret_key = credentials.secret_key
+token = credentials.token
+
+aws_auth = AWS4Auth(
+    access_key,
+    secret_key,
+    my_region,
+    my_service,
+    session_token=token
+)
+
+es = Elasticsearch(
+    hosts = [{'host': my_eshost, 'port': 443}],
+    http_auth=aws_auth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection
+)
+
+print(json.dumps(es.info(), indent=2))
+</code></pre>
+
+<p>Running our piece of code, will result in this:</p>
+
+<pre><code class="bash">$ python get-info-from-role.py
+{
+  "cluster_name": "&lt;ACCOUNT-ID&gt;:&lt;ES-DOMAIN&gt;",
+  "cluster_uuid": "sLUnqFSsQdCMlBLrn7BTUA",
+  "version": {
+    "lucene_version": "6.6.0",
+    "build_hash": "Unknown",
+    "build_snapshot": false,
+    "number": "5.5.2",
+    "build_date": "2017-10-18T04:35:01.381Z"
+  },
+  "name": "KXSwBvT",
+  "tagline": "You Know, for Search"
+}
+</code></pre>
+
+<h2>Testing using IAM Credentials from Credentials Provider:</h2>
+
+<p>Configure your credentials provider:</p>
+
+<pre><code class="bash">$ pip install awscli
+$ aws configure --profile ruan
+AWS Access Key ID [None]: xxxxxxxxx
+AWS Secret Access Key [None]: xxxxxx
+Default region name [None]: eu-west-1
+Default output format [None]: json
+</code></pre>
+
+<p>Using Python, we will get the credentials from the Credential Provider, using our profile name:</p>
+
+<pre><code class="python">import boto3, json
+from elasticsearch import Elasticsearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
+my_service = 'es'
+my_region = 'eu-west-1'
+my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
+
+session = boto3.Session(
+    region_name='eu-west-1',
+    profile_name='ruan'
+)
+
+credentials = session.get_credentials()
+access_key = credentials.access_key
+secret_key = credentials.secret_key
+
+aws_auth = AWS4Auth(
+    access_key,
+    secret_key,
+    my_region,
+    my_service
+)
+
+es = Elasticsearch(
+    hosts = [{'host': my_eshost, 'port': 443}],
+    http_auth=aws_auth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection
+)
+
+print(json.dumps(es.info(), indent=2))
+</code></pre>
+
+<p>Running it will result in:</p>
+
+<pre><code class="bash">$ python get-info-from-user.py
+{
+  "cluster_name": "&lt;ACCOUNT-ID&gt;:&lt;ES-DOMAIN&gt;",
+  "cluster_uuid": "sLUnqFSsQdCMlBLrn7BTUA",
+  "version": {
+    "lucene_version": "6.6.0",
+    "build_hash": "Unknown",
+    "build_snapshot": false,
+    "number": "5.5.2",
+    "build_date": "2017-10-18T04:37:21.381Z"
+  },
+  "name": "KXSwBvT",
+  "tagline": "You Know, for Search"
+}
+</code></pre>
+
+<p>For more blog posts on Elasticsearch have a look at:
+- <a href="http://blog.ruanbekker.com/blog/categories/elasticsearch">blog.ruanbekker.com:elasticsearch</a>
+- <a href="https://sysadmins.co.za/tags/elasticsearch">sysadmins.co.za:elasticsearch</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Temporary IAM Credentials From EC2 Instance Metadata Using Python]]></title>

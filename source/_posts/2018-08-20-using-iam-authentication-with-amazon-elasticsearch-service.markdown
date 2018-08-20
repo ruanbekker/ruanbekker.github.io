@@ -90,7 +90,18 @@ After the Access Policy has been updated, the Elasticsearch Domain Status will s
 
 ## Testing from EC2 using IAM Instance Profile:
 
-Launch a EC2 Instance with the IAM Role eg. es-role, then using Python, we will make a request to our Elasticsearch Domain using boto3, aws4auth and the native elasticsearch client for python via our IAM Role, which we will get the temporary credentials from boto3.Session:
+Launch a EC2 Instance with the IAM Role eg. es-role, then using Python, we will make a request to our Elasticsearch Domain using boto3, aws4auth and the native elasticsearch client for python via our IAM Role, which we will get the temporary credentials from boto3.Session.
+
+Installing the dependencies:
+
+```bash
+$ pip install virtualenv
+$ virtualenv .venv
+$ source .venv/bin/activate
+$ pip install boto3 elasticsearch requests_aws4auth
+```
+
+Our code:
 
 ```python
 import boto3, json

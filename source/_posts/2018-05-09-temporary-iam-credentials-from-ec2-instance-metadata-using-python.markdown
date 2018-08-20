@@ -18,7 +18,7 @@ The [12 Factor](https://12factor.net/) Methodology however states to use config 
 
 When you run applications on Amazon EC2 the nodes has access to the EC2 Metadata Service, so in this case our IAM Role has a Policy that authorizes GetItem on our DynamoDB table, therefore we can define our code with no sensitive information, as the code will do all the work to get the credentials and use the credentials to access DynamoDB.
 
-## Use Temporary Credentials to Read from DynamoDB
+## Use Temporary Credentials to Read from DynamoDB using botocore
 
 In this example we will get the temporary credentials from the metadata service, then define the temporary credentials in our session to authorize our request against dynamodb to read from our table:
 
@@ -64,4 +64,23 @@ $ curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/${iam
   "Token" : "",
   "Expiration" : "2018-05-09T20:46:55Z"
 }
+```
+
+## Another method is boto3 Session:
+
+You can also use boto3.Session to achieve this:
+
+```bash
+>>> session = boto3.Session(region_name='eu-west-1')
+>>> credentials = session.get_credentials()
+>>> credentials = credentials.get_frozen_credentials()
+>>> credentials.access_key
+u'ABC...'
+>>> credentials.secret_key
+u'DEF...'
+>>> credentials.token
+u'ZXC...'
+>>> access_key = credentials.access_key
+>>> secret_key = credentials.secret_key
+>>> ddb = session.client('dynamodb')
 ```

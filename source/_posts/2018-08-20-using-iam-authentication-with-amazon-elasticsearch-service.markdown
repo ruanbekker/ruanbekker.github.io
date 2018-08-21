@@ -6,6 +6,8 @@ comments: true
 categories: ["elasticsearch", "aws", "amazon", "iam", "authentication", "security", "python"] 
 ---
 
+![](https://objects.ruanbekker.com/assets/images/aws-logo.png)
+
 Today I will demonstrate how to allow access to Amazons Elasticsearch Service using IAM Authenticationi using AWS Signature Version4.
 
 ## Elasticsearch Service Authentication Support:
@@ -109,10 +111,10 @@ from elasticsearch import Elasticsearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
  
 my_region = 'eu-west-1'
-my_servuce = 'es'
+my_service = 'es'
 my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
  
-session = boto3.Session(region_name='eu-west-1')
+session = boto3.Session(region_name=my_region) # thanks Leon
 credentials = session.get_credentials()
 credentials = credentials.get_frozen_credentials()
 access_key = credentials.access_key

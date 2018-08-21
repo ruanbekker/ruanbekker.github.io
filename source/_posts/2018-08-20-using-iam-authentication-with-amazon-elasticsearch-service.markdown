@@ -184,7 +184,7 @@ my_region = 'eu-west-1'
 my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
  
 session = boto3.Session(
-    region_name='eu-west-1',
+    region_name=my_region,
     profile_name='ruan'
 )
  

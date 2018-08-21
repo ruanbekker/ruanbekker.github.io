@@ -59,4 +59,9 @@ When I ran the code, I received the mail, and when you inspect the headers you c
 Received: from xx.xx.s2shared.sendgrid.net (xx.xx.s2shared.sendgrid.net. [xx.xx.xx.xx])
 ``` 
 
+## Resources:
+
+Great post on SSL / TLS:
+- https://stackabuse.com/how-to-send-emails-with-gmail-using-python/
+
 Enjoy :D 

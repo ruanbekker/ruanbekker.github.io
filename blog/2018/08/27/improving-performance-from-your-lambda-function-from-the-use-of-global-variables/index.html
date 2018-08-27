@@ -1,0 +1,354 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Improving Performance From Your Lambda Function From the Use of Global Variables - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="When using Lambda and DynamoDB, you can use global variables to gain performance when your data from DynamoDB does not get updated that often, and &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="http://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My HowTo Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Improving Performance From Your Lambda Function From the Use of Global Variables</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-08-27T08:30:30-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>27</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>8:30 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/aws-logo.png" alt="" /></p>
+
+<p>When using Lambda and DynamoDB, you can use global variables to gain performance when your data from DynamoDB does not get updated that often, and you would like to use caching to prevent a API call to DynamoDB everytime your Lambda Function gets invoked.</p>
+
+<p>You can use external services like Redis or Memcached when you would like to verify that each invocation is as true as your source of truth which will be DynamoDB. Then your application logic can work with caching.</p>
+
+<p>But in this case we just want a simple piece of code that can keep the state for the remaining time that the function is running on that underlying container. I am not 100% sure, but I have seen that the data can be cached for up to 60 minutes. This can be a total mess when your data gets updated regularly, then I would set all my calls in functions, as the global variables keeps their state for some time.</p>
+
+<h2>Example Function:</h2>
+
+<p>This function gets data from DynamoDB, iterates through a small dataset (10 Items), and appends each group name to my list which is the value of my <code>groups</code> key inside my dictionary.</p>
+
+<p>Due to my global variable <code>mydata</code>, you will see that the first invocation will result in a API call to DynamoDB as the length of my <code>mydata["groups"]</code> being 0, the second invocation, the data will exist inside my global variable, therefore I am returning the data directly from my variable.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span><span class="o">,</span> <span class="nn">json</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">tbl</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="s">&#39;my-dynamo-table&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">mydata</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span class='line'><span class="n">mydata</span><span class="p">[</span><span class="s">&quot;groups&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+</span><span class='line'>    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">mydata</span><span class="p">[</span><span class="s">&quot;groups&quot;</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span class='line'>        <span class="c"># data is not cached, make call to dynamo</span>
+</span><span class='line'>        <span class="n">data</span> <span class="o">=</span> <span class="n">tbl</span><span class="o">.</span><span class="n">scan</span><span class="p">()</span>
+</span><span class='line'>        <span class="n">group_data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s">&#39;Items&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">group_data</span><span class="p">:</span>
+</span><span class='line'>            <span class="n">mydata</span><span class="p">[</span><span class="s">&quot;groups&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">group</span><span class="p">[</span><span class="s">&#39;name&#39;</span><span class="p">])</span>
+</span><span class='line'>        <span class="k">return</span> <span class="n">mydata</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="c"># return cached content</span>
+</span><span class='line'>        <span class="k">return</span> <span class="n">mydata</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Results of my Invocations:</h2>
+
+<p>The first call that I made:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/lambda-caching-miss.png" alt="" /></p>
+
+<p>The second call that I made:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/lambda-caching-hit.png" alt="" /></p>
+
+<p>If you need a small layer of caching that can improve your latency, this can be used. But if you need your data to be accurate from every call, rather looking into a different approach and external caching services.</p>
+
+<h2>Resources:</h2>
+
+<p><em>Take advantage of Execution Context reuse to improve the performance of your function.</em>:</p>
+
+<p>&ldquo;Make sure any externalized configuration or dependencies that your code retrieves are stored and referenced locally after initial execution. Limit the re-initialization of variables/objects on every invocation. Instead use static initialization/constructor, global/static variables and singletons. Keep alive and reuse connections (HTTP, database, etc.) that were established during a previous invocation.&rdquo;</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html">https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html</a></li>
+<li><a href="https://aws.amazon.com/blogs/compute/container-reuse-in-lambda/">https://aws.amazon.com/blogs/compute/container-reuse-in-lambda/</a></li>
+</ul>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2018-08-27T08:30:30-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>27</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>8:30 am</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/aws/'>aws</a>, <a class='category' href='/blog/categories/caching/'>caching</a>, <a class='category' href='/blog/categories/dynamodb/'>dynamodb</a>, <a class='category' href='/blog/categories/lambda/'>lambda</a>, <a class='category' href='/blog/categories/performance/'>performance</a>, <a class='category' href='/blog/categories/python/'>python</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2018/08/21/send-emails-using-python-and-sendgrid-using-smtplib/" title="Previous Post: Send Emails using Python and Sendgrid using SMTPlib">&laquo; Send Emails using Python and Sendgrid using SMTPlib</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/">Improving Performance From Your Lambda Function From the Use of Global Variables</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/21/send-emails-using-python-and-sendgrid-using-smtplib/">Send Emails Using Python and Sendgrid Using SMTPlib</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service/">Using IAM Authentication With Amazon Elasticsearch Service</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/15/get-blogpost-titles-links-and-tags-from-a-rss-link-using-python-feedparser/">Get Blogpost Titles Links and Tags From a RSS Link Using Python Feedparser</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/14/tutorial-on-dynamodb-using-bash-and-the-aws-cli-tools-to-interact-with-a-music-dataset/">Tutorial on DynamoDB Using Bash and the AWS CLI Tools to Interact With a Music Dataset</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2018 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>

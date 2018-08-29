@@ -55,17 +55,17 @@ From the same page, change your password:
 
 ![](https://objects.ruanbekker.com/assets/images/fb-4.png)
 
-Enable "Two-Factor Authentication", when you are logged out, or trying to logon from a new device, a notification will be sent to your device where Facebook is installed, or alternatively, you will receive a code sent to you which you will need to enter after you have logged on, just to provide you with a extra layer of security.
+Enable `"Two-Factor Authentication"`, when you are logged out, or trying to logon from a new device, a notification will be sent to your device where Facebook is installed, or alternatively, you will receive a code sent to you which you will need to enter after you have logged on, just to provide you with a extra layer of security.
 
 ![](https://objects.ruanbekker.com/assets/images/fb-5.png)
 
-Enable "Get alerts about unrecognized logins", which allows you to set up to 5 friends that can help you unlock your account, if your account has been locked out.
+Enable `"Get alerts about unrecognized logins"`, which allows you to set up to 5 friends that can help you unlock your account, if your account has been locked out.
 
 ![](https://objects.ruanbekker.com/assets/images/fb-6.png)
 
 ## Review your Activity Log
 
-From https://www.facebook.com/settings?tab=your_facebook_information , head over to `"Avtivity Log"`:
+From https://www.facebook.com/settings?tab=your_facebook_information , head over to `"Activity Log"`:
 
 ![](https://objects.ruanbekker.com/assets/images/fb-7.png)
 

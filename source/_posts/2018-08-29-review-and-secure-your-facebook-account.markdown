@@ -20,12 +20,12 @@ There's a couple of ways how attackers can gain access to your account, but I wo
 
 Usually Facebook will detect this, but if not you can and should do the following:
 
-1. Reset your password
-2. Enable Two-Factor Authentication
-3. Terminate or Logout all sessions from your account, if you find unknown sessions, report it to facebook and log them out.
-4. Review your account's activity
-5. Review Group Activity, if you are subscribed to groups, unsubscribe
-6. Reach out to facebook support
+- Reset your password
+- Enable Two-Factor Authentication
+- Terminate or Logout all sessions from your account, if you find unknown sessions, report it to facebook and log them out.
+- Review your account's activity
+- Review Group Activity, if you are subscribed to groups, unsubscribe
+- Reach out to facebook support
 
 ## Head over to your Facebook Accounts Settings Page:
 
@@ -93,9 +93,9 @@ From this same page you can review other activity like `Search History`, `Groups
 
 If someone had to access/subscribed to groups, you will be able to review the activity, within 3 different views:
 
-1. Groups: any interaction with groups, such as likes, comments etc.
-2. Membership Activity: Any group memberships
-3. Posts and Comments: Self explanatory.
+- Groups: any interaction with groups, such as likes, comments etc.
+- Membership Activity: Any group memberships
+- Posts and Comments: Self explanatory.
 
 ## Final Note:
 

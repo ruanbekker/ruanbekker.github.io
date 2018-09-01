@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Databases | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/databases/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-09-01T17:03:00-04:00</updated>
+  <updated>2018-09-01T17:37:17-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,158 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Give Your Database a Break and Use Memcached to Return Frequently Accessed Data]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/"/>
+    <updated>2018-09-01T17:05:10-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/memcached-logo.png" alt="" /></p>
+
+<p>So let&rsquo;s take this scenario:</p>
+
+<p>Your database is getting hammered with requests and building up some load over time and we would like to place a caching layer in front of our database that will return data from the caching layer, to reduce some traffic to our database and also improve our performance for our application.</p>
+
+<h2>The Scenario:</h2>
+
+<p>Our scenario will be very simple for this demonstration:</p>
+
+<ul>
+<li>Database will be using SQLite with product information (product_name, product_description)</li>
+<li>Caching Layer will be Memcached</li>
+<li>Our Client will be written in Python, which checks if the product name is in cache, if not a <code>GET_MISS</code> will be returned, then the data will be fetched from the database, returns it to the client and save it to the cache</li>
+<li>Next time the item will be read, a <code>GET_HIT</code> will be received, then the item will be delivered to the client directly from the cache</li>
+</ul>
+
+
+<h2>SQL Database:</h2>
+
+<p>As mentioned we will be using sqlite for demonstration.</p>
+
+<p>Create the table, populate some very basic data:</p>
+
+<pre><code class="sql">$ sqlite3 db.sql -header -column
+import sqlite3 as sql
+SQLite version 3.16.0 2016-11-04 19:09:39
+Enter ".help" for usage hints.
+
+sqlite&gt; create table products (product_name STRING(32), product_description STRING(32));
+sqlite&gt; insert into products values('apple', 'fruit called apple');
+sqlite&gt; insert into products values('guitar', 'musical instrument');
+</code></pre>
+
+<p>Read all the data from the table:</p>
+
+<pre><code class="sql">sqlite&gt; select * from products;
+product_name  product_description
+------------  -------------------
+apple         fruit called apple
+guitar        musical instrument
+sqlite&gt; .exit
+</code></pre>
+
+<h2>Run a Memcached Container:</h2>
+
+<p>We will use docker to run a memcached container on our workstation:</p>
+
+<pre><code class="bash">$ docker run -itd --name memcached -p 11211:11211 rbekker87/memcached:alpine
+</code></pre>
+
+<h2>Our Application Code:</h2>
+
+<p>I will use <a href="https://pymemcache.readthedocs.io/en/latest/getting_started.html">pymemcache</a> as our client library. Install:</p>
+
+<pre><code class="bash">$ virtualenv .venv &amp;&amp; source .venv/bin/activate
+$ pip install pymemcache
+</code></pre>
+
+<p>Our Application Code which will be in Python</p>
+
+<pre><code class="python">import sqlite3 as sql
+from pymemcache.client import base
+
+product_name = 'guitar'
+
+client = base.Client(('localhost', 11211))
+result = client.get(product_name)
+
+def query_db(product_name):
+    db_connection = sql.connect('db.sql')
+    c = db_connection.cursor()
+    try:
+        c.execute('select product_description from products where product_name = "{k}"'.format(k=product_name))
+        data = c.fetchone()[0]
+        db_connection.close()
+    except:
+        data = 'invalid'
+    return data
+
+if result is None:
+    print("got a miss, need to get the data from db")
+    result = query_db(product_name)
+    if result == 'invalid':
+        print("requested data does not exist in db")
+    else:
+        print("returning data to client from db")
+        print("=&gt; Product: {p}, Description: {d}".format(p=product_name, d=result))
+        print("setting the data to memcache")
+        client.set(product_name, result)
+
+else:
+    print("got the data directly from memcache")
+    print("=&gt; Product: {p}, Description: {d}".format(p=product_name, d=result))
+</code></pre>
+
+<p>Explanation:</p>
+
+<ul>
+<li>We have a function that takes a argument of the product name, that makes the call to the database and returns the description of that product</li>
+<li>We will make a get operation to memcached, if nothing is returned, then we know the item does not exists in our cache,</li>
+<li>Then we will call our function to get the data from the database and return it directly to our client, and</li>
+<li>Save it to the cache in memcached so the next time the same product is queried, it will be delivered directly from the cache</li>
+</ul>
+
+
+<h2>The Demo:</h2>
+
+<p>Our Product Name is <code>guitar</code>, lets call the product, which will be the first time so memcached wont have the item in its cache:</p>
+
+<pre><code class="bash">$ python app.py
+got a miss, need to get the data from db
+returning data to client from db
+=&gt; Product: guitar, Description: musical instrument
+setting the data to memcache
+</code></pre>
+
+<p>Now from the output, we can see that the item was delivered from the database and saved to the cache, lets call that same product and observe the behavior:</p>
+
+<pre><code class="bash">$ python app.py
+got the data directly from memcache
+=&gt; Product: guitar, Description: musical instrument
+</code></pre>
+
+<p>When our cache instance gets rebooted we will lose our data that is in the cache, but since the source of truth will be in our database, data will be re-added to the cache as they are requested. That is one good reason not to rely on a cache service to be your primary data source.</p>
+
+<p>What if the product we request is not in our cache or database, let&rsquo;s say the product <code>tree</code></p>
+
+<pre><code class="bash">$ python app.py
+got a miss, need to get the data from db
+requested data does not exist in db
+</code></pre>
+
+<p>This was a really simple scenario, but when working with masses amount of data, you can benefit from a lot of performance using caching.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://realpython.com/python-memcache-efficient-caching/">https://realpython.com/python-memcache-efficient-caching/</a></li>
+<li><a href="https://github.com/ruanbekker/dockerhub-sources/tree/master/memcached/alpine">https://github.com/ruanbekker/dockerhub-sources/tree/master/memcached/alpine</a></li>
+<li><a href="https://pymemcache.readthedocs.io/en/latest/getting_started.html#basic-usage">https://pymemcache.readthedocs.io/en/latest/getting_started.html#basic-usage</a></li>
+<li><a href="https://sebastianraschka.com/Articles/2014_sqlite_in_python_tutorial.html">https://sebastianraschka.com/Articles/2014_sqlite_in_python_tutorial.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Experimenting With Python and TinyMongo a MongoDB Wrapper for TinyDB]]></title>
@@ -585,223 +737,6 @@ rs0:PRIMARY&gt; exit
 
 <pre><code class="bash">$ mongo --host mongodb.example.com --port 27017 -u &lt;username&gt; -p --authenticationDatabase admin
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using the Python API for MongoDB Using PyMongo]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/08/27/using-the-python-api-for-mongodb-using-pymongo/"/>
-    <updated>2017-08-27T16:19:48-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/08/27/using-the-python-api-for-mongodb-using-pymongo</id>
-    <content type="html"><![CDATA[<p>Using the Python API for MongoDB using Pymongo</p>
-
-<h2>Requirements:</h2>
-
-<p>You will need to install the <code>pymongo</code> driver using pip:</p>
-
-<pre><code class="bash Install Pymongo">$ pip install pymongo
-</code></pre>
-
-<p>A configuration file with your access credentials, which I like to use outside my code:</p>
-
-<pre><code class="bash config.py">credentials = {
-    "mongodb": {
-        "HOSTNAME": "host.domain.com",
-        "USERNAME": "username",
-        "PASSWORD": "password"
-    }
-}
-</code></pre>
-
-<h2>Connecting to MongoDB:</h2>
-
-<p>From the python interpreter, connect to MongoDB:</p>
-
-<pre><code class="python ">&gt;&gt;&gt; from pymongo import MongoClient
-&gt;&gt;&gt; from config import credentials as secrets
-&gt;&gt;&gt; mongo_host = secrets['mongodb']['HOSTNAME']
-&gt;&gt;&gt; mongo_username = secrets['mongodb']['USERNAME']
-&gt;&gt;&gt; mongo_password = secrets['mongodb']['PASSWORD']
-&gt;&gt;&gt; mongodb_client = MongoClient('mongodb://%s:%s@%s:27017/admin?authMechanism=SCRAM-SHA-1' % (mongo_username, mongo_password, mongo_host))
-</code></pre>
-
-<p>Find the Database that you are connected to:</p>
-
-<pre><code class="python">&gt;&gt;&gt; mongodb_client.get_database().name
-u'admin'
-</code></pre>
-
-<p>Find all the databases that is currently on your MongoDB Server:</p>
-
-<pre><code class="python">&gt;&gt;&gt; dbs = mongodb_client.database_names()
-&gt;&gt;&gt; for x in dbs:
-...     print(x)
-...
-admin
-flask_reminders
-local
-</code></pre>
-
-<h2>Create a Database, Collection and Write a Document into your Database:</h2>
-
-<p>Let&rsquo;s create a database, in my case it will be <code>ruan-test</code>, and my collection name <code>mycollection</code> and the write one item into it:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb = mongodb_client['ruan-test']
-&gt;&gt;&gt; newdb_collection = newdb['mycollection']
-&gt;&gt;&gt; doc = {"name": "frank", "surname": "jeffreys", "tags": ["person", "name"]}
-&gt;&gt;&gt; doc_id = newdb_collection.insert_one(doc).inserted_id
-&gt;&gt;&gt; print(doc_id)
-59a319ec1f15a5088ba3a339
-</code></pre>
-
-<p>Note: you can also connect to your collection like the following</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb_collection = mongodb_client['ruan-test']['mycollection']
-</code></pre>
-
-<p>We have inserted one item into our database, which we can verify with <code>count()</code>:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb_collection.find().count()
-1
-</code></pre>
-
-<p>As you can see I have the value of the item&rsquo;s id, we can use that to find it from our collection:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb_collection.find_one({"_id": doc_id})
-{u'_id': ObjectId('59a319ec1f15a5088ba3a339'), u'surname': u'jeffreys', u'name': u'frank', u'tags': [u'person', u'name']}
-</code></pre>
-
-<p>As we only have one item in our database, we can also use <code>find_one()</code> which will give us the exact same data:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb_collection.find_one()
-{u'_id': ObjectId('59a319ec1f15a5088ba3a339'), u'surname': u'jeffreys', u'name': u'frank', u'tags': [u'person', u'name']}
-</code></pre>
-
-<p>We can write some more data to our database, but this time, lets write to a different collection:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb_collection2 = newdb['new-collection-2']
-&gt;&gt;&gt; item = newdb_collection2.insert_one({"name": "ruby", "surname": "james"}).inserted_id
-&gt;&gt;&gt; item2 = newdb_collection2.insert_one({"name": "ruby", "surname": "james"}).inserted_id
-</code></pre>
-
-<p>As we captured the items <code>_id</code>, we can view the:</p>
-
-<pre><code class="python">&gt;&gt;&gt; print(item)
-59a31acf1f15a5088ba3a33b
-&gt;&gt;&gt; print(item2)
-59a31a8a1f15a5088ba3a33a
-</code></pre>
-
-<h2>Query Data from MongoDB:</h2>
-
-<p>We can then query for this data:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb2.find_one({"name": "ruby"})
-{u'_id': ObjectId('59a31acf1f15a5088ba3a33b'), u'surname': u'james', u'name': u'ruby'}
-
-&gt;&gt;&gt; newdb2.find_one({"_id": item})
-{u'_id': ObjectId('59a31acf1f15a5088ba3a33b'), u'surname': u'james', u'name': u'ruby'}
-</code></pre>
-
-<p>Also scan for all items in the collection:</p>
-
-<pre><code class="python">&gt;&gt;&gt; scan = newdb_collection2.find({})
-&gt;&gt;&gt; for x in scan:
-...     print(x)
-...
-{u'_id': ObjectId('59a31a8a1f15a5088ba3a33a'), u'surname': u'james', u'name': u'phillip'}
-{u'_id': ObjectId('59a31acf1f15a5088ba3a33b'), u'surname': u'james', u'name': u'ruby'}
-
-&gt;&gt;&gt; newdb2.find().count()
-2
-</code></pre>
-
-<p>We can now verify that we have 2 collections in our database:</p>
-
-<pre><code class="python">&gt;&gt;&gt; newdb.collection_names()
-[u'mycollection-2', u'mycollection']
-</code></pre>
-
-<h2>Connecting to an existing Database:</h2>
-
-<p>Let&rsquo;s connect to an existing database on our MongoDB Server:</p>
-
-<pre><code class="python">&gt;&gt;&gt; flaskdb = mongodb_client['flask_reminders']
-</code></pre>
-
-<p>List the collections:</p>
-
-<pre><code class="python">&gt;&gt;&gt; flaskdb.collection_names()
-[u'reminders', u'usersessions']
-</code></pre>
-
-<p>Count the number of items in our <code>reminders</code> Collection:</p>
-
-<pre><code class="python">&gt;&gt;&gt; flaskdb.reminders.find().count()
-624
-</code></pre>
-
-<p>Find a Random Item:</p>
-
-<pre><code class="python">&gt;&gt;&gt; flaskdb.reminders.find_one()
-{u'category': u'Python', u'description': u'Chatbot with SQLite', u'link': u'http://rodic.fr/blog/python-chatbot-1/', u'date': u'2017-01-03', u'_id': ObjectId('586bb6dd0269103671afce32'), u'type': u'Discovered Service'}
-</code></pre>
-
-<p>Find One Item, with a Specific Value, for example the value <code>AWS</code> for our <code>Category key</code>:</p>
-
-<pre><code class="python">&gt;&gt;&gt; flaskdb.reminders.find_one({"category": "AWS"})
-{u'category': u'AWS', u'description': u'Elasticsearch Documentation Access Policies', u'link': u'http://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-createupdatedomains.html#es-createdomain-configure-access-policies', u'date': u'2017-02-13', u'_id': ObjectId('58a1d45202691070616947c3'), u'type': u'Documentation'}
-</code></pre>
-
-<p>Find All Items, with a specific value:</p>
-
-<pre><code class="python">&gt;&gt;&gt; data = flaskdb.reminders.find({"category": "AWS"})
-&gt;&gt;&gt; for x in data:
-...     print(x)
-...
-{u'category': u'Python', u'description': u'Chatbot with SQLite', u'link': u'http://rodic.fr/blog/python-chatbot-1/', u'date': u'2017-01-03', u'_id': ObjectId('586bb6dd0269103671afce32'), u'type': u'Discovered Service'}
-{u'category': u'Python', u'description': u'Boto: Kinesis List', u'link': u'https://gitlab.com/rbekker87/code-examples/blob/master/kinesis/firehose/python/firehose.list.py', u'date': u'2017-01-05', u'_id': ObjectId('586dde1e0269103671afce36'), u'type': u'Stuff Done'}
-</code></pre>
-
-<h2>Deleting Databases:</h2>
-
-<p>Cleaning up, deleting the database that we created, when a database is delete, the collections within that database also gets removed.</p>
-
-<p>First list the databases:</p>
-
-<pre><code>&gt;&gt;&gt; dbs = mongodb_client.database_names()
-&gt;&gt;&gt; for x in dbs:
-...     print(x)
-...
-admin
-flask_reminders
-local
-ruan-test
-</code></pre>
-
-<p>Then delete the database that you want to delete:</p>
-
-<pre><code class="python">&gt;&gt;&gt; mongodb_client.drop_database("ruan-test")
-</code></pre>
-
-<p>Then verify if the database was removed:</p>
-
-<pre><code class="python">&gt;&gt;&gt; dbs = mongodb_client.database_names()
-&gt;&gt;&gt; for x in dbs:
-...     print(x)
-...
-admin
-flask_reminders
-local
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="http://api.mongodb.com/python/current/tutorial.html">http://api.mongodb.com/python/current/tutorial.html</a></li>
-<li><a href="https://docs.mongodb.com/getting-started/python/client/">https://docs.mongodb.com/getting-started/python/client/</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

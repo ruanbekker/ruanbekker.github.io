@@ -1,0 +1,485 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Give Your Database a Break and Use Memcached to Return Frequently Accessed Data - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="So let&rsquo;s take this scenario: Your database is getting hammered with requests and building up some load over time and we would like to place a &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="http://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My HowTo Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Give Your Database a Break and Use Memcached to Return Frequently Accessed Data</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-09-01T17:05:10-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>1</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>5:05 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/memcached-logo.png" alt="" /></p>
+
+<p>So let&rsquo;s take this scenario:</p>
+
+<p>Your database is getting hammered with requests and building up some load over time and we would like to place a caching layer in front of our database that will return data from the caching layer, to reduce some traffic to our database and also improve our performance for our application.</p>
+
+<h2>The Scenario:</h2>
+
+<p>Our scenario will be very simple for this demonstration:</p>
+
+<ul>
+<li>Database will be using SQLite with product information (product_name, product_description)</li>
+<li>Caching Layer will be Memcached</li>
+<li>Our Client will be written in Python, which checks if the product name is in cache, if not a <code>GET_MISS</code> will be returned, then the data will be fetched from the database, returns it to the client and save it to the cache</li>
+<li>Next time the item will be read, a <code>GET_HIT</code> will be received, then the item will be delivered to the client directly from the cache</li>
+</ul>
+
+
+<h2>SQL Database:</h2>
+
+<p>As mentioned we will be using sqlite for demonstration.</p>
+
+<p>Create the table, populate some very basic data:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="err">$</span> <span class="n">sqlite3</span> <span class="n">db</span><span class="p">.</span><span class="k">sql</span> <span class="o">-</span><span class="n">header</span> <span class="o">-</span><span class="k">column</span>
+</span><span class='line'><span class="n">import</span> <span class="n">sqlite3</span> <span class="k">as</span> <span class="k">sql</span>
+</span><span class='line'><span class="n">SQLite</span> <span class="k">version</span> <span class="mi">3</span><span class="p">.</span><span class="mi">16</span><span class="p">.</span><span class="mi">0</span> <span class="mi">2016</span><span class="o">-</span><span class="mi">11</span><span class="o">-</span><span class="mi">04</span> <span class="mi">19</span><span class="p">:</span><span class="mi">09</span><span class="p">:</span><span class="mi">39</span>
+</span><span class='line'><span class="n">Enter</span> <span class="ss">&quot;.help&quot;</span> <span class="k">for</span> <span class="k">usage</span> <span class="n">hints</span><span class="p">.</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">sqlite</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">table</span> <span class="n">products</span> <span class="p">(</span><span class="n">product_name</span> <span class="n">STRING</span><span class="p">(</span><span class="mi">32</span><span class="p">),</span> <span class="n">product_description</span> <span class="n">STRING</span><span class="p">(</span><span class="mi">32</span><span class="p">));</span>
+</span><span class='line'><span class="n">sqlite</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">products</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;apple&#39;</span><span class="p">,</span> <span class="s1">&#39;fruit called apple&#39;</span><span class="p">);</span>
+</span><span class='line'><span class="n">sqlite</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">products</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;guitar&#39;</span><span class="p">,</span> <span class="s1">&#39;musical instrument&#39;</span><span class="p">);</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read all the data from the table:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">sqlite</span><span class="o">&gt;</span> <span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">products</span><span class="p">;</span>
+</span><span class='line'><span class="n">product_name</span>  <span class="n">product_description</span>
+</span><span class='line'><span class="c1">------------  -------------------</span>
+</span><span class='line'><span class="n">apple</span>         <span class="n">fruit</span> <span class="k">called</span> <span class="n">apple</span>
+</span><span class='line'><span class="n">guitar</span>        <span class="n">musical</span> <span class="n">instrument</span>
+</span><span class='line'><span class="n">sqlite</span><span class="o">&gt;</span> <span class="p">.</span><span class="n">exit</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Run a Memcached Container:</h2>
+
+<p>We will use docker to run a memcached container on our workstation:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -itd --name memcached -p 11211:11211 rbekker87/memcached:alpine
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Our Application Code:</h2>
+
+<p>I will use <a href="https://pymemcache.readthedocs.io/en/latest/getting_started.html">pymemcache</a> as our client library. Install:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virtualenv .venv <span class="o">&amp;&amp;</span> <span class="nb">source</span> .venv/bin/activate
+</span><span class='line'><span class="nv">$ </span>pip install pymemcache
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our Application Code which will be in Python</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">sqlite3</span> <span class="kn">as</span> <span class="nn">sql</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">pymemcache.client</span> <span class="kn">import</span> <span class="n">base</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">product_name</span> <span class="o">=</span> <span class="s">&#39;guitar&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">Client</span><span class="p">((</span><span class="s">&#39;localhost&#39;</span><span class="p">,</span> <span class="mi">11211</span><span class="p">))</span>
+</span><span class='line'><span class="n">result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">product_name</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">query_db</span><span class="p">(</span><span class="n">product_name</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">db_connection</span> <span class="o">=</span> <span class="n">sql</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;db.sql&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">c</span> <span class="o">=</span> <span class="n">db_connection</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">try</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select product_description from products where product_name = &quot;{k}&quot;&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">k</span><span class="o">=</span><span class="n">product_name</span><span class="p">))</span>
+</span><span class='line'>        <span class="n">data</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+</span><span class='line'>        <span class="n">db_connection</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">except</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">data</span> <span class="o">=</span> <span class="s">&#39;invalid&#39;</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">data</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">result</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&quot;got a miss, need to get the data from db&quot;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">result</span> <span class="o">=</span> <span class="n">query_db</span><span class="p">(</span><span class="n">product_name</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">if</span> <span class="n">result</span> <span class="o">==</span> <span class="s">&#39;invalid&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;requested data does not exist in db&quot;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;returning data to client from db&quot;</span><span class="p">)</span>
+</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;=&gt; Product: {p}, Description: {d}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">p</span><span class="o">=</span><span class="n">product_name</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="n">result</span><span class="p">))</span>
+</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;setting the data to memcache&quot;</span><span class="p">)</span>
+</span><span class='line'>        <span class="n">client</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">product_name</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">else</span><span class="p">:</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&quot;got the data directly from memcache&quot;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&quot;=&gt; Product: {p}, Description: {d}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">p</span><span class="o">=</span><span class="n">product_name</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="n">result</span><span class="p">))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Explanation:</p>
+
+<ul>
+<li>We have a function that takes a argument of the product name, that makes the call to the database and returns the description of that product</li>
+<li>We will make a get operation to memcached, if nothing is returned, then we know the item does not exists in our cache,</li>
+<li>Then we will call our function to get the data from the database and return it directly to our client, and</li>
+<li>Save it to the cache in memcached so the next time the same product is queried, it will be delivered directly from the cache</li>
+</ul>
+
+
+<h2>The Demo:</h2>
+
+<p>Our Product Name is <code>guitar</code>, lets call the product, which will be the first time so memcached wont have the item in its cache:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span><span class='line'>got a miss, need to get the data from db
+</span><span class='line'>returning data to client from <span class="nv">db</span>
+</span><span class='line'><span class="o">=</span>&gt; Product: guitar, Description: musical instrument
+</span><span class='line'>setting the data to memcache
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now from the output, we can see that the item was delivered from the database and saved to the cache, lets call that same product and observe the behavior:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span><span class='line'>got the data directly from <span class="nv">memcache</span>
+</span><span class='line'><span class="o">=</span>&gt; Product: guitar, Description: musical instrument
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When our cache instance gets rebooted we will lose our data that is in the cache, but since the source of truth will be in our database, data will be re-added to the cache as they are requested. That is one good reason not to rely on a cache service to be your primary data source.</p>
+
+<p>What if the product we request is not in our cache or database, let&rsquo;s say the product <code>tree</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span><span class='line'>got a miss, need to get the data from db
+</span><span class='line'>requested data does not exist in db
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This was a really simple scenario, but when working with masses amount of data, you can benefit from a lot of performance using caching.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://realpython.com/python-memcache-efficient-caching/">https://realpython.com/python-memcache-efficient-caching/</a></li>
+<li><a href="https://github.com/ruanbekker/dockerhub-sources/tree/master/memcached/alpine">https://github.com/ruanbekker/dockerhub-sources/tree/master/memcached/alpine</a></li>
+<li><a href="https://pymemcache.readthedocs.io/en/latest/getting_started.html#basic-usage">https://pymemcache.readthedocs.io/en/latest/getting_started.html#basic-usage</a></li>
+<li><a href="https://sebastianraschka.com/Articles/2014_sqlite_in_python_tutorial.html">https://sebastianraschka.com/Articles/2014_sqlite_in_python_tutorial.html</a></li>
+</ul>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2018-09-01T17:05:10-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>1</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>5:05 pm</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/caching/'>caching</a>, <a class='category' href='/blog/categories/databases/'>databases</a>, <a class='category' href='/blog/categories/memcached/'>memcached</a>, <a class='category' href='/blog/categories/python/'>python</a>, <a class='category' href='/blog/categories/sql/'>sql</a>, <a class='category' href='/blog/categories/sqlite/'>sqlite</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine/" title="Previous Post: Dockerizing a Memcached Server for Docker on Alpine">&laquo; Dockerizing a Memcached Server for Docker on Alpine</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/">Give Your Database a Break and Use Memcached to Return Frequently Accessed Data</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine/">Dockerizing a Memcached Server for Docker on Alpine</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/29/review-and-secure-your-facebook-account/">Review and Secure Your Facebook Account</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/27/distributing-a-shared-secret-amongst-a-group-of-participants-using-shamirs-secret-sharing-scheme-aka-ssss/">Distributing a Shared Secret Amongst a Group of Participants Using Shamirs Secret Sharing Scheme Aka Ssss</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/">Improving Performance From Your Lambda Function From the Use of Global Variables</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2018 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2018/09/01/give-your-database-a-break-and-use-memcached-to-return-frequently-accessed-data/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>

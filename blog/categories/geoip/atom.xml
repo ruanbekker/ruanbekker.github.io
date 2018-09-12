@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Geoip | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/geoip/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2018-09-12T11:53:32-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Using the GeoIP Processor Plugin With Elasticsearch to Enrich Your Location Based Data]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/09/12/using-the-geoip-processor-plugin-with-elasticsearch-to-enrich-your-location-based-data/"/>
+    <updated>2018-09-12T10:14:30-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/09/12/using-the-geoip-processor-plugin-with-elasticsearch-to-enrich-your-location-based-data</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/kibana-map-plot-1.png" alt="" /></p>
+
+<p>So we have documents ingested into Elasticsearch, and one of the fields has a IP Address, but at this moment it&rsquo;s just an IP Address, the goal is to have more information from this IP Address, so that we can use Kibana&rsquo;s Coordinate Maps to map our data on a Geographical Map.</p>
+
+<p>In order to do this we need to make use of the GeoIP Ingest Processor Plugin, which adds information about the grographical location of the IP Address that it receives. This information is retrieved from the <a href="http://dev.maxmind.com/geoip/geoip2/geolite2/">Maxmind Datases</a>.</p>
+
+<p>So when we pass our IP Address through the processor, for example one of Github&rsquo;s IP Addresses: <code>192.30.253.113</code> we will in return get:</p>
+
+<pre><code>"_source" : {
+  "geoip" : {
+    "continent_name" : "North America",
+    "city_name" : "San Francisco",
+    "country_iso_code" : "US",
+    "region_name" : "California",
+    "location" : {
+      "lon" : -122.3933,
+      "lat" : 37.7697
+    }
+  },
+  "ip" : "192.30.253.113",
+}
+</code></pre>
+
+<h2>Installation</h2>
+
+<p>First we need to install the <code>ingest-geoip</code> plugin. Change to your elasticsearch home path:</p>
+
+<pre><code>$ cd /usr/share/elasticsearch/
+$ sudo bin/elasticsearch-plugin install ingest-geoip
+</code></pre>
+
+<h2>Setting up the Pipeline</h2>
+
+<p>Now that we&rsquo;ve installed the plugin, lets setup our Pipeline where we will reference our GeoIP Processor:</p>
+
+<pre><code>$ curl -H 'Content-Type: application/json' -XPUT 'http://localhost:9200/_ingest/pipeline/geoip' -d '
+{
+  "description" : "Add GeoIP Info",
+  "processors" : [
+    {
+      "geoip" : {
+        "field" : "ip"
+      }
+    }
+  ]
+}
+'
+</code></pre>
+
+<h2>Ingest and Test</h2>
+
+<p>Let&rsquo;s create the Index and apply the mapping:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPUT 'http://localhost:9200/my_index' -d '
+{
+  "mappings": {
+    "doc": {
+      "properties": {
+        "geoip": {
+          "properties": {
+            "location": {
+              "type": "geo_point"
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+</code></pre>
+
+<p>Create the Document and specify the pipeline name:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPOST 'http://localhost:9200/my_index/metrics/?pipeline=geoip' -d '
+{
+  "identifier": "github", 
+  "service": "test", 
+  "os": "linux", 
+  "ip": "192.30.253.113"
+}
+'
+</code></pre>
+
+<p>Once the document is ingested, have a look at the document:</p>
+
+<pre><code class="bash">$ curl -XGET 'http://localhost:9200/my_index/_search?q=identifier:github&amp;pretty'
+{
+  "took" : 4,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 1,
+    "max_score" : 0.6931472,
+    "hits" : [
+      {
+        "_index" : "my_index",
+        "_type" : "doc",
+        "_id" : "2QVXzmUBZLvWjZA0DvLO",
+        "_score" : 0.6931472,
+        "_source" : {
+          "identifier" : "github",
+          "geoip" : {
+            "continent_name" : "North America",
+            "city_name" : "San Francisco",
+            "country_iso_code" : "US",
+            "region_name" : "California",
+            "location" : {
+              "lon" : -122.3933,
+              "lat" : 37.7697
+            }
+          },
+          "service" : "test",
+          "ip" : "192.30.253.113",
+          "os" : "linux"
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+
+<h2>Kibana</h2>
+
+<p>Let&rsquo;s plot our data on Kibana:</p>
+
+<ul>
+<li>From Management: Select Index Patterns, Create index pattern, set: <code>my_index</code></li>
+<li>From Visualize: Select Geo Coordinates, select your index: <code>my_index</code></li>
+<li>From Buckets select Geo Corrdinates, Aggregation by GeoHash, then field, select <code>geoip.location</code> then hit run and you should see something like this:</li>
+</ul>
+
+
+<p><img src="https://objects.ruanbekker.com/assets/images/kibana-geoip-1.png" alt="" /></p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.elastic.co/blog/geoip-in-the-elastic-stack">https://www.elastic.co/blog/geoip-in-the-elastic-stack</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/plugins/5.3/using-ingest-geoip.html">https://www.elastic.co/guide/en/elasticsearch/plugins/5.3/using-ingest-geoip.html</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/5.3/put-pipeline-api.html">https://www.elastic.co/guide/en/elasticsearch/reference/5.3/put-pipeline-api.html</a></li>
+<li><a href="https://ring.nlnog.net/api/1.0/nodes">https://ring.nlnog.net/api/1.0/nodes</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

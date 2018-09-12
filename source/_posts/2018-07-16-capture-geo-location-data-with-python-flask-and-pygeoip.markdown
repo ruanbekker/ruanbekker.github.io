@@ -3,7 +3,7 @@ layout: post
 title: "Capture Geo Location Data with Python Flask and PyGeoIP"
 date: 2018-07-16 17:46:01 -0400
 comments: true
-categories: ["python", "flask", "geo", "location"] 
+categories: ["python", "flask", "geoip", "location"] 
 ---
 
 With the PyGeoIP package you can capture geo location data, which is pretty cool, for example, when you have IOT devices pushing location data to elasticsearch and visualizing the data with Kibana. That will be one example, but the possibilites are endless.

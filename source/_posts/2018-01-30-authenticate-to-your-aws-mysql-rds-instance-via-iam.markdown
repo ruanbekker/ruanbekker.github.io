@@ -8,6 +8,9 @@ categories: ["aws", "mysql", "bash", "rds", "iam"]
 
 On Amazon Web Services with RDS for MySQL or Aurora with MySQL compatibility, you can authenticate to your Database instance or cluster using IAM for database authentication. The benefit of using this authentication method is that you don't need to use a password when you connect to your database, but you use your authentication token instead
 
+*Update:*
+- [Amazon Supports IAM Authentication for PostgreSQL](https://aws.amazon.com/about-aws/whats-new/2018/09/amazon-rds-postgresql-now-supports-iam-authentication/)
+
 - More info from their [docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.html)
 
 ## What we will be doing today:

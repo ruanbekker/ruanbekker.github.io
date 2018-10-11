@@ -6,7 +6,11 @@ comments: true
 categories: ["docker", "security", "honeypot", "ssh"]
 ---
 
-The last couple of days I picked up on my ELK Stack a couple thousands of SSH Brute Force Attacks, so I decided I will just revisit my SSH Server configuration, and change my SSH Port to something else for the interim.
+![](https://res.cloudinary.com/rbekker/image/upload/v1539291851/ssh-docker-honeypot_eyhzc7.png)
+
+The last couple of days I picked up on my ELK Stack a couple thousands of SSH Brute Force Attacks, so I decided I will just revisit my SSH Server configuration, and change my SSH Port to something else for the interim. The dashboard that showed me the results at that point in time:
+
+![](https://res.cloudinary.com/rbekker/image/upload/v1539292443/kibana-failed-ssh-auth_udkxkl.png)
 
 Then I decided I actually would like to setup a SSH Honeypot to listen on Port 22 and change my SSH Server to listen on 222 and capture their IP Addresses, Usernames and Passwords that they are trying to use and dump it all in a file so that I can build up my own password dictionary :D
 
@@ -97,4 +101,4 @@ $ wc -l /var/log/honeypot/ssh.log
 54184260 /var/log/honeypot/ssh.log
 ```
 
-That is correct, 54 million password attempts. With this data set, we can run a small map reduce job with hadoop to get the unique usernames, passwords etc.
+That is correct, 54 million password attempts. 5372 Unique IPs, 4082 Unique Usernames, 88829 Unique Passwords. 

@@ -1,0 +1,560 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image. We will then push the image &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="http://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My HowTo Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-23T17:00:02-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>5:00 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p>In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image.</p>
+
+<p>We will then push the image to gitlab&rsquo;s private registry, and then run the service on docker swarm.</p>
+
+<h2>Create the backend service:</h2>
+
+<p>We will upstream to our blog using ghost, which you can deploy using:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create --name blog --network docknet rbekker87/armhf-ghost:2.0.3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Current File Structure:</h2>
+
+<p>Our file structure for the assets we need to build the reverse proxy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>find .
+</span><span class='line'>./conf.d
+</span><span class='line'>./conf.d/blog.conf
+</span><span class='line'>./Dockerfile
+</span><span class='line'>./nginx.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><code>Dockerfile</code></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>FROM hypriot/rpi-alpine-scratch
+</span><span class='line'>MAINTAINER Ruan Bekker
+</span><span class='line'>
+</span><span class='line'>RUN apk update <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    apk add nginx <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    rm -rf /etc/nginx/nginx.conf <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    chown -R nginx:nginx /var/lib/nginx <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    rm -rf /var/cache/apk/*
+</span><span class='line'>
+</span><span class='line'>ADD nginx.conf /etc/nginx/
+</span><span class='line'>ADD conf.d/blog.conf /etc/nginx/conf.d/
+</span><span class='line'>
+</span><span class='line'>EXPOSE 80
+</span><span class='line'>
+</span><span class='line'>CMD <span class="o">[</span><span class="s2">&quot;nginx&quot;</span>, <span class="s2">&quot;-g&quot;</span>, <span class="s2">&quot;daemon off;&quot;</span><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><code>nginx.conf</code></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user nginx<span class="p">;</span>
+</span><span class='line'>worker_processes 1<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>    worker_connections 1024<span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>error_log  /var/log/nginx/nginx_error.log warn<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    sendfile        on<span class="p">;</span>
+</span><span class='line'>    tcp_nodelay         on<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    gzip              on<span class="p">;</span>
+</span><span class='line'>    gzip_http_version 1.0<span class="p">;</span>
+</span><span class='line'>    gzip_proxied      any<span class="p">;</span>
+</span><span class='line'>    gzip_min_length   500<span class="p">;</span>
+</span><span class='line'>    gzip_disable      <span class="s2">&quot;MSIE [1-6]\.&quot;</span><span class="p">;</span>
+</span><span class='line'>    gzip_types        text/plain text/xml text/css
+</span><span class='line'>                      text/comma-separated-values
+</span><span class='line'>                      text/javascript
+</span><span class='line'>                      application/x-javascript
+</span><span class='line'>                      application/atom+xml<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    log_format  main  <span class="s1">&#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    access_log  /var/log/nginx/access.log  main<span class="p">;</span>
+</span><span class='line'>    error_log   /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_cache_path /var/cache/nginx/ <span class="nv">levels</span><span class="o">=</span>1:2 <span class="nv">keys_zone</span><span class="o">=</span>nginx_cache:5m <span class="nv">max_size</span><span class="o">=</span>128m <span class="nv">inactive</span><span class="o">=</span>60m<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    keepalive_timeout  60<span class="p">;</span>
+</span><span class='line'>    server_tokens      off<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    include /etc/nginx/conf.d/*.conf<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Hostname resolution to our Ghost Blog Service: In our swarm we have a service called blog which is associated to the docknet network, so the dns resolution will resolve to the vip of the service. As seen in the figure below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+</span><span class='line'>nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><code>conf.d/blog.conf</code></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>upstream ghost_blog <span class="o">{</span>
+</span><span class='line'>    server blog:2368<span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>    listen 80<span class="p">;</span>
+</span><span class='line'>    server_name blog.yourdomain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    access_log  /var/log/nginx/blog_access.log  main<span class="p">;</span>
+</span><span class='line'>    error_log   /var/log/nginx/blog_error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>        proxy_cache                 nginx_cache<span class="p">;</span>
+</span><span class='line'>        add_header                  X-Proxy-Cache <span class="nv">$upstream_cache_status</span><span class="p">;</span>
+</span><span class='line'>        proxy_ignore_headers        Cache-Control<span class="p">;</span>
+</span><span class='line'>        proxy_cache_valid any       10m<span class="p">;</span>
+</span><span class='line'>        proxy_cache_use_stale       error timeout http_500 http_502 http_503 http_504<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>        proxy_pass                  http://ghost_blog<span class="p">;</span>
+</span><span class='line'>        proxy_redirect              off<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>        proxy_set_header            Host <span class="nv">$host</span><span class="p">;</span>
+</span><span class='line'>        proxy_set_header            X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>        proxy_set_header            X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>        proxy_set_header            X-Forwarded-Host <span class="nv">$server_name</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Building the Image and Pushing to Gitlab</h2>
+
+<p>I&rsquo;m using Gitlab in this demonstration, but you can use the registry of your choice:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker login registry.gitlab.com
+</span><span class='line'><span class="nv">$ </span>docker build -t registry.gitlab.com/user/docker/arm-nginx:caching .
+</span><span class='line'><span class="nv">$ </span>docker tag registry.gitlab.com/user/docker/arm-nginx:caching registry.gitlab.com/user/docker/arm-nginx:caching
+</span><span class='line'><span class="nv">$ </span>docker push registry.gitlab.com/user/docker/arm-nginx:caching
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy</h2>
+
+<p>Create the Nginx Reverse Proxy Service on Docker Swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create --name nginx_proxy <span class="se">\</span>
+</span><span class='line'>--network docknet <span class="se">\</span>
+</span><span class='line'>--publish 80:80 <span class="se">\</span>
+</span><span class='line'>--replicas <span class="m">1</span> <span class="se">\</span>
+</span><span class='line'>--with-registry-auth registry.gitlab.com/user/docker/arm-nginx:caching
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Listing our Services:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+</span><span class='line'>je7x21l7egoh        nginx_proxy         replicated          1/1                 registry.gitlab.com/user/docker/arm-nginx:caching   *:80-&gt;80/tcp
+</span><span class='line'>nq42a6jfwx3d        blog                replicated          1/1                 alexellis2/ghost-on-docker:armv7
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once you access your proxy on port 80, you should see your Ghost Blog Homepage like below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/ghost-blog-main.png" alt="" /></p>
+
+<p>Have a look at the <a href="https://blog.ruanbekker.com/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">benchmark performance</a> when using Nginx with caching enabled</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-ghost/">https://hub.docker.com/r/rbekker87/armhf-ghost/</a></li>
+</ul>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2018-10-23T17:00:02-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>5:00 pm</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/alpine/'>alpine</a>, <a class='category' href='/blog/categories/caching/'>caching</a>, <a class='category' href='/blog/categories/docker/'>docker</a>, <a class='category' href='/blog/categories/ghost/'>ghost</a>, <a class='category' href='/blog/categories/nginx/'>nginx</a>, <a class='category' href='/blog/categories/raspberrypi/'>raspberrypi</a>, <a class='category' href='/blog/categories/swarm/'>swarm</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/" title="Previous Post: Nginx Caching Performance for Static Content on Docker Swarm with RaspberryPi">&laquo; Nginx Caching Performance for Static Content on Docker Swarm with RaspberryPi</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/">Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">Nginx Caching Performance for Static Content on Docker Swarm With RaspberryPi</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">Setting Up a Docker Swarm Cluster on 3 RaspberryPi Nodes</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/10/23/my-pistack-blog-proudly-hosted-on-my-raspberrypi-swarm-cluster/">My PiStack Blog Proudly Hosted on My RaspberryPi Swarm Cluster</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2018/10/11/capturing-54-million-passwords-with-a-docker-ssh-honeypot/">Capturing 54 Million Passwords With a Docker SSH Honeypot</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2018 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>

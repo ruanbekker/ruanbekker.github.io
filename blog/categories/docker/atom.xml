@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-23T16:57:38-04:00</updated>
+  <updated>2018-10-23T17:24:12-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,188 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/"/>
+    <updated>2018-10-23T17:00:02-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm</id>
+    <content type="html"><![CDATA[<p>In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image.</p>
+
+<p>We will then push the image to gitlab&rsquo;s private registry, and then run the service on docker swarm.</p>
+
+<h2>Create the backend service:</h2>
+
+<p>We will upstream to our blog using ghost, which you can deploy using:</p>
+
+<pre><code class="bash">$ docker service create --name blog --network docknet rbekker87/armhf-ghost:2.0.3
+</code></pre>
+
+<h2>Current File Structure:</h2>
+
+<p>Our file structure for the assets we need to build the reverse proxy:</p>
+
+<pre><code>$ find .
+./conf.d
+./conf.d/blog.conf
+./Dockerfile
+./nginx.conf
+</code></pre>
+
+<ul>
+<li><code>Dockerfile</code></li>
+</ul>
+
+
+<pre><code>FROM hypriot/rpi-alpine-scratch
+MAINTAINER Ruan Bekker
+
+RUN apk update &amp;&amp; \
+    apk add nginx &amp;&amp; \
+    rm -rf /etc/nginx/nginx.conf &amp;&amp; \
+    chown -R nginx:nginx /var/lib/nginx &amp;&amp; \
+    rm -rf /var/cache/apk/*
+
+ADD nginx.conf /etc/nginx/
+ADD conf.d/blog.conf /etc/nginx/conf.d/
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+</code></pre>
+
+<ul>
+<li><code>nginx.conf</code></li>
+</ul>
+
+
+<pre><code>user nginx;
+worker_processes 1;
+
+events {
+    worker_connections 1024;
+    }
+
+error_log  /var/log/nginx/nginx_error.log warn;
+
+http {
+
+    sendfile          on;
+    tcp_nodelay       on;
+
+    gzip              on;
+    gzip_http_version 1.0;
+    gzip_proxied      any;
+    gzip_min_length   500;
+    gzip_disable      "MSIE [1-6]\.";
+    gzip_types        text/plain text/xml text/css
+                      text/comma-separated-values
+                      text/javascript
+                      application/x-javascript
+                      application/atom+xml;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+    error_log   /var/log/nginx/error.log;
+
+    proxy_cache_path /var/cache/nginx/ levels=1:2 keys_zone=nginx_cache:5m max_size=128m inactive=60m;
+
+    keepalive_timeout  60;
+    server_tokens      off;
+
+    include /etc/nginx/conf.d/*.conf;
+
+}
+</code></pre>
+
+<p>Hostname resolution to our Ghost Blog Service: In our swarm we have a service called blog which is associated to the docknet network, so the dns resolution will resolve to the vip of the service. As seen in the figure below:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
+</code></pre>
+
+<ul>
+<li><code>conf.d/blog.conf</code></li>
+</ul>
+
+
+<pre><code>upstream ghost_blog {
+    server blog:2368;
+    }
+
+server {
+    listen 80;
+    server_name blog.yourdomain.com;
+
+    access_log  /var/log/nginx/blog_access.log  main;
+    error_log   /var/log/nginx/blog_error.log;
+
+    location / {
+
+        proxy_cache                 nginx_cache;
+        add_header                  X-Proxy-Cache $upstream_cache_status;
+        proxy_ignore_headers        Cache-Control;
+        proxy_cache_valid any       10m;
+        proxy_cache_use_stale       error timeout http_500 http_502 http_503 http_504;
+
+        proxy_pass                  http://ghost_blog;
+        proxy_redirect              off;
+
+        proxy_set_header            Host $host;
+        proxy_set_header            X-Real-IP $remote_addr;
+        proxy_set_header            X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header            X-Forwarded-Host $server_name;
+    }
+}
+</code></pre>
+
+<h2>Building the Image and Pushing to Gitlab</h2>
+
+<p>I&rsquo;m using Gitlab in this demonstration, but you can use the registry of your choice:</p>
+
+<pre><code>$ docker login registry.gitlab.com
+$ docker build -t registry.gitlab.com/user/docker/arm-nginx:caching .
+$ docker tag registry.gitlab.com/user/docker/arm-nginx:caching registry.gitlab.com/user/docker/arm-nginx:caching
+$ docker push registry.gitlab.com/user/docker/arm-nginx:caching
+</code></pre>
+
+<h2>Deploy</h2>
+
+<p>Create the Nginx Reverse Proxy Service on Docker Swarm:</p>
+
+<pre><code>$ docker service create --name nginx_proxy \
+--network docknet \
+--publish 80:80 \
+--replicas 1 \
+--with-registry-auth registry.gitlab.com/user/docker/arm-nginx:caching
+</code></pre>
+
+<p>Listing our Services:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+je7x21l7egoh        nginx_proxy         replicated          1/1                 registry.gitlab.com/user/docker/arm-nginx:caching   *:80-&gt;80/tcp
+nq42a6jfwx3d        blog                replicated          1/1                 alexellis2/ghost-on-docker:armv7
+</code></pre>
+
+<p>Once you access your proxy on port 80, you should see your Ghost Blog Homepage like below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/ghost-blog-main.png" alt="" /></p>
+
+<p>Have a look at the <a href="https://blog.ruanbekker.com/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">benchmark performance</a> when using Nginx with caching enabled</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-ghost/">https://hub.docker.com/r/rbekker87/armhf-ghost/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Nginx Caching Performance for Static Content on Docker Swarm With RaspberryPi]]></title>
@@ -629,195 +811,6 @@ $ docker logs -f f6cb | grep -v 'Error exchanging' | awk '{print $6, $7, $8}' &g
 </code></pre>
 
 <p>That is correct, 54 million password attempts. 5372 Unique IPs, 4082 Unique Usernames, 88829 Unique Passwords.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Dockerizing a Memcached Server for Docker on Alpine]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine/"/>
-    <updated>2018-09-01T16:01:09-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/memcached-logo.png" alt="" /></p>
-
-<p>This post I will demostrate how to dockerize a memcached server on Alpine and how to create a boot script that allows you to pass environment variables through to the application.</p>
-
-<h2>What is Memcached</h2>
-
-<p>Memcached is a multi-threaded, in-memory key/value store for small chunks of arbitrary data (strings, objects) from results of database calls, API calls, etc. More on <a href="https://memcached.org/about">Memcached</a></p>
-
-<h2>The Dockerfile:</h2>
-
-<p>Our Dockerfile will consist of a simple install of memcached and add a boot script that we will start it from:</p>
-
-<pre><code class="docker">FROM alpine:3.7
-
-COPY boot.sh /boot.sh
-RUN apk --no-cache add memcached &amp;&amp; chmod +x /boot.sh
-
-USER memcached
-CMD ["/boot.sh"]
-</code></pre>
-
-<h2>The Boot Script:</h2>
-
-<p>As you can see we have set defaults so when the user does not specify any environment variables, that it will inherit the default values</p>
-
-<pre><code class="bash">#!/bin/sh
-
-/usr/bin/memcached \
-  --user=${MEMCACHED_USER:-memcached} \
-  --listen=${MEMCACHED_HOST:-0.0.0.0} \
-  --port=${MEMCACHED_PORT:-11211} \
-  --memory-limit=${MEMCACHED_MEMUSAGE:-64} \
-  --conn-limit=${MEMCACHED_MAXCONN:-1024} \
-  --threads=${MEMCACHED_THREADS:-4} \
-  --max-reqs-per-event=${MEMCACHED_REQUESTS_PER_EVENT:-20} \
-  --verbose
-</code></pre>
-
-<h2>Build and Deploy:</h2>
-
-<p>Build the image, if you just want to run the container you can use my public image in the next step:</p>
-
-<pre><code class="bash">$ docker build -t local/memcached:0.1 .
-</code></pre>
-
-<p>Run the Memcached Container:</p>
-
-<pre><code class="bash">$ docker run -itd --name memcached -p 11211:11211 -e MEMCACHED_MEMUSAGE=32 local/memcached:0.1
-</code></pre>
-
-<p>Or my Public Image from Docker Hub:</p>
-
-<pre><code class="bash">$ docker run -itd --name memcached -p 11211:11211 -e MEMCACHED_MEMUSAGE=32 rbekker87/memcached:alpine
-</code></pre>
-
-<h2>Check out the Stats:</h2>
-
-<p>Pass the command <code>stats</code> through the exposed port:</p>
-
-<pre><code>$ echo -e "stats" | nc localhost 11211                                                               
-STAT pid 8
-STAT uptime 2
-STAT time 1535833177
-STAT version 1.5.6
-STAT libevent 2.1.8-stable
-STAT pointer_size 64
-STAT rusage_user 0.030000
-STAT rusage_system 0.000000
-STAT max_connections 1024
-STAT curr_connections 1
-STAT total_connections 2
-STAT rejected_connections 0
-STAT connection_structures 2
-STAT reserved_fds 20
-STAT cmd_get 0
-STAT cmd_set 0
-STAT cmd_flush 0
-STAT cmd_touch 0
-STAT get_hits 0
-STAT get_misses 0
-STAT get_expired 0
-STAT get_flushed 0
-STAT delete_misses 0
-STAT delete_hits 0
-STAT incr_misses 0
-STAT incr_hits 0
-STAT decr_misses 0
-STAT decr_hits 0
-STAT cas_misses 0
-STAT cas_hits 0
-STAT cas_badval 0
-STAT touch_hits 0
-STAT touch_misses 0
-STAT auth_cmds 0
-STAT auth_errors 0
-STAT bytes_read 6
-STAT bytes_written 0
-STAT limit_maxbytes 33554432
-STAT accepting_conns 1
-STAT listen_disabled_num 0
-STAT time_in_listen_disabled_us 0
-STAT threads 4
-STAT conn_yields 0
-STAT hash_power_level 16
-STAT hash_bytes 524288
-STAT hash_is_expanding 0
-STAT slab_reassign_rescues 0
-STAT slab_reassign_chunk_rescues 0
-STAT slab_reassign_evictions_nomem 0
-STAT slab_reassign_inline_reclaim 0
-STAT slab_reassign_busy_items 0
-STAT slab_reassign_busy_deletes 0
-STAT slab_reassign_running 0
-STAT slabs_moved 0
-STAT lru_crawler_running 0
-STAT lru_crawler_starts 255
-STAT lru_maintainer_juggles 155
-STAT malloc_fails 0
-STAT log_worker_dropped 0
-STAT log_worker_written 0
-STAT log_watcher_skipped 0
-STAT log_watcher_sent 0
-STAT bytes 0
-STAT curr_items 0
-STAT total_items 0
-STAT slab_global_page_pool 0
-STAT expired_unfetched 0
-STAT evicted_unfetched 0
-STAT evicted_active 0
-STAT evictions 0
-STAT reclaimed 0
-STAT crawler_reclaimed 0
-STAT crawler_items_checked 0
-STAT lrutail_reflocked 0
-STAT moves_to_cold 0
-STAT moves_to_warm 0
-STAT moves_within_lru 0
-STAT direct_reclaims 0
-STAT lru_bumps_dropped 0
-END
-</code></pre>
-
-<p>Some descriptions:</p>
-
-<p><code>evictions</code> - when items are evicted from the cache
-<code>total_items</code> - the number of items the server has stored since it was started
-<code>current_items</code> - the number of items in the cache
-<code>bytes</code> - the current number of bytes used to store items
-<code>limit_maxbytes</code> - the number of bytes the server is allowed to use for storage
-<code>get_misses</code> - the number of times a item has been requested, but not found
-<code>get_hits</code> - the number of times a item has been served from the cache</p>
-
-<p>To get specific stats, like evictions:</p>
-
-<pre><code class="bash">$ echo -e "stats" | nc localhost 11211 | grep -w evictions   
-STAT evictions 0
-</code></pre>
-
-<p>When you see evictions value increases, this essentially means that memcache had to remove the oldest items from memory for new or more frequent used items. If this number remains high, consider increasing your memory allocated to memcache.</p>
-
-<p>Slab Stats: returns information about each of the slabs created by memcached during runtime:</p>
-
-<pre><code class="bash">$ echo -e "stats slabs" | nc localhost 11211                 
-STAT active_slabs 0
-STAT total_malloced 0
-</code></pre>
-
-<p><code>active_slabs</code> - Total number of slab classes allocated.
-<code>total_malloced</code> - Total amount of memory allocated to slab pages.</p>
-
-<p>For detailed description about statistics, have a look at their github resource:
-- <a href="https://github.com/memcached/memcached/blob/master/doc/protocol.txt">https://github.com/memcached/memcached/blob/master/doc/protocol.txt</a></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://memcached.org/">https://memcached.org/</a></li>
-<li><a href="https://blog.serverdensity.com/monitor-memcached/">https://blog.serverdensity.com/monitor-memcached/</a></li>
-<li><a href="https://wiki.mikejung.biz/Memcached">https://wiki.mikejung.biz/Memcached</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

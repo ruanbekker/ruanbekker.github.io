@@ -165,7 +165,7 @@ Listing our Services:
 $ docker service ls
 ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
 je7x21l7egoh        nginx_proxy         replicated          1/1                 registry.gitlab.com/user/docker/arm-nginx:caching   *:80->80/tcp
-nq42a6jfwx3d        blog                replicated          1/1                 alexellis2/ghost-on-docker:armv7
+nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
 ```
 
 Once you access your proxy on port 80, you should see your Ghost Blog Homepage like below:

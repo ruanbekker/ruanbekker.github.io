@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Traefik | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/traefik/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-23T17:36:51-04:00</updated>
+  <updated>2018-10-23T17:50:40-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,290 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Building Ghost Version 2 Blog for the RaspberryPi]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/23/building-ghost-version-2-blog-for-the-raspberrypi/"/>
+    <updated>2018-10-23T17:37:49-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/23/building-ghost-version-2-blog-for-the-raspberrypi</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/ghost-blog-main.png" alt="" /></p>
+
+<p>In this post we will setup Ghost 2.0.3 for the Raspberry Pi on Docker Swarm</p>
+
+<h2>Dockerfile</h2>
+
+<p>Our dockerfile:</p>
+
+<pre><code>FROM rbekker87/armhf-node:8.11
+
+RUN apk add --no-cache 'su-exec&gt;=0.2' &amp;&amp; apk --update add bash gcc g++ make python &amp;&amp; npm install sqlite3 --build-from-source
+
+ENV NODE_ENV production
+ENV GHOST_CLI_VERSION 1.9.1
+ENV GHOST_VERSION 2.0.3
+ENV GHOST_INSTALL /var/lib/ghost
+ENV GHOST_CONTENT /var/lib/ghost/content
+
+RUN npm install -g "ghost-cli@$GHOST_CLI_VERSION"
+
+RUN set -ex; \
+        mkdir -p "$GHOST_INSTALL" \
+        &amp;&amp; adduser -s /bin/sh -D node \
+        &amp;&amp; chown node:node "$GHOST_INSTALL" \
+        &amp;&amp; su-exec node ghost install "$GHOST_VERSION" --db sqlite3 --no-prompt --no-stack --no-setup --dir "$GHOST_INSTALL" \
+        &amp;&amp; cd "$GHOST_INSTALL" \
+        &amp;&amp; su-exec node ghost config --ip 0.0.0.0 --port 2368 --no-prompt --db sqlite3 --url http://localhost:2368 --dbpath "$GHOST_CONTENT/data/ghost.db" \
+        &amp;&amp; su-exec node ghost config paths.contentPath "$GHOST_CONTENT" \
+        &amp;&amp; su-exec node ln -s config.production.json "$GHOST_INSTALL/config.development.json" \
+        &amp;&amp; readlink -f "$GHOST_INSTALL/config.development.json" \
+        &amp;&amp; mv "$GHOST_CONTENT" "$GHOST_INSTALL/content.orig" \
+        &amp;&amp; mkdir -p "$GHOST_CONTENT" &amp;&amp; chown node:node "$GHOST_CONTENT" \
+        &amp;&amp; "$GHOST_INSTALL/current/node_modules/knex-migrator/bin/knex-migrator" --version
+
+ENV PATH $PATH:$GHOST_INSTALL/current/node_modules/knex-migrator/bin
+
+WORKDIR $GHOST_INSTALL
+
+COPY docker-entrypoint.sh /usr/local/bin
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+CMD ["node", "current/index.js"]
+</code></pre>
+
+<h2>Our Boot Script</h2>
+
+<p>Our entrypoint script <code>docker-entrypoint.sh</code>:</p>
+
+<pre><code>#!/bin/bash
+set -e
+
+if [[ "$*" == node*current/index.js* ]] &amp;&amp; [ "$(id -u)" = '0' ];
+  then
+    chown -R node "$GHOST_CONTENT"
+    exec su-exec node "$BASH_SOURCE" "$@"
+fi
+
+if [[ "$*" == node*current/index.js* ]];
+  then
+    baseDir="$GHOST_INSTALL/content.orig"
+    for src in "$baseDir"/*/ "$baseDir"/themes/*;
+      do
+        src="${src%/}"
+        target="$GHOST_CONTENT/${src#$baseDir/}"
+        mkdir -p "$(dirname "$target")"
+        if [ ! -e "$target" ];
+          then
+            tar -cC "$(dirname "$src")" "$(basename "$src")" | tar -xC "$(dirname "$target")"
+        fi
+      done
+
+    knex-migrator-migrate --init --mgpath "$GHOST_INSTALL/current"
+fi
+
+prod() {
+cat &gt; /var/lib/ghost/config.development.json &lt;&lt; EOF
+{
+  "url": "http://${SERVER_URL:-localhost}:${SERVER_PORT:-2368}",
+  "server": {
+    "port": ${SERVER_PORT:-2368},
+    "host": "0.0.0.0"
+  },
+  "database": {
+    "client": "sqlite3",
+    "connection": {
+      "filename": "/var/lib/ghost/content/data/ghost.db"
+    }
+  },
+  "mail": {
+    "transport": "SMTP",
+    "from": "${FROM_NAME:-MyBlog} &lt;${FROM_EMAIL:-ghost-blog@localhost}&gt;",
+    "options": {
+      "service": "Mailgun",
+      "host": "${SMTP_HOST:-localhost}",
+      "port": ${SMTP_PORT:-25},
+      "auth": {
+        "user": "${SMTP_AUTH_USERNAME:-root}",
+        "pass": "${SMTP_AUTH_PASSWORD:-password}"
+      }
+    }
+  },
+  "logging": {
+    "transports": [
+      "file",
+      "stdout"
+    ]
+  },
+  "process": "systemd",
+  "paths": {
+    "contentPath": "/var/lib/ghost/content"
+  }
+}
+EOF
+}
+
+dev() {
+cat &gt; /var/lib/ghost/config.development.json &lt;&lt; EOF
+{
+  "url": "http://${SERVER_URL:-localhost}:${SERVER_PORT:-2368}",
+  "server": {
+    "port": ${SERVER_PORT:-2368},
+    "host": "0.0.0.0"
+  },
+  "database": {
+    "client": "sqlite3",
+    "connection": {
+      "filename": "/var/lib/ghost/content/data/ghost.db"
+    }
+  },
+  "mail": {
+    "transport": "Direct"
+  },
+  "logging": {
+    "transports": [
+      "file",
+      "stdout"
+    ]
+  },
+  "process": "systemd",
+  "paths": {
+    "contentPath": "/var/lib/ghost/content"
+  }
+}
+EOF
+}
+
+test(){
+cat &gt; /var/lib/ghost/config.development.json &lt;&lt; EOF
+{
+  "url": "http://localhost:2368",
+  "server": {
+    "port": 2368,
+    "host": "0.0.0.0"
+  },
+  "database": {
+    "client": "sqlite3",
+    "connection": {
+      "filename": "/var/lib/ghost/content/data/ghost.db"
+    }
+  },
+  "mail": {
+    "transport": "Direct"
+  },
+  "logging": {
+    "transports": [
+      "file",
+      "stdout"
+    ]
+  },
+  "process": "systemd",
+  "paths": {
+    "contentPath": "/var/lib/ghost/content"
+  }
+}
+EOF
+}
+
+if  [ "${ENV_TYPE}" = "PROD" ]
+  then prod
+
+elif [ "${ENV_TYPE}" = "DEV" ]
+  then dev
+  else test
+
+fi
+
+exec "$@"
+</code></pre>
+
+<p>The entrypoint script takes a couple of environment variables, as you can see if they are not defined, defaults will be inherited.</p>
+
+<p>Configurable Environment Variables:</p>
+
+<pre><code>      - ENV_TYPE=PROD
+      - SERVER_PORT=2368
+      - SERVER_URL=myblog.pistack.co.za
+      - FROM_NAME=MyName
+      - SMTP_HOST=mail.mydomain.co.za
+      - SMTP_PORT=587
+      - SMTP_AUTH_USERNAME=me@mydomain.co.za
+      - SMTP_AUTH_PASSWORD=secret
+</code></pre>
+
+<h2>Building our Ghost Image</h2>
+
+<p>I have a public image available if you dont want to build/push, but for building:</p>
+
+<pre><code>$ docker build -t your-name/repo:tag
+</code></pre>
+
+<h2>Deploy Ghost with Traefik</h2>
+
+<p>Our <code>ghost-compose.yml</code> with traefik will look like the following, note that I mounted the source path to the container&rsquo;s path, the source path is running on a replicated glusterfs volume, which can be setup following <a href="https://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">this post</a></p>
+
+<p>Also for this demonstration I was using the domain pistack.co.za, where you need to utilize the domain of your choice.</p>
+
+<pre><code>version: "3.4"
+
+services:
+  ghost:
+    image: rbekker87/armhf-ghost:2.0.3
+    networks:
+      - appnet
+    volumes:
+      - type: bind
+        source: /mnt/volumes/myblog/content/data
+        target: /var/www/ghost/content/data
+    environment:
+      - ENV_TYPE=PROD
+      - SERVER_PORT=2368
+      - SERVER_URL=myblog.pistack.co.za
+      - FROM_NAME=MyName
+      - SMTP_HOST=mail.mydomain.co.za
+      - SMTP_PORT=587
+      - SMTP_AUTH_USERNAME=me@mydomain.co.za
+      - SMTP_AUTH_PASSWORD=secret
+    deploy:
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.backend=ghost"
+        - "traefik.backend.loadbalancer.swarm=true"
+        - "traefik.docker.network=appnet"
+        - "traefik.port=2368"
+        - "traefik.frontend.passHostHeader=true"
+        - "traefik.frontend.rule=Host:myblog.pistack.co.za"
+      replicas: 3
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == worker]
+
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>Deploy the stack:</p>
+
+<pre><code>$ docker stack deploy -c ghost-compose.yml web
+</code></pre>
+
+<p>Once the service is up, you will be able to reach your blog on the provided <code>traefik.frontend.rule</code>. If you don&rsquo;t have traefik running, you can follow <a href="https://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/">this post</a> to get traefik up and running.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-ghost/">https://hub.docker.com/r/rbekker87/armhf-ghost/</a></li>
+<li><a href="https://github.com/ruanbekker/ghost-armhf">https://github.com/ruanbekker/ghost-armhf</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Build a Traefik Proxy Image for Your Raspberry Pi on Docker Swarm]]></title>
@@ -1436,71 +1720,6 @@ $ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/java_web:latest
 
 <center>
         <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run Kibana on Docker Swarm With Traefik]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/09/run-kibana-on-docker-swarm-with-traefik/"/>
-    <updated>2017-09-09T18:33:12-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/09/run-kibana-on-docker-swarm-with-traefik</id>
-    <content type="html"><![CDATA[<p>We will create a Kibana Service on Docker Swarm, that will sit behind a Traefik Reverse Proxy.</p>
-
-<h2>Create the Overlay Network:</h2>
-
-<pre><code class="bash">$ docker network create --driver overlay appnet
-</code></pre>
-
-<h2>Create the Traefik Service:</h2>
-
-<pre><code class="bash">docker service create \
---name traefik \
---constraint 'node.role==manager' \
---publish 80:80 \
---publish 443:443 \
---publish 8080:8080 \
---mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
---network appnet \
-traefik:camembert \
---docker --docker.swarmmode  \
---docker.domain=apps.domain.com \
---docker.watch \
---logLevel=DEBUG \
---web
-</code></pre>
-
-<h2>Set DNS:</h2>
-
-<p>Set a wildcard <code>*.apps.domain.com</code> to resolve to <code>apps.domain.com</code>, where <code>apps.domain.com</code> resolves to your swarm addresses</p>
-
-<h2>Create Kibana:</h2>
-
-<p>Create a Kibana Service and set the <code>ELASTICSEARCH_URL</code> to your External Elasticsearch Endpoint, take note that it uses port <code>9200</code> by default.</p>
-
-<pre><code class="bash">$ docker service create \
---name kibana \
---label 'traefik.port=5601' \
---network appnet \
---env KIBANA_ELASTICSEARCH_URL=elasticsearch.domain.com \
-bitnami/kibana
-</code></pre>
-
-<h2>Access Kibana:</h2>
-
-<p>Your Kibana endpoint will be available at: <code>http://kibana.apps.domain.com</code></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://github.com/bitnami/bitnami-docker-kibana">https://github.com/bitnami/bitnami-docker-kibana</a></li>
-<li><a href="https://docs.traefik.io/">https://docs.traefik.io/</a></li>
-</ul>
-
-
-<center>
-    <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
 </center>
 
 ]]></content>

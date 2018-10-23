@@ -6,7 +6,7 @@ comments: true
 categories: ["raspberrypi", "traefik", "docker", "swarm"]
 ---
 
-![](https://objects.ruanbekker.com/assets/images/pistack-header-a.png)
+![](https://objects.ruanbekker.com/assets/images/traefik-logo-routing.png)
 
 In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our Raspberry Pi Docker Swarm. 
 

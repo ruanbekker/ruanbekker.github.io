@@ -363,3 +363,10 @@ pi@rpi-01:~ $ docker service rm web01
 web01
 ```
 
+## Massive Thanks:
+
+a Massive thanks to [Alex Ellis](https://twitter.com/alexellisuk) for mentioning me on one of his blogposts:
+
+- [https://blog.alexellis.io/blog-community-inspiration/](https://blog.alexellis.io/blog-community-inspiration/)
+
+![](https://objects.ruanbekker.com/assets/images/tweet-alexellis-21072017.png)

@@ -6,7 +6,7 @@ comments: true
 categories: ["raspberrypi", "docker", "swarm", "cluster"] 
 ---
 
-This is a repost of my [first blogpost which is hosted on my Raspberry Pi Cluster (04 July 2017)](http://blog.pistack.co.za/my-blog-proudly-hosted-on-my-raspberrypi-cluster/), that runs Docker Swarm and is served from my Home in South Africa.
+This is a repost of my [first blogpost which is hosted on my Raspberry Pi Cluster (04 July 2017)](http://blog.pistack.co.za/my-blog-proudly-hosted-on-my-raspberrypi-cluster/), that runs Docker Swarm and is served from my Home in South Africa, and can be accessed on [http://blog.pistack.co.za](http://blog.pistack.co.za)
 
 ## Just Look at It!
 

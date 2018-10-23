@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-23T17:28:54-04:00</updated>
+  <updated>2018-10-23T17:36:51-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,264 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Build a Traefik Proxy Image for Your Raspberry Pi on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/"/>
+    <updated>2018-10-23T17:31:02-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/pistack-header-a.png" alt="" /></p>
+
+<p>In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our Raspberry Pi Docker Swarm.</p>
+
+<p>Then we will build and push our image to a registry, then setup traefik and also setup a web application that sits behind our Traefik Proxy.</p>
+
+<h2>What is Traefik</h2>
+
+<p><a href="https://traefik.io/">Traefik</a> is a modern load balancer and reverse proxy built for micro services.</p>
+
+<h2>Dockerfile</h2>
+
+<p>We will be running Traefik on Alpine 3.8:</p>
+
+<pre><code class="dockerfile">FROM rbekker87/armhf-alpine:3.8
+
+ENV TRAEFIK_VERSION 1.7.0-rc3
+ENV ARCH arm
+
+ADD https://github.com/containous/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_linux-${ARCH} /traefik
+
+RUN apk add --no-cache ca-certificates \
+    &amp;&amp; chmod +x /traefik \
+    &amp;&amp; rm -rf /var/cache/apk/*
+
+EXPOSE 80 8080 443
+
+ENTRYPOINT ["/traefik"]
+</code></pre>
+
+<h2>Build and Push</h2>
+
+<p>Build and Push your image to your registry of choice:</p>
+
+<pre><code class="bash">$ docker build -t your-user/repo:tag .
+$ docker push your-user/repo:tag
+</code></pre>
+
+<p>If you do not want to push to a registry, I have a public image available at <a href="https://hub.docker.com/r/rbekker87/armhf-traefik/">https://hub.docker.com/r/rbekker87/armhf-traefik/</a>, the image itself is <code>rbekker87/armhf-traefik:1.7.0-rc3</code></p>
+
+<h2>Deploy Traefik to the Swarm</h2>
+
+<p>From our <code>traefik-compose.yml</code>, you will notice that I have set that our network is external, so the network should exist prior to deploying the stack.</p>
+
+<p>Let&rsquo;s create the overlay network:</p>
+
+<pre><code class="bash">$ docker network create --driver overlay appnet
+</code></pre>
+
+<p>Below, the <code>traefik-compose.yml</code>, note that I&rsquo;m using pistack.co.za as my domain:</p>
+
+<pre><code class="yml">version: "3.4"
+
+services:
+  traefik: 
+    image: rbekker87/armhf-traefik:1.7.0-rc3
+    command:
+      - "--api"
+      - "--docker"
+      - "--docker.swarmmode"
+      - "--docker.domain=pistack.co.za"
+      - "--docker.watch"
+      - "--logLevel=DEBUG"
+      - "--web"
+    networks:
+      - appnet
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 80:80
+      - 8080:8080
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>Deploy the stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c traefik-compose.yml proxy
+</code></pre>
+
+<p>List the stacks:</p>
+
+<pre><code class="bash">$ docker stack ls
+NAME                SERVICES
+proxy               1
+</code></pre>
+
+<p>Check if the services in your stack is running. Since our deploy mode was global, there will be a replica running on each node, and in my swarm I&rsquo;ve got 3 nodes:</p>
+
+<pre><code class="bash">$ docker stack services proxy
+ID                  NAME                MODE                REPLICAS            IMAGE                    PORTS
+16x31j7o0f0r        proxy_traefik       global              3/3                 rbekker87/armhf-traefik:1.7.0-rc3   *:80-&gt;80/tcp,*:8080-&gt;8080/tcp
+</code></pre>
+
+<h2>Deploy a Web Service hooked up to Traefik</h2>
+
+<p>Pre-Requirement:</p>
+
+<p>To register subdomains on the fly, set you DNS for your domain to the following (im using pistack.co.za in this example):</p>
+
+<ul>
+<li><code>pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
+<li><code>*.pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
+</ul>
+
+
+<p>Next, we will deploy we app that will be associated to our Traefik service domain, so we will inform Traefik that our web app fqdn and port that will be registered with the proxy.</p>
+
+<p>Our <code>app-compose.yml</code> file for our webapp:</p>
+
+<pre><code class="yml">version: "3.4"
+
+services:
+  whoami:
+    image: rbekker87/golang-whoami:alpine-amrhf
+    networks:
+      - appnet
+    deploy:
+      replicas: 3
+      labels:
+        - "traefik.backend=whoami"
+        - "traefik.port=80"
+        - "traefik.frontend.rule=Host:whoami.pistack.co.za"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == worker]
+    healthcheck:
+      test: nc -vz 127.0.0.1 80 || exit 1
+      interval: 60s
+      timeout: 3s
+      retries: 3
+
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>In the above compose, you will notice that our traefik backend is set to our service name, our port is the port that the proxy will forward requests to the containers port, since the proxy and the whoami container is in the same network, they will be able to communicate with each other. Then we also have our frontend rule which will be the endpoint we will reach our application on.</p>
+
+<p>Deploy the stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c whoami.yml web
+Creating service web_whoami
+</code></pre>
+
+<p>List the tasks running in our web stack:</p>
+
+<pre><code class="bash">$ docker stack services web
+ID                  NAME                MODE                REPLICAS            IMAGE                                  PORTS
+31ylfcfb7uyw        web_whoami          replicated          3/3                 rbekker87/golang-whoami:alpine-amrhf
+</code></pre>
+
+<p>Once all the replicas is running, move along to test the application</p>
+
+<h2>Testing our Application:</h2>
+
+<p>I have 3 replicas each running on their own container, so each container will respond with its own hostname:</p>
+
+<pre><code class="bash">$ docker service ps web_whoami
+ID                  NAME                IMAGE                                  NODE                DESIRED STATE       CURRENT STATE            ERROR                              PORTS
+ivn8fgfosvgd        web_whoami.1        rbekker87/golang-whoami:alpine-amrhf   rpi-01              Running             Running 26 minutes ago
+rze6u6z56aop        web_whoami.2        rbekker87/golang-whoami:alpine-amrhf   rpi-02              Running             Running 26 minutes ago
+6fjua869r498        web_whoami.3        rbekker87/golang-whoami:alpine-amrhf   rpi-04              Running             Running 23 minutes ago
+</code></pre>
+
+<p>Making our 1st GET request:</p>
+
+<pre><code class="bash">$ $ curl http://whoami.pistack.co.za/
+Hostname: 43f5f0a6682f
+IP: 127.0.0.1
+IP: 10.0.0.138
+IP: 10.0.0.218
+IP: 172.18.0.4
+GET / HTTP/1.1
+Host: whoami.pistack.co.za
+User-Agent: curl/7.38.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 165.73.96.95, 10.255.0.2
+X-Forwarded-Host: whoami.pistack.co.za
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Forwarded-Server: 31b37f9714d3
+X-Real-Ip: 10.255.0.2
+</code></pre>
+
+<p>Our 2nd GET Request:</p>
+
+<pre><code class="bash">$ curl http://whoami.pistack.co.za/
+Hostname: d1c17a476414
+IP: 127.0.0.1
+IP: 10.0.0.138
+IP: 10.0.0.71
+IP: 172.19.0.5
+GET / HTTP/1.1
+Host: whoami.pistack.co.za
+User-Agent: curl/7.38.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 165.73.96.95, 10.255.0.2
+X-Forwarded-Host: whoami.pistack.co.za
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Forwarded-Server: 02b0ff6eab73
+X-Real-Ip: 10.255.0.2
+</code></pre>
+
+<p>And our 3rd GET Request:</p>
+
+<pre><code>$ curl http://whoami.pistack.co.za/
+Hostname: 17c817a1813b
+IP: 172.18.0.6
+IP: 127.0.0.1
+IP: 10.0.0.138
+IP: 10.0.0.73
+GET / HTTP/1.1
+Host: whoami.pistack.co.za
+User-Agent: curl/7.38.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 165.73.96.95, 10.255.0.2
+X-Forwarded-Host: whoami.pistack.co.za
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Forwarded-Server: 31b37f9714d3
+X-Real-Ip: 10.255.0.2
+</code></pre>
+
+<p>Hope this was useful.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-traefik/tags/">https://hub.docker.com/r/rbekker87/armhf-traefik/tags/</a></li>
+<li><a href="https://github.com/containous/traefik/releases">https://github.com/containous/traefik/releases</a></li>
+<li><a href="https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile">https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm]]></title>
@@ -717,100 +975,6 @@ web01
 <h2>Thanks!</h2>
 
 <p>Thanks for the visit, I will blog about awesome Docker and RaspberryPi related stuff as my mind stumble along awesome ideas :)</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Capturing 54 Million Passwords With a Docker SSH Honeypot]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/10/11/capturing-54-million-passwords-with-a-docker-ssh-honeypot/"/>
-    <updated>2018-10-11T16:38:52-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/10/11/capturing-54-million-passwords-with-a-docker-ssh-honeypot</id>
-    <content type="html"><![CDATA[<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1539291851/ssh-docker-honeypot_eyhzc7.png" alt="" /></p>
-
-<p>The last couple of days I picked up on my ELK Stack a couple thousands of SSH Brute Force Attacks, so I decided I will just revisit my SSH Server configuration, and change my SSH Port to something else for the interim. The dashboard that showed me the results at that point in time:</p>
-
-<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1539292443/kibana-failed-ssh-auth_udkxkl.png" alt="" /></p>
-
-<p>Then I decided I actually would like to setup a SSH Honeypot to listen on Port 22 and change my SSH Server to listen on 222 and capture their IP Addresses, Usernames and Passwords that they are trying to use and dump it all in a file so that I can build up my own password dictionary :D</p>
-
-<h2>SSH Configuration:</h2>
-
-<p>Changing the SSH Port:</p>
-
-<pre><code class="bash">$ sudo vim /etc/ssh/sshd_config
-</code></pre>
-
-<p>Change the port to 222:</p>
-
-<pre><code class="bash">Port 222
-</code></pre>
-
-<p>Restart the SSH Server:</p>
-
-<pre><code class="bash">$ sudo /etc/init.d/ssh restart
-</code></pre>
-
-<p>Verify that the SSH Server is running on the new port:</p>
-
-<pre><code class="bash">$ sudo netstat -tulpn | grep sshd
-tcp        0      0 0.0.0.0:222            0.0.0.0:*               LISTEN      28838/sshd
-</code></pre>
-
-<h2>Docker SSH Honeypot:</h2>
-
-<p>Thanks to <a href="https://github.com/random-robbie/docker-ssh-honey">random-robbie</a>, as he had everything I was looking for on Github.</p>
-
-<p>Setup the SSH Honeypot:</p>
-
-<pre><code class="bash">$ git clone https://github.com/random-robbie/docker-ssh-honey
-$ cd docker-ssh-honey/
-$ docker build . -t local:ssh-honepot
-$ docker run -itd --name ssh-honeypot -p 22:22 local:ssh-honepot
-</code></pre>
-
-<p>Once people attempt to ssh, you will get the output to stdout:</p>
-
-<pre><code class="bash">$ docker logs -f $(docker ps -f name=ssh-honeypot -q) | grep -v 'Error exchanging' | head -10
-[Tue Jul 31 01:13:41 2018] ssh-honeypot 0.0.8 by Daniel Roberson started on port 22. PID 5
-[Tue Jul 31 01:19:49 2018] 1xx.1xx.1xx.1x gambaa gambaa
-[Tue Jul 31 01:23:26 2018] 1xx.9x.1xx.1xx root toor
-[Tue Jul 31 01:25:57 2018] 1xx.2xx.1xx.1xx root Passw0rd1234
-[Tue Jul 31 01:26:00 2018] 1xx.2xx.1xx.1xx root Qwer1234
-[Tue Jul 31 01:26:00 2018] 1xx.2xx.1xx.1xx root Abcd1234
-[Tue Jul 31 01:26:08 2018] 1xx.2xx.1xx.1xx root ubuntu
-[Tue Jul 31 01:26:09 2018] 1xx.2xx.1xx.1xx root PassWord
-[Tue Jul 31 01:26:10 2018] 1xx.2xx.1xx.1xx root password321
-[Tue Jul 31 01:26:15 2018] 1xx.2xx.1xx.1xx root zxcvbnm
-</code></pre>
-
-<h2>Saving results to disk:</h2>
-
-<p>Redirecting the output to a log file, running in the foreground as a screen session:</p>
-
-<pre><code class="bash">$ screen -S honeypot
-$ docker logs -f f6cb | grep -v 'Error exchanging' | awk '{print $6, $7, $8}' &gt;&gt; /var/log/ssh-honeypot.log
-</code></pre>
-
-<p>Detach from your screen session:</p>
-
-<pre><code class="bash">Ctrl + a; d
-</code></pre>
-
-<p>Checking out the logs</p>
-
-<pre><code class="bash">$ head -3 /var/log/ssh-honeypot.log
-2.7.2x.1x root jiefan
-4x.7.2x.1x root HowAreYou
-4x.7.2x.1x root Sqladmin
-</code></pre>
-
-<p>Leaving this running for a couple of months, and I have a massive password database:</p>
-
-<pre><code class="bash">$ wc -l /var/log/honeypot/ssh.log
-54184260 /var/log/honeypot/ssh.log
-</code></pre>
-
-<p>That is correct, 54 million password attempts. 5372 Unique IPs, 4082 Unique Usernames, 88829 Unique Passwords.</p>
 ]]></content>
   </entry>
   

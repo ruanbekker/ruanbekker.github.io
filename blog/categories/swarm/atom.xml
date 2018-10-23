@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Swarm | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/swarm/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-23T17:28:54-04:00</updated>
+  <updated>2018-10-23T17:36:51-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,264 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Build a Traefik Proxy Image for Your Raspberry Pi on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/"/>
+    <updated>2018-10-23T17:31:02-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/pistack-header-a.png" alt="" /></p>
+
+<p>In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our Raspberry Pi Docker Swarm.</p>
+
+<p>Then we will build and push our image to a registry, then setup traefik and also setup a web application that sits behind our Traefik Proxy.</p>
+
+<h2>What is Traefik</h2>
+
+<p><a href="https://traefik.io/">Traefik</a> is a modern load balancer and reverse proxy built for micro services.</p>
+
+<h2>Dockerfile</h2>
+
+<p>We will be running Traefik on Alpine 3.8:</p>
+
+<pre><code class="dockerfile">FROM rbekker87/armhf-alpine:3.8
+
+ENV TRAEFIK_VERSION 1.7.0-rc3
+ENV ARCH arm
+
+ADD https://github.com/containous/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_linux-${ARCH} /traefik
+
+RUN apk add --no-cache ca-certificates \
+    &amp;&amp; chmod +x /traefik \
+    &amp;&amp; rm -rf /var/cache/apk/*
+
+EXPOSE 80 8080 443
+
+ENTRYPOINT ["/traefik"]
+</code></pre>
+
+<h2>Build and Push</h2>
+
+<p>Build and Push your image to your registry of choice:</p>
+
+<pre><code class="bash">$ docker build -t your-user/repo:tag .
+$ docker push your-user/repo:tag
+</code></pre>
+
+<p>If you do not want to push to a registry, I have a public image available at <a href="https://hub.docker.com/r/rbekker87/armhf-traefik/">https://hub.docker.com/r/rbekker87/armhf-traefik/</a>, the image itself is <code>rbekker87/armhf-traefik:1.7.0-rc3</code></p>
+
+<h2>Deploy Traefik to the Swarm</h2>
+
+<p>From our <code>traefik-compose.yml</code>, you will notice that I have set that our network is external, so the network should exist prior to deploying the stack.</p>
+
+<p>Let&rsquo;s create the overlay network:</p>
+
+<pre><code class="bash">$ docker network create --driver overlay appnet
+</code></pre>
+
+<p>Below, the <code>traefik-compose.yml</code>, note that I&rsquo;m using pistack.co.za as my domain:</p>
+
+<pre><code class="yml">version: "3.4"
+
+services:
+  traefik: 
+    image: rbekker87/armhf-traefik:1.7.0-rc3
+    command:
+      - "--api"
+      - "--docker"
+      - "--docker.swarmmode"
+      - "--docker.domain=pistack.co.za"
+      - "--docker.watch"
+      - "--logLevel=DEBUG"
+      - "--web"
+    networks:
+      - appnet
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 80:80
+      - 8080:8080
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>Deploy the stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c traefik-compose.yml proxy
+</code></pre>
+
+<p>List the stacks:</p>
+
+<pre><code class="bash">$ docker stack ls
+NAME                SERVICES
+proxy               1
+</code></pre>
+
+<p>Check if the services in your stack is running. Since our deploy mode was global, there will be a replica running on each node, and in my swarm I&rsquo;ve got 3 nodes:</p>
+
+<pre><code class="bash">$ docker stack services proxy
+ID                  NAME                MODE                REPLICAS            IMAGE                    PORTS
+16x31j7o0f0r        proxy_traefik       global              3/3                 rbekker87/armhf-traefik:1.7.0-rc3   *:80-&gt;80/tcp,*:8080-&gt;8080/tcp
+</code></pre>
+
+<h2>Deploy a Web Service hooked up to Traefik</h2>
+
+<p>Pre-Requirement:</p>
+
+<p>To register subdomains on the fly, set you DNS for your domain to the following (im using pistack.co.za in this example):</p>
+
+<ul>
+<li><code>pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
+<li><code>*.pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
+</ul>
+
+
+<p>Next, we will deploy we app that will be associated to our Traefik service domain, so we will inform Traefik that our web app fqdn and port that will be registered with the proxy.</p>
+
+<p>Our <code>app-compose.yml</code> file for our webapp:</p>
+
+<pre><code class="yml">version: "3.4"
+
+services:
+  whoami:
+    image: rbekker87/golang-whoami:alpine-amrhf
+    networks:
+      - appnet
+    deploy:
+      replicas: 3
+      labels:
+        - "traefik.backend=whoami"
+        - "traefik.port=80"
+        - "traefik.frontend.rule=Host:whoami.pistack.co.za"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == worker]
+    healthcheck:
+      test: nc -vz 127.0.0.1 80 || exit 1
+      interval: 60s
+      timeout: 3s
+      retries: 3
+
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>In the above compose, you will notice that our traefik backend is set to our service name, our port is the port that the proxy will forward requests to the containers port, since the proxy and the whoami container is in the same network, they will be able to communicate with each other. Then we also have our frontend rule which will be the endpoint we will reach our application on.</p>
+
+<p>Deploy the stack:</p>
+
+<pre><code class="bash">$ docker stack deploy -c whoami.yml web
+Creating service web_whoami
+</code></pre>
+
+<p>List the tasks running in our web stack:</p>
+
+<pre><code class="bash">$ docker stack services web
+ID                  NAME                MODE                REPLICAS            IMAGE                                  PORTS
+31ylfcfb7uyw        web_whoami          replicated          3/3                 rbekker87/golang-whoami:alpine-amrhf
+</code></pre>
+
+<p>Once all the replicas is running, move along to test the application</p>
+
+<h2>Testing our Application:</h2>
+
+<p>I have 3 replicas each running on their own container, so each container will respond with its own hostname:</p>
+
+<pre><code class="bash">$ docker service ps web_whoami
+ID                  NAME                IMAGE                                  NODE                DESIRED STATE       CURRENT STATE            ERROR                              PORTS
+ivn8fgfosvgd        web_whoami.1        rbekker87/golang-whoami:alpine-amrhf   rpi-01              Running             Running 26 minutes ago
+rze6u6z56aop        web_whoami.2        rbekker87/golang-whoami:alpine-amrhf   rpi-02              Running             Running 26 minutes ago
+6fjua869r498        web_whoami.3        rbekker87/golang-whoami:alpine-amrhf   rpi-04              Running             Running 23 minutes ago
+</code></pre>
+
+<p>Making our 1st GET request:</p>
+
+<pre><code class="bash">$ $ curl http://whoami.pistack.co.za/
+Hostname: 43f5f0a6682f
+IP: 127.0.0.1
+IP: 10.0.0.138
+IP: 10.0.0.218
+IP: 172.18.0.4
+GET / HTTP/1.1
+Host: whoami.pistack.co.za
+User-Agent: curl/7.38.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 165.73.96.95, 10.255.0.2
+X-Forwarded-Host: whoami.pistack.co.za
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Forwarded-Server: 31b37f9714d3
+X-Real-Ip: 10.255.0.2
+</code></pre>
+
+<p>Our 2nd GET Request:</p>
+
+<pre><code class="bash">$ curl http://whoami.pistack.co.za/
+Hostname: d1c17a476414
+IP: 127.0.0.1
+IP: 10.0.0.138
+IP: 10.0.0.71
+IP: 172.19.0.5
+GET / HTTP/1.1
+Host: whoami.pistack.co.za
+User-Agent: curl/7.38.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 165.73.96.95, 10.255.0.2
+X-Forwarded-Host: whoami.pistack.co.za
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Forwarded-Server: 02b0ff6eab73
+X-Real-Ip: 10.255.0.2
+</code></pre>
+
+<p>And our 3rd GET Request:</p>
+
+<pre><code>$ curl http://whoami.pistack.co.za/
+Hostname: 17c817a1813b
+IP: 172.18.0.6
+IP: 127.0.0.1
+IP: 10.0.0.138
+IP: 10.0.0.73
+GET / HTTP/1.1
+Host: whoami.pistack.co.za
+User-Agent: curl/7.38.0
+Accept: */*
+Accept-Encoding: gzip
+X-Forwarded-For: 165.73.96.95, 10.255.0.2
+X-Forwarded-Host: whoami.pistack.co.za
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Forwarded-Server: 31b37f9714d3
+X-Real-Ip: 10.255.0.2
+</code></pre>
+
+<p>Hope this was useful.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-traefik/tags/">https://hub.docker.com/r/rbekker87/armhf-traefik/tags/</a></li>
+<li><a href="https://github.com/containous/traefik/releases">https://github.com/containous/traefik/releases</a></li>
+<li><a href="https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile">https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm]]></title>
@@ -737,61 +995,6 @@ swarm-worker-2             : ok=2    changed=1    unreachable=0    failed=0
 <pre><code>$ docker node ls
 Error response from daemon: This node is not a swarm manager. Use "docker swarm init" or "docker swarm join" to connect this node to swarm and try again.
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Clearing Up Disk Space on Docker Swarm by Removing Unused Data With Prune]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/06/01/clearing-up-disk-space-on-docker-swarm-by-removing-unused-data-with-prune/"/>
-    <updated>2018-06-01T02:19:21-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/06/01/clearing-up-disk-space-on-docker-swarm-by-removing-unused-data-with-prune</id>
-    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
-
-<p>After some time, your system can run out of disk space when running a lot of containers / volumes etc. You will find that at times, you will have a lot of unused containers, stopped containers, unused images, unused networks that is just sitting there, which consumes data on your nodes.</p>
-
-<p>One way to clean them is by using <code>docker system prune</code>.</p>
-
-<h2>Check Docker Disk Space</h2>
-
-<p>The command below will show the amount of disk space consumed, and how much is reclaimable:</p>
-
-<pre><code class="bash">$ docker system df
-TYPE                TOTAL               ACTIVE              SIZE                RECLAIMABLE
-Images              229                 125                 23.94GB             14.65GB (61%)
-Containers          322                 16                  8.229GB             8.222GB (99%)
-Local Volumes       77                  41                  698MB               19.13MB (2%)
-Build Cache                                                 0B                  0B
-</code></pre>
-
-<h2>Removing Unsued Data:</h2>
-
-<p>By using Prune, we can remove the unused resources that is consuming data:</p>
-
-<pre><code class="bash">$ docker system prune
-
-WARNING! This will remove:
-        - all stopped containers
-        - all networks not used by at least one container
-        - all dangling images
-        - all build cache
-Are you sure you want to continue? [y/N] y
-
-Deleted Containers:
-a3d7db158e065d0c86160fd5d688875f8b7435848ea91db57ed007
-47890dcfea4a105f43e790dd8ad3c6d7c4ad7e738186c034d7a46b
-
-Deleted Networks:
-traefik-net
-app_appnet
-
-Deleted Images:
-deleted: sha256:5b9909c10e93afec
-deleted: sha256:d81eesdfihweo3rk
-
-Total reclaimed space: 14.18GB
-</code></pre>
-
-<p>For related <a href="https://goo.gl/L2NYxU">Docker</a> posts.</p>
 ]]></content>
   </entry>
   

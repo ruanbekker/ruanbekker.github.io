@@ -26,7 +26,7 @@ I have 3x [Raspberrypi 3's](https://www.raspberrypi.org/products/raspberry-pi-3-
 
 For persistent storage I have setup a Replicated GlusterFS Volume across the 3 nodes. 
 
-More details on how I did the setup, can be found from the [Setting Up a Docker Swarm Cluster on RaspberryPi Nodes](http://blog.pistack.co.za/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/) blog post.
+More details on how I did the setup, can be found from the [Setting Up a Docker Swarm Cluster on RaspberryPi Nodes](https://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/) blog post.
 
 ## Thanks!
 

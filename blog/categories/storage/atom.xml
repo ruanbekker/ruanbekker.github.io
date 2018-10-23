@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Storage | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/storage/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-23T16:25:02-04:00</updated>
+  <updated>2018-10-23T16:38:02-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,342 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setting Up a Docker Swarm Cluster on 3 RaspberryPi Nodes]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/"/>
+    <updated>2018-10-23T16:24:00-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/rpi-docker-swarm.png" alt="" /></p>
+
+<p>As the curious person that I am, I like to play around with new stuff that I stumble upon, and one of them was having a docker swarm cluster running on 3 Raspberry Pi&rsquo;s on my LAN.</p>
+
+<p>The idea is to have 3 Raspberry Pi&rsquo;s (Model 3 B), a Manager Node, and 2 Worker Nodes, each with a 32 GB SanDisk SD Card, which I will also be part of a 3x Replicated GlusterFS Volume that will come in handy later for some data that needs persistent data.</p>
+
+<p>More Inforamtion on: <a href="https://docs.docker.com/engine/swarm/">Docker Swarm</a></p>
+
+<h2>Provision Raspbian on each RaspberryPi</h2>
+
+<p>Grab the <a href="https://downloads.raspberrypi.org/raspbian_lite_latest">Latest Raspbian Lite ISO</a> and the following <a href="https://www.raspberrypi.org/documentation/installation/installing-images/">source</a> will help provisioning your RaspberryPi with Raspbian.</p>
+
+<h2>Installing Docker on Raspberry PI</h2>
+
+<p>On each node, run the following to install docker, and also add your user to the docker group, so that you can run docker commands with a normal user:</p>
+
+<pre><code class="bash">$ apt-get update &amp;&amp; sudo apt-get upgrade -y
+$ sudo apt-get remove docker.io
+$ curl https://get.docker.com | sudo bash
+$ sudo usermod -aG docker pi
+</code></pre>
+
+<p>If you have an internal DNS Server, set an A Record for each node, or for simplicity, set your hosts file on each node so that your hostname for each node responds to it&rsquo;s provisioned IP Address:</p>
+
+<pre><code class="bash">$ cat /etc/hosts
+192.168.0.2   rpi-01
+192.168.0.3   rpi-02
+192.168.0.4   rpi-03
+</code></pre>
+
+<p>Also, to have passwordless SSH, from each node:</p>
+
+<pre><code class="bash">$ ssh-keygen -t rsa
+$ ssh-copy-id rpi-01
+$ ssh-copy-id rpi-02
+$ ssh-copy-id rpi-03
+</code></pre>
+
+<h2>Initialize the Swarm</h2>
+
+<p>Time to set up our swarm. As we have more than one network interface, we will need to setup our swarm by specifying the IP Address of our network interface that is accessible from our LAN:</p>
+
+<pre><code class="bash">$ ifconfig eth0
+eth0      Link encap:Ethernet  HWaddr a1:12:bc:d3:cd:4d
+          inet addr:192.168.0.2  Bcast:192.168.0.255  Mask:255.255.255.0
+</code></pre>
+
+<p>Now that we have our IP Address, initialize the swarm on the manager node:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker swarm init --advertise-addr 192.168.0.2
+Swarm initialized: current node (siqyf3yricsvjkzvej00a9b8h) is now a manager.
+
+To add a worker to this swarm, run the following command:
+
+    docker swarm join \
+    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 \
+    192.168.0.2:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.  
+</code></pre>
+
+<p>Then from <code>rpi-02</code> join the manager node of the swarm:</p>
+
+<pre><code class="bash">pi@rpi-02:~ $ docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
+This node joined a swarm as a worker.  
+</code></pre>
+
+<p>Then from <code>rpi-03</code> join the manager node of the swarm:</p>
+
+<pre><code class="bash">pi@rpi-03:~ $ docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
+This node joined a swarm as a worker.  
+</code></pre>
+
+<p>Then from the manager node: <code>rpi-01</code>, ensure that the nodes are checked in:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker node ls
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
+62s7gx1xdm2e3gp5qoca2ru0d     rpi-03              Ready               Active
+6fhyfy9yt761ar9pl84dkxck3 *   rpi-01              Ready               Active              Leader
+pg0nyy9l27mtfc13qnv9kywe7     rpi-02              Ready               Active
+</code></pre>
+
+<h2>Setting Up a Replicated GlusterFS Volume</h2>
+
+<p>I have decided to setup a replicated glusterfs volume to have data replicated throughout the cluster if I would like to have some persistent data. From each node, install the GlusterFS Client and Server:</p>
+
+<pre><code class="bash">$ sudo apt install glusterfs-server glusterfs-client -y &amp;&amp; sudo systemctl enable glusterfs-server
+</code></pre>
+
+<p>Probe the other nodes from the manager node:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster peer probe rpi-02
+peer probe: success.
+
+pi@rpi-01:~ $ sudo gluster peer probe rpi-03
+peer probe: success.
+</code></pre>
+
+<p>Ensure that we can see all 3 nodes in our GlusterFS Pool:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster pool list
+UUID                                    Hostname        State
+778c7463-ba48-43de-9f97-83a960bba99e    rpi-02          Connected
+00a20a3c-5902-477e-a8fe-da35aa955b5e    rpi-03          Connected
+d82fb688-c50b-405d-a26f-9cb2922cce75    localhost       Connected
+</code></pre>
+
+<p>From each node, create the directory where GlusterFS will store the data for the bricks that we will specify when creating the volume:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo mkdir -p /gluster/brick 
+pi@rpi-02:~ $ sudo mkdir -p /gluster/brick
+pi@rpi-03:~ $ sudo mkdir -p /gluster/brick
+</code></pre>
+
+<p>Next, create a 3 Way Replicated GlusterFS Volume:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster volume create rpi-gfs replica 3 \
+rpi-01:/gluster/brick \
+rpi-02:/gluster/brick \
+rpi-03:/gluster/brick \
+force
+
+volume create: rpi-gfs: success: please start the volume to access data
+</code></pre>
+
+<p>Start the GlusterFS Volume:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster volume start rpi-gfs
+volume start: rpi-gfs: success
+</code></pre>
+
+<p>Verify the GlusterFS Volume Info, and from the below output you will see that the volume is replicated 3 ways from the 3 bricks that we specified</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster volume info
+
+Volume Name: rpi-gfs
+Type: Replicate
+Volume ID: b879db15-63e9-44ca-ad76-eeaa3e247623
+Status: Started
+Number of Bricks: 1 x 3 = 3
+Transport-type: tcp
+Bricks:
+Brick1: rpi-01:/gluster/brick
+Brick2: rpi-02:/gluster/brick
+Brick3: rpi-03:/gluster/brick
+</code></pre>
+
+<p>Mount the GlusterFS Volume on each Node, first on <code>rpi-01</code>:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo umount /mnt
+pi@rpi-01:~ $ sudo echo 'localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0' &gt;&gt; /etc/fstab
+pi@rpi-01:~ $ sudo mount.glusterfs localhost:/rpi-gfs /mnt
+pi@rpi-01:~ $ sudo chown -R pi:docker /mnt
+</code></pre>
+
+<p>Then on <code>rpi-02</code>:</p>
+
+<pre><code class="bash">pi@rpi-02:~ $ sudo umount /mnt
+pi@rpi-02:~ $ sudo echo 'localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0' &gt;&gt; /etc/fstab
+pi@rpi-02:~ $ sudo mount.glusterfs localhost:/rpi-gfs /mnt
+pi@rpi-02:~ $ sudo chown -R pi:docker /mnt
+</code></pre>
+
+<p>And lastly on <code>rpi-03</code>:</p>
+
+<pre><code class="bash">pi@rpi-03:~ $ sudo umount /mnt
+pi@rpi-03:~ $ sudo echo 'localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0' &gt;&gt; /etc/fstab
+pi@rpi-03:~ $ sudo mount.glusterfs localhost:/rpi-gfs /mnt
+pi@rpi-03:~ $ sudo chown -R pi:docker /mnt
+</code></pre>
+
+<p>Then your GlusterFS Volume will be mounted on all the nodes, and when a file is written to the <code>/mnt/</code> partition, data will be replicated to all the nodes in the Cluster:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ df -h
+Filesystem          Size  Used Avail Use% Mounted on
+/dev/root            30G  4.5G   24G  16% /
+localhost:/rpi-gfs   30G  4.5G   24G  16% /mnt
+</code></pre>
+
+<h2>Create a Web Service on Docker Swarm:</h2>
+
+<p>Let&rsquo;s create a Web Service in our Swarm, called <code>web</code> and by specifying <code>1</code> replica and publishing the exposed port <code>80</code> to our containers port <code>80</code>:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service create --name web --replicas 1 --publish 80:80 hypriot/rpi-busybox-httpd
+vsvyanuw6q6yf4jr52m5z7vr1
+</code></pre>
+
+<p>Verifying that our Service is Started and equals to the desired replica count:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+vsvyanuw6q6y        web                 replicated          1/1                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
+</code></pre>
+
+<p>Inspecting the Service:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service inspect web
+[
+    {
+        "ID": "vsvyanuw6q6yf4jr52m5z7vr1",
+        "Version": {
+            "Index": 2493
+        },
+        "CreatedAt": "2017-07-16T21:20:00.017836646Z",
+        "UpdatedAt": "2017-07-16T21:20:00.026359794Z",
+        "Spec": {
+            "Name": "web",
+            "Labels": {},
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Image": "hypriot/rpi-busybox-httpd:latest@sha256:c00342f952d97628bf5dda457d3b409c37df687c859df82b9424f61264f54cd1",
+                    "StopGracePeriod": 10000000000,
+                    "DNSConfig": {}
+                },
+                "Resources": {
+                    "Limits": {},
+                    "Reservations": {}
+                },
+                "RestartPolicy": {
+                    "Condition": "any",
+                    "Delay": 5000000000,
+                    "MaxAttempts": 0
+                },
+                "Placement": {},
+                "ForceUpdate": 0
+            },
+            "Mode": {
+                "Replicated": {
+                    "Replicas": 1
+                }
+            },
+            "UpdateConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "RollbackConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "EndpointSpec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 80,
+                        "PublishedPort": 80,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            }
+        },
+        "Endpoint": {
+            "Spec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 80,
+                        "PublishedPort": 80,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            },
+            "Ports": [
+                {
+                    "Protocol": "tcp",
+                    "TargetPort": 80,
+                    "PublishedPort": 80,
+                    "PublishMode": "ingress"
+                }
+            ],
+            "VirtualIPs": [
+                {
+                    "NetworkID": "zjerz0xsw39icnh24enja4cgk",
+                    "Addr": "10.255.0.13/16"
+                }
+            ]
+        }
+    }
+]
+</code></pre>
+
+<p>Docker Swarm&rsquo;s Routing mesh takes care of the internal routing, so requests will respond even if the container is not running on the node that you are making the request against.</p>
+
+<p>With that said, verifying on which node our service is running:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ps web
+ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
+sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running 2 minutes ago
+</code></pre>
+
+<p>When we make a HTTP Request to one of these Nodes IP Addresses, our request will be responded with this awesome static page:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/armed-with-hypriot.jpg" alt="" /></p>
+
+<p>We can see we only have one container in our swarm, let&rsquo;s scale that up to <code>3</code> containers:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service scale web01=3
+web01 scaled to 3
+</code></pre>
+
+<p>Now that the service is scaled to 3 containers, requests will be handled using the round-robin algorithm. To ensured that the service scaled, we will see that we will have 3 replicas:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+vsvyanuw6q6y        web                 replicated          3/3                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
+</code></pre>
+
+<p>Verifying where these containers are running on:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ps web01
+ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running 2 minutes ago
+ope3ya7hh9j4        web.2               hypriot/rpi-busybox-httpd:latest   rpi-03              Running             Running 30 seconds ago
+07m1ww7ptxro        web.3               hypriot/rpi-busybox-httpd:latest   rpi-01              Running             Running 28 seconds ago
+</code></pre>
+
+<p>Lastly, removing the service from our swarm:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service rm web01
+web01
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a 3 Node Ceph Storage Cluster on Ubuntu 16]]></title>
@@ -881,79 +1217,6 @@ $ rm -rf /mnt/docker/volumes/test1
 
 <p>More info about the project:
 - <a href="https://github.com/rancher/convoy">https://github.com/rancher/convoy</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup a NFS Server on Ubuntu]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/02/11/setup-a-nfs-server-on-ubuntu/"/>
-    <updated>2018-02-11T17:26:56-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/02/11/setup-a-nfs-server-on-ubuntu</id>
-    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/3sUALo.jpg" alt="" /></p>
-
-<p>Quick post on how to setup a NFS Server on Ubuntu and how to setup the client to interact with the NFS Server.</p>
-
-<h2>Setup the Dependencies:</h2>
-
-<pre><code class="bash">$ apt update &amp;&amp; sudo apt upgrade -y
-$ sudo apt-get install nfs-kernel-server nfs-common -y
-</code></pre>
-
-<p>Create the Directory for NFS and set permissions:</p>
-
-<pre><code class="bash">mkdir /vol
-chown -R nobody:nogroup /vol
-</code></pre>
-
-<h2>Allow the Clients:</h2>
-
-<p>We need to set in the <code>exports</code> file, the clients we would like to allow:</p>
-
-<ul>
-<li><code>rw</code>: Allows Client R/W Access to the Volume.</li>
-<li><code>sync</code>: This option forces NFS to write changes to disk before replying. More stable and Consistent. Note, it does reduce the speed of file operations.</li>
-<li><code>no_subtree_check</code>: This prevents subtree checking, which is a process where the host must check whether the file is actually still available in the exported tree for every request. This can cause many problems when a file is renamed while the client has it opened. In almost all cases, it is better to disable subtree checking.</li>
-</ul>
-
-
-<pre><code class="bash">$ echo '/vol 10.8.133.83(rw,sync,no_subtree_check) 10.8.166.19(rw,sync,no_subtree_check) 10.8.142.195(rw,sync,no_subtree_check)' &gt;&gt; /etc/exports
-</code></pre>
-
-<h2>Start the NFS Server:</h2>
-
-<p>Restart the service and enable the service on boot:</p>
-
-<pre><code class="bash">$ sudo systemctl restart nfs-kernel-server
-$ sudo systemctl enable nfs-kernel-server
-</code></pre>
-
-<h2>Client Side:</h2>
-
-<p>We will mount the NFS Volume to our Clients <code>/mnt</code> partition.</p>
-
-<p>Install the dependencies:</p>
-
-<pre><code class="bash">$ sudo apt-get install nfs-common -y
-</code></pre>
-
-<p>Test if we can mount the volume, then unmount it, as we will set the config in our <code>fstab</code>:</p>
-
-<pre><code class="bash">$ sudo mount 10.8.133.83:/vol /mnt
-$ sudo umount /mnt
-$ df -h
-</code></pre>
-
-<p>Set the config in your <code>fstab</code>, then mount it from there:</p>
-
-<pre><code class="bash">$ sudo bash -c "echo '10.8.133.83:/vol /mnt nfs auto,nofail,noatime,nolock,intr,tcp,actimeo=1800 0 0' &gt;&gt; /etc/fstab"
-$ sudo mount -a
-$ df -h
-</code></pre>
-
-<p>Now you shoule be able to write to your NFS Volume from your client.</p>
-
-<p>Sources:
-- <a href="https://www.digitalocean.com/community/tutorials/how-to-set-up-an-nfs-mount-on-ubuntu-16-04">1</a> <a href="https://gist.github.com/deviantony/557984d62e867e6f505577b207db6ffc%">2</a></p>
 ]]></content>
   </entry>
   

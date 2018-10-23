@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Swarm | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/swarm/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-23T16:25:02-04:00</updated>
+  <updated>2018-10-23T16:38:02-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,342 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setting Up a Docker Swarm Cluster on 3 RaspberryPi Nodes]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/"/>
+    <updated>2018-10-23T16:24:00-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/rpi-docker-swarm.png" alt="" /></p>
+
+<p>As the curious person that I am, I like to play around with new stuff that I stumble upon, and one of them was having a docker swarm cluster running on 3 Raspberry Pi&rsquo;s on my LAN.</p>
+
+<p>The idea is to have 3 Raspberry Pi&rsquo;s (Model 3 B), a Manager Node, and 2 Worker Nodes, each with a 32 GB SanDisk SD Card, which I will also be part of a 3x Replicated GlusterFS Volume that will come in handy later for some data that needs persistent data.</p>
+
+<p>More Inforamtion on: <a href="https://docs.docker.com/engine/swarm/">Docker Swarm</a></p>
+
+<h2>Provision Raspbian on each RaspberryPi</h2>
+
+<p>Grab the <a href="https://downloads.raspberrypi.org/raspbian_lite_latest">Latest Raspbian Lite ISO</a> and the following <a href="https://www.raspberrypi.org/documentation/installation/installing-images/">source</a> will help provisioning your RaspberryPi with Raspbian.</p>
+
+<h2>Installing Docker on Raspberry PI</h2>
+
+<p>On each node, run the following to install docker, and also add your user to the docker group, so that you can run docker commands with a normal user:</p>
+
+<pre><code class="bash">$ apt-get update &amp;&amp; sudo apt-get upgrade -y
+$ sudo apt-get remove docker.io
+$ curl https://get.docker.com | sudo bash
+$ sudo usermod -aG docker pi
+</code></pre>
+
+<p>If you have an internal DNS Server, set an A Record for each node, or for simplicity, set your hosts file on each node so that your hostname for each node responds to it&rsquo;s provisioned IP Address:</p>
+
+<pre><code class="bash">$ cat /etc/hosts
+192.168.0.2   rpi-01
+192.168.0.3   rpi-02
+192.168.0.4   rpi-03
+</code></pre>
+
+<p>Also, to have passwordless SSH, from each node:</p>
+
+<pre><code class="bash">$ ssh-keygen -t rsa
+$ ssh-copy-id rpi-01
+$ ssh-copy-id rpi-02
+$ ssh-copy-id rpi-03
+</code></pre>
+
+<h2>Initialize the Swarm</h2>
+
+<p>Time to set up our swarm. As we have more than one network interface, we will need to setup our swarm by specifying the IP Address of our network interface that is accessible from our LAN:</p>
+
+<pre><code class="bash">$ ifconfig eth0
+eth0      Link encap:Ethernet  HWaddr a1:12:bc:d3:cd:4d
+          inet addr:192.168.0.2  Bcast:192.168.0.255  Mask:255.255.255.0
+</code></pre>
+
+<p>Now that we have our IP Address, initialize the swarm on the manager node:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker swarm init --advertise-addr 192.168.0.2
+Swarm initialized: current node (siqyf3yricsvjkzvej00a9b8h) is now a manager.
+
+To add a worker to this swarm, run the following command:
+
+    docker swarm join \
+    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 \
+    192.168.0.2:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.  
+</code></pre>
+
+<p>Then from <code>rpi-02</code> join the manager node of the swarm:</p>
+
+<pre><code class="bash">pi@rpi-02:~ $ docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
+This node joined a swarm as a worker.  
+</code></pre>
+
+<p>Then from <code>rpi-03</code> join the manager node of the swarm:</p>
+
+<pre><code class="bash">pi@rpi-03:~ $ docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
+This node joined a swarm as a worker.  
+</code></pre>
+
+<p>Then from the manager node: <code>rpi-01</code>, ensure that the nodes are checked in:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker node ls
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
+62s7gx1xdm2e3gp5qoca2ru0d     rpi-03              Ready               Active
+6fhyfy9yt761ar9pl84dkxck3 *   rpi-01              Ready               Active              Leader
+pg0nyy9l27mtfc13qnv9kywe7     rpi-02              Ready               Active
+</code></pre>
+
+<h2>Setting Up a Replicated GlusterFS Volume</h2>
+
+<p>I have decided to setup a replicated glusterfs volume to have data replicated throughout the cluster if I would like to have some persistent data. From each node, install the GlusterFS Client and Server:</p>
+
+<pre><code class="bash">$ sudo apt install glusterfs-server glusterfs-client -y &amp;&amp; sudo systemctl enable glusterfs-server
+</code></pre>
+
+<p>Probe the other nodes from the manager node:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster peer probe rpi-02
+peer probe: success.
+
+pi@rpi-01:~ $ sudo gluster peer probe rpi-03
+peer probe: success.
+</code></pre>
+
+<p>Ensure that we can see all 3 nodes in our GlusterFS Pool:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster pool list
+UUID                                    Hostname        State
+778c7463-ba48-43de-9f97-83a960bba99e    rpi-02          Connected
+00a20a3c-5902-477e-a8fe-da35aa955b5e    rpi-03          Connected
+d82fb688-c50b-405d-a26f-9cb2922cce75    localhost       Connected
+</code></pre>
+
+<p>From each node, create the directory where GlusterFS will store the data for the bricks that we will specify when creating the volume:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo mkdir -p /gluster/brick 
+pi@rpi-02:~ $ sudo mkdir -p /gluster/brick
+pi@rpi-03:~ $ sudo mkdir -p /gluster/brick
+</code></pre>
+
+<p>Next, create a 3 Way Replicated GlusterFS Volume:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster volume create rpi-gfs replica 3 \
+rpi-01:/gluster/brick \
+rpi-02:/gluster/brick \
+rpi-03:/gluster/brick \
+force
+
+volume create: rpi-gfs: success: please start the volume to access data
+</code></pre>
+
+<p>Start the GlusterFS Volume:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster volume start rpi-gfs
+volume start: rpi-gfs: success
+</code></pre>
+
+<p>Verify the GlusterFS Volume Info, and from the below output you will see that the volume is replicated 3 ways from the 3 bricks that we specified</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo gluster volume info
+
+Volume Name: rpi-gfs
+Type: Replicate
+Volume ID: b879db15-63e9-44ca-ad76-eeaa3e247623
+Status: Started
+Number of Bricks: 1 x 3 = 3
+Transport-type: tcp
+Bricks:
+Brick1: rpi-01:/gluster/brick
+Brick2: rpi-02:/gluster/brick
+Brick3: rpi-03:/gluster/brick
+</code></pre>
+
+<p>Mount the GlusterFS Volume on each Node, first on <code>rpi-01</code>:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ sudo umount /mnt
+pi@rpi-01:~ $ sudo echo 'localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0' &gt;&gt; /etc/fstab
+pi@rpi-01:~ $ sudo mount.glusterfs localhost:/rpi-gfs /mnt
+pi@rpi-01:~ $ sudo chown -R pi:docker /mnt
+</code></pre>
+
+<p>Then on <code>rpi-02</code>:</p>
+
+<pre><code class="bash">pi@rpi-02:~ $ sudo umount /mnt
+pi@rpi-02:~ $ sudo echo 'localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0' &gt;&gt; /etc/fstab
+pi@rpi-02:~ $ sudo mount.glusterfs localhost:/rpi-gfs /mnt
+pi@rpi-02:~ $ sudo chown -R pi:docker /mnt
+</code></pre>
+
+<p>And lastly on <code>rpi-03</code>:</p>
+
+<pre><code class="bash">pi@rpi-03:~ $ sudo umount /mnt
+pi@rpi-03:~ $ sudo echo 'localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0' &gt;&gt; /etc/fstab
+pi@rpi-03:~ $ sudo mount.glusterfs localhost:/rpi-gfs /mnt
+pi@rpi-03:~ $ sudo chown -R pi:docker /mnt
+</code></pre>
+
+<p>Then your GlusterFS Volume will be mounted on all the nodes, and when a file is written to the <code>/mnt/</code> partition, data will be replicated to all the nodes in the Cluster:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ df -h
+Filesystem          Size  Used Avail Use% Mounted on
+/dev/root            30G  4.5G   24G  16% /
+localhost:/rpi-gfs   30G  4.5G   24G  16% /mnt
+</code></pre>
+
+<h2>Create a Web Service on Docker Swarm:</h2>
+
+<p>Let&rsquo;s create a Web Service in our Swarm, called <code>web</code> and by specifying <code>1</code> replica and publishing the exposed port <code>80</code> to our containers port <code>80</code>:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service create --name web --replicas 1 --publish 80:80 hypriot/rpi-busybox-httpd
+vsvyanuw6q6yf4jr52m5z7vr1
+</code></pre>
+
+<p>Verifying that our Service is Started and equals to the desired replica count:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+vsvyanuw6q6y        web                 replicated          1/1                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
+</code></pre>
+
+<p>Inspecting the Service:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service inspect web
+[
+    {
+        "ID": "vsvyanuw6q6yf4jr52m5z7vr1",
+        "Version": {
+            "Index": 2493
+        },
+        "CreatedAt": "2017-07-16T21:20:00.017836646Z",
+        "UpdatedAt": "2017-07-16T21:20:00.026359794Z",
+        "Spec": {
+            "Name": "web",
+            "Labels": {},
+            "TaskTemplate": {
+                "ContainerSpec": {
+                    "Image": "hypriot/rpi-busybox-httpd:latest@sha256:c00342f952d97628bf5dda457d3b409c37df687c859df82b9424f61264f54cd1",
+                    "StopGracePeriod": 10000000000,
+                    "DNSConfig": {}
+                },
+                "Resources": {
+                    "Limits": {},
+                    "Reservations": {}
+                },
+                "RestartPolicy": {
+                    "Condition": "any",
+                    "Delay": 5000000000,
+                    "MaxAttempts": 0
+                },
+                "Placement": {},
+                "ForceUpdate": 0
+            },
+            "Mode": {
+                "Replicated": {
+                    "Replicas": 1
+                }
+            },
+            "UpdateConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "RollbackConfig": {
+                "Parallelism": 1,
+                "FailureAction": "pause",
+                "Monitor": 5000000000,
+                "MaxFailureRatio": 0,
+                "Order": "stop-first"
+            },
+            "EndpointSpec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 80,
+                        "PublishedPort": 80,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            }
+        },
+        "Endpoint": {
+            "Spec": {
+                "Mode": "vip",
+                "Ports": [
+                    {
+                        "Protocol": "tcp",
+                        "TargetPort": 80,
+                        "PublishedPort": 80,
+                        "PublishMode": "ingress"
+                    }
+                ]
+            },
+            "Ports": [
+                {
+                    "Protocol": "tcp",
+                    "TargetPort": 80,
+                    "PublishedPort": 80,
+                    "PublishMode": "ingress"
+                }
+            ],
+            "VirtualIPs": [
+                {
+                    "NetworkID": "zjerz0xsw39icnh24enja4cgk",
+                    "Addr": "10.255.0.13/16"
+                }
+            ]
+        }
+    }
+]
+</code></pre>
+
+<p>Docker Swarm&rsquo;s Routing mesh takes care of the internal routing, so requests will respond even if the container is not running on the node that you are making the request against.</p>
+
+<p>With that said, verifying on which node our service is running:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ps web
+ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
+sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running 2 minutes ago
+</code></pre>
+
+<p>When we make a HTTP Request to one of these Nodes IP Addresses, our request will be responded with this awesome static page:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/armed-with-hypriot.jpg" alt="" /></p>
+
+<p>We can see we only have one container in our swarm, let&rsquo;s scale that up to <code>3</code> containers:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service scale web01=3
+web01 scaled to 3
+</code></pre>
+
+<p>Now that the service is scaled to 3 containers, requests will be handled using the round-robin algorithm. To ensured that the service scaled, we will see that we will have 3 replicas:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+vsvyanuw6q6y        web                 replicated          3/3                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
+</code></pre>
+
+<p>Verifying where these containers are running on:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service ps web01
+ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running 2 minutes ago
+ope3ya7hh9j4        web.2               hypriot/rpi-busybox-httpd:latest   rpi-03              Running             Running 30 seconds ago
+07m1ww7ptxro        web.3               hypriot/rpi-busybox-httpd:latest   rpi-01              Running             Running 28 seconds ago
+</code></pre>
+
+<p>Lastly, removing the service from our swarm:</p>
+
+<pre><code class="bash">pi@rpi-01:~ $ docker service rm web01
+web01
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[My PiStack Blog Proudly Hosted on My RaspberryPi Swarm Cluster]]></title>
@@ -451,107 +787,6 @@ Transfer-Encoding: chunked
 </code></pre>
 
 <p>Works like a charm! Traefik FTW!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Populate Environment Variables From Docker Secrets With a Flask Demo App]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app/"/>
-    <updated>2018-03-12T18:16:42-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/03/12/populate-environment-variables-from-docker-secrets-with-a-flask-demo-app</id>
-    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
-
-<p>In this post we will create a basic Python Flask WebApp on Docker Swarm, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.</p>
-
-<h2>Our Directory Setup:</h2>
-
-<p>This can be retrieved from <a href="https://github.com/ruanbekker/docker-swarm-apps/tree/master/tools-secrets-env-exporter">github.com/ruanbekker/docker-swarm-apps/tool-secrets-env-exporter</a>, but I will place the code in here as well.</p>
-
-<pre><code class="bash Dockerfile:">FROM alpine:edge
-RUN apk add --no-cache python2 py2-pip &amp;&amp; pip install flask
-ADD exporter.py /exporter.py
-ADD boot.sh /boot.sh
-ADD app.py /app.py
-CMD ["/bin/sh", "/boot.sh"]
-</code></pre>
-
-<pre><code class="python exporter.py">import os
-from glob import glob
-
-for var in glob('/run/secrets/*'):
-    k=var.split('/')[-1]
-    v=open(var).read().rstrip('\n')
-    os.environ[k] = v
-    print("export {key}={value}".format(key=k,value=v))
-</code></pre>
-
-<pre><code class="python app.py">import os
-from flask import Flask
-
-flask_host = str(os.environ['flask_host'])
-flask_port = int(os.environ['flask_port'])
-
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return 'ok\n'
-
-if __name__ == '__main__':
-    app.run(host=flask_host, port=flask_port)
-</code></pre>
-
-<pre><code class="bash boot.sh">#!/bin/sh
-set -e
-eval $(python /exporter.py)
-python /app.py
-</code></pre>
-
-<h2>Flow Information:</h2>
-
-<p>The exporter script checks all the secrets that is mounted to the container, then formats the secrets to a key/value pair, which then exports the environment variables to the current shell, which thereafter gets read by the flask application.</p>
-
-<h2>Usage:</h2>
-
-<p>Create Docker Secrets:</p>
-
-<pre><code>$ echo 5001 | docker secret create flask_port -
-$ echo 0.0.0.0 | docker secret create flask_host -
-</code></pre>
-
-<p>Build and Push the Image:</p>
-
-<pre><code>$ docker build -t registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-$ docker push registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-</code></pre>
-
-<p>Create the Service, and specify the secrets that we created earlier:</p>
-
-<pre><code>$ docker service create --name webapp \
---secret source=flask_host,target=flask_host \
---secret source=flask_port,target=flask_port \
-registry.gitlab.com/&lt;user&gt;/&lt;repo&gt;/&lt;image&gt;:&lt;tag&gt;
-</code></pre>
-
-<p>Exec into the container, list to see where the secrets got populated:</p>
-
-<pre><code>$ ls /run/secrets/
-flask_host  flask_port
-</code></pre>
-
-<p>Do a netstat, to see that the value from the created secret is listening:</p>
-
-<pre><code>$ netstat -tulpn
-Active Internet connections (only servers)
-Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
-tcp        0      0 0.0.0.0:5001            0.0.0.0:*               LISTEN      7/python
-</code></pre>
-
-<p>Do a GET request on the Flask Application:</p>
-
-<pre><code>$ curl http://0.0.0.0:5001/
-ok
-</code></pre>
 ]]></content>
   </entry>
   

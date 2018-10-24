@@ -77,116 +77,11 @@ if __name__ == '__main__':
 
 The `index.html`: 
 
-```html
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>Swarm Logs</title>
-    <link href="https://objects.ruanbekker.com/assets/css/standard/bootstrap.min.css" rel="stylesheet">
-    <link href="https://objects.ruanbekker.com/assets/css/standard/justified-nav.css" rel="stylesheet">
-  </head>
-
-  <body>
-    <div class="container">
-      <div class="masthead">
-        <nav>
-          <ul class="nav nav-justified">
-            <li><a href="/list">List Services</a></li>
-            <li><a href="/describe">Describe Service</a></li>
-	    <li class="active"><a href="/logs">Get Logs</a></li>
-            <li><a href="/cloudwatch">Cloudwatch</a></li>
-          </ul>
-        </nav>
-      </div>
-
-      <br>
-
-      <br>
-      <div class="container">
-      </div>
-      <h2> Running Containers Found: {{ number }}</h2> <br>
-         <table class="table">
-           <thead>
-             <tr>
-	       <th>Service Name</th>
-               <th>Container Name</th>
-               <th>Logs</th>
-             </tr>
-           </thead>
-
-{% for r in data %}
-           <tbody>
-             <tr>
-	       <td>{{ app_name }}</td>
-               <td>{{ r }}</td>
-	       <td><a target="_blank" href="https://eu-west-1.console.aws.amazon.com/cloudwatch/home?region={{ aws_region }}#logStream:group={{ cloudwatch_log_stream }};prefix={{ r }};streamFilter=typeLogStreamPrefix">AWS CloudWatch Logs</a></td>
-             </tr>
-           </tbody>
-{% endfor %}
-         </table>
-  </body>
-</html>
-```
+<script src="https://gist.github.com/ruanbekker/08b02a3ef30367ea7306a31eb5f33cb1.js"></script>
 
 The `list.html` :
 
-```html
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>Swarm Logs</title>
-    <link href="https://objects.ruanbekker.com/assets/css/standard/bootstrap.min.css" rel="stylesheet">
-    <link href="https://objects.ruanbekker.com/assets/css/standard/justified-nav.css" rel="stylesheet">
-    <script src="{{ url_for('static', filename='js/filter.js') }}"></script>
-</script>
-  </head>
-
-  <body>
-    <div class="container">
-      <div class="masthead">
-        <nav>
-          <ul class="nav nav-justified">
-            <li class="active"><a href="/">List Services</a></li>
-            <li><a href="/describe">Describe Service</a></li>
-	    <li><a href="/logs">Get Logs</a></li>
-            <li><a href="/cloudwatch">Cloudwatch</a></li>
-          </ul>
-        </nav>
-      </div>
-
-      <br>
-
-      <br>
-      <div class="container">
-      </div>
-      <h2> Running Services: {{ number }}</h2> <br>
-      <div class="form-group">
-        <input type="text" id="UserInput" onkeyup="SearchAndFilterThingy()" class="form-control input-lg" autocomplete="off" name="input" placeholder="Search"  autofocus>
-      </div>
-      <br>
-         <table class="table" id="ServicesTable">
-           <thead>
-             <tr class="header">
-	       <th>Service Name</th>
-               <th>Describe Service</th>
-             </tr>
-           </thead>
-
-{% for app in apps %}
-           <tbody>
-             <tr>
-	       <td>{{ app }}</td>
-	       <td><a href="http://127.0.0.1:5000/describe/{{ app }}">{{ app }}</a></td>
-             </tr>
-           </tbody>
-{% endfor %}
-         </table>
-
-  </body>
-</html>
-```
+<script src="https://gist.github.com/ruanbekker/98eab090e218bbbf0e46d5efc1595e04.js"></script>
 
 ## Filtering the Data
 

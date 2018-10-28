@@ -52,6 +52,43 @@ $ ssh host1
 
 as it will pull in the configs from the config that is described from the host alias that you calling from the argument of the ssh binary.
 
+## SSH Timeout
+
+Appending to our SSH Config, we can configure either our client or server to prevent SSH Timeouts due to inactivity.
+
+1. SSH Timeout on our Client:
+
+```bash
+$ vim ~/.ssh/config
+```
+
+Here we can set how often a NULL Packet is sent to the SSH Connections to keep the connection alive, in this case every 120 seconds:
+
+```
+ServerAliveInterval 120
+```
+
+2. SSH Timeout on the Servers:
+
+```bash
+$ vim /etc/ssh/sshd_config
+```
+
+Below we have 2 properties, the interval of how often to instruct the client connected to send a NULL packet to keep the connection alive and the max number of intervals, so for a idle connection to timeout in 24 hours, we will take 86400 seconds which is 24 hours, divide into 120 second intervals, which gives as 720 intervals. 
+
+So the config will look like this:
+
+```
+ClientAliveInterval 120
+ClientAliveCountMax 720
+```
+
+The restart the sshd service:
+
+```bash
+$ /etc/init.d/sshd restart
+```
+
 ## SSH Agent
 
 Another handy tool is `ssh-agent`, if you have password encryption on your key, everytime you need to ssh, a password will be prompted. A way to get around this is to use the ssh-agent.

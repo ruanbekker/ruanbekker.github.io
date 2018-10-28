@@ -6,6 +6,8 @@ comments: true
 categories: ["ssh", "linux", "tips", "authentication"]
 ---
 
+![](https://objects.ruanbekker.com/assets/images/header-ssh-tips.png)
+
 When dealing with a lot of servers where you need to ssh to different servers and especially if they require different authentication from different private ssh keys, it kinda gets annoying specifying the private key you need, when you want to SSH to them.
 
 ## SSH Config
@@ -56,7 +58,7 @@ as it will pull in the configs from the config that is described from the host a
 
 Appending to our SSH Config, we can configure either our client or server to prevent SSH Timeouts due to inactivity.
 
-1. SSH Timeout on our Client:
+- SSH Timeout on our Client:
 
 ```bash
 $ vim ~/.ssh/config
@@ -68,7 +70,7 @@ Here we can set how often a NULL Packet is sent to the SSH Connections to keep t
 ServerAliveInterval 120
 ```
 
-2. SSH Timeout on the Servers:
+- SSH Timeout on the Servers:
 
 ```bash
 $ vim /etc/ssh/sshd_config

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Nosql | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/nosql/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-28T15:48:32-04:00</updated>
+  <updated>2018-10-30T15:09:33-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,226 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Query 24 Hours Worth of Data Using BatchGet on Amazon DynamoDB Using Scan and Filter Without a GSI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/10/30/query-24-hours-worth-of-data-using-batchget-on-amazon-dynamodb-using-scan-and-filter-without-a-gsi/"/>
+    <updated>2018-10-30T14:53:43-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/10/30/query-24-hours-worth-of-data-using-batchget-on-amazon-dynamodb-using-scan-and-filter-without-a-gsi</id>
+    <content type="html"><![CDATA[<p>I&rsquo;m testing how to query data in DynamoDB which will always be the retrieval of yesterdays data, without using a Global Secondary Index.</p>
+
+<p>This is done just to see what other ways you can use to query data based on a specific timeframe.</p>
+
+<h2>Use-Case:</h2>
+
+<p>Data from DynamoDB needs to be batch processed (daily for the last 24-hours), into a external datasource. Data will be written into DynamoDB, the HK (uuid) and RK (timestamp) will be duplicated to the daily table. But only uuid and timestamp will be duplicated to the daily table, and only data for that day will be written into that datestamp formatted table name.</p>
+
+<p>Let&rsquo;s say data for 2018-10-30 needs to be written into our external data source, we will do a scan on table <code>tbl-test_20181030</code>, then from our response we will have a list of HashKeys (uuid) which we will use to do a BatchGet Item on our base table: <code>tbl-test_base</code>, which essentially grabs all the data for that day.</p>
+
+<p>If deeper filtering needs to be done on that day, the FilterExpression can be used to do a deeper filtering which leads to grabbing only the filtered down data from the base table.</p>
+
+<p><em>Note:</em> The base table might have millions of items, so a Scan operation on the Base table would be really expensive, as it reads all the items in the table.</p>
+
+<p>Once the data has been processed, the daily or metadata table can be removed.</p>
+
+<h2>DynamoDB Table Design</h2>
+
+<p>The base table: <code>tbl-test_base</code> will have:</p>
+
+<ul>
+<li>HashKey: uuid (string)</li>
+<li>RangeKey: timestamp (number)</li>
+<li>Attributes: city, stream, transaction_date, name, metric_uri</li>
+<li>Item will look like:</li>
+</ul>
+
+
+<pre><code class="python">{
+  u'uuid': u'fb4ddeb9-3b5e-47b3-bbab-1aa1d8e8f47b', 
+  u'timestamp': 1540891276, 
+  u'city': u'sydney', 
+  u'stream': u'NONE', 
+  u'transaction_date': u'2018-10-30 11:21:16', 
+  u'metric_uri': u'some-dummy-metric-uri', 
+  u'name': u'frank'
+}
+</code></pre>
+
+<p>he Daily Table: <code>tbl-test_20181030</code> will look like:</p>
+
+<ul>
+<li>HashKey: <code>uuid</code></li>
+<li>Attributes: <code>timestamp</code></li>
+<li>Item will look like:</li>
+</ul>
+
+
+<pre><code class="python">{
+  u'uuid': u'fb4ddeb9-3b5e-47b3-bbab-1aa1d8e8f47b', 
+  u'timestamp': 1540891276
+}
+</code></pre>
+
+<h2>Demonstration using Python</h2>
+
+<p>Creating the Metadata table:</p>
+
+<pre><code class="python">import boto3, time, uuid, random
+
+session = boto3.Session(region_name='eu-west-1', profile_name='dev')
+resource = session.resource('dynamodb')
+client = session.client('dynamodb')
+
+def create_table():
+    table_name = "tbl-test_{0}".format(time.strftime("%Y%m%d"))
+    response = resource.create_table(
+        TableName=table_name,
+        KeySchema=[{
+            'AttributeName': 'uuid',
+            'KeyType': 'HASH'
+        }],
+        AttributeDefinitions=[{
+            'AttributeName': 'uuid',
+            'AttributeType': 'S'
+        }],
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 1,
+            'WriteCapacityUnits': 1
+        }
+    )
+
+    resource.Table(table_name).wait_until_exists()
+
+    arn = client.describe_table(TableName=table_name)['Table']['TableArn']
+    client.tag_resource(
+        ResourceArn=arn,
+        Tags=[
+            {'Key': 'Name','Value': 'dynamo_table'},
+            {'Key': 'Environment','Value': 'Dev'},
+            {'Key': 'CreatedBy','Value': 'Ruan'}
+        ]
+    )
+
+    return resource.Table(table_name).table_status
+
+print(create_table())
+</code></pre>
+
+<p>Write 400 Items to DynamoDB:</p>
+
+<pre><code class="python">import boto3, time, uuid, random
+
+session = boto3.Session(region_name='eu-west-1', profile_name='dev')
+resource = session.resource('dynamodb')
+client = session.client('dynamodb')
+
+base_table = 'tbl-test_base'
+meta_table = 'tbl-test_{0}'.format(time.strftime("%Y%m%d"))
+
+people = ['james', 'john', 'frank', 'paul', 'nathan', 'kevin']
+cities = ['ireland', 'cape town', 'pretoria', 'paris', 'amsterdam', 'auckland', 'sydney']
+
+def write_dynamo(uuid, timestamp):
+    resource.Table(base_table).put_item(
+        Item={
+            'uuid': uuid, 
+            'timestamp': timestamp, 
+            'metric_uri': 'some-dummy-metric-uri', 
+            'transaction_date': time.strftime("%Y-%m-%d %H:%M:%S"), 
+            'name': random.choice(people), 
+            'stream': 'NONE', 
+            'city': random.choice(cities)
+        }
+    )
+
+    resource.Table(meta_table).put_item(
+        Item={
+            'uuid': uuid, 
+            'timestamp': timestamp
+        }
+    )
+
+    return 'Written'
+
+for x in xrange(400):
+    time.sleep(1)
+    write_dynamo(str(uuid.uuid4()), int(time.time()))
+    print(x)
+</code></pre>
+
+<p>Getting Data for 20181030 but also filter data greater than the timestamp attribute, greater than <code>1540841144</code> in epoch time (which will give us about 254 items).</p>
+
+<p>The BatchGet Item supports up to 100 items per call, we will limit the scans on 100 items per call, then paginate using the ExlusiveStartKey with the value of our LastEvaluatedKey that we will get from our response:</p>
+
+<pre><code class="python">import boto3,time
+from boto3.dynamodb.conditions import Key
+
+base_table = 'tbl-test_base'
+meta_table = 'tbl-test_20181030'
+
+session = boto3.Session(region_name='eu-west-1', profile_name='dev')
+resource = session.resource('dynamodb')
+table = resource.Table(meta_table)
+filtering_expression = Key('timestamp').gt(1540841144)
+
+response = table.scan(FilterExpression=filtering_expression, Limit=100)
+
+finished=False
+while finished != True:
+    if 'LastEvaluatedKey' in response.keys():
+        print("Getting {} Items".format(response['Count']))
+        items = resource.batch_get_item(RequestItems={base_table: {'Keys': response['Items']}})
+        print(items['Responses'][base_table])
+        time.sleep(2)
+        response = table.scan(FilterExpression=filtering_expression, Limit=100, ExclusiveStartKey=response['LastEvaluatedKey'])
+    else:
+        print("Getting {} Items".format(response['Count']))
+        items = resource.batch_get_item(RequestItems={base_table: {'Keys': response['Items']}})
+        print(items['Responses'][base_table])
+        finished=True
+</code></pre>
+
+<p>Running it:</p>
+
+<pre><code class="bash">$ python dynamodb-batch-get.py
+Getting 100 Items
+[{u'city': u'pretoria', u'uuid': u'e8bc0d1c-2b57-4de2-b0e1-35ef1fe0edf1', u'stream': u'NONE', u'timestamp': Decimal('1540846990'), u'transaction_date': u'2018-10-29 23:03:10', u'metric_uri': u'some-dummy-metric-uri', u'name': u'frank'}, {u'city': u'amsterdam', u'uuid':
+...
+Getting 100 Items
+[{u'city': u'sydney', u'uuid': u'5bc51ce9-2809-46c9-a3f2-ff8180086d92', u'stream': u'NONE', u'timestamp': Decimal('1540848599'), u'transaction_date': u'2018-10-29 23:29:59', u'metric_uri': u'some-dummy-metric-uri', u'name': u'frank'}
+...
+Getting 54 Items
+[{u'city': u'cape town', u'uuid': u'5e069f34-0e97-4a49-9ca9-da2213edb689'...
+</code></pre>
+
+<p>Verifying that each call only scans 100 at a time:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = table.scan(FilterExpression=filtering_expression, Limit=100)
+&gt;&gt;&gt; response.keys()
+[u'Count', u'Items', u'LastEvaluatedKey', u'ScannedCount', 'ResponseMetadata']
+&gt;&gt;&gt; response.get('LastEvaluatedKey')
+{u'uuid': u'e8c52a55-ca9e-4718-83d2-1b44a90f43e6'}
+&gt;&gt;&gt; response.get('Count')
+100
+&gt;&gt;&gt; response.get('ScannedCount')
+100
+</code></pre>
+
+<h2>Other Thoughts:</h2>
+
+<p>Querying data is a lot easier using a Global Secondary Index where you could similarly have the metric_uri as the HashKey and transaction_date as the RangeKey:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = table.query(
+    IndexName='metric_uri-transaction_date-index', 
+    KeyConditionExpression=Key('metric_uri').eq('some-dummy-metric-uri') &amp; Key('transaction_date').begins_with('2018-10-30')
+)
+&gt;&gt;&gt; response['Count']
+400
+</code></pre>
+
+<p>Also note that depending on how you setup your GSI, in most cases its a exact duplicate in storage from your base table, so could potentially be double the costs.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Investigating High Request Latencies on Amazon DynamoDB]]></title>
@@ -931,202 +1151,6 @@ mydb.json
 <li><a href="https://github.com/msiemens/tinydb">TinyDB</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup MongoDB Server on ARM64 Using Scaleway]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/04/01/setup-mongodb-server-on-arm64-using-scaleway/"/>
-    <updated>2018-04-01T18:46:27-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/04/01/setup-mongodb-server-on-arm64-using-scaleway</id>
-    <content type="html"><![CDATA[<p><img src="https://preview.ibb.co/bBRhn7/scw.png" alt="" /></p>
-
-<p>I&rsquo;ve been using Scaleway for the past 18 months and I must admit, I love hosting my Applications on their Infrastructure. They have expanded rapidly recently, and currently deploying more infrstructure due to the high demand.</p>
-
-<p>Scaleway is a Cloud Division of Online.net. They provide Baremetal and Cloud SSD Virtual Servers. Im currently hosting a Docker Swarm Cluster, Blogs, Payara Java Application Servers, Elasticsearch and MongoDB Clusters with them and really happy with the performance and stability of their services.</p>
-
-<h2>What will we be doing today:</h2>
-
-<p>Today I will be deploying MongoDB Server on a ARM64-2GB Instance, which costs you 2.99 Euros per month, absolutely awesome pricing! After we install MongoDB we will setup authentication, and then just a few basic examples on writing and reading from MongoDB.</p>
-
-<h2>Getting Started:</h2>
-
-<p>Logon to <a href="cloud.scaleway.com">cloud.scaleway.com</a> then launch an instance, which will look like the following:</p>
-
-<p><img src="https://image.ibb.co/e7T9jn/scw_launch.png" alt="" /></p>
-
-<p>After you deployed your instance, SSH to your instance, and it should look like this:</p>
-
-<p><img src="https://preview.ibb.co/k16C4n/scw_ssh.png" alt="" /></p>
-
-<h2>Dependencies:</h2>
-
-<p>Get the repository and install MongoDB:</p>
-
-<pre><code class="bash">$ apt update
-$ apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 2930ADAE8CAF5059EE73BB4B58712A2291FA4AD5
-$ echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.6 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-3.6.list
-$ apt update &amp;&amp; apt upgrade -y
-$ apt install mongodb-org -y
-</code></pre>
-
-<p>Enable MongoDB on Boot:</p>
-
-<pre><code class="bash">$ systemctl enable mongod
-</code></pre>
-
-<h2>Configuration:</h2>
-
-<p>Your configuration might look different from mine, so I recommend to backup your config first, as the following command will overwrite the config to the configuration that I will be using for this demonstration:</p>
-
-<pre><code class="bash">$ cat &gt; /etc/mongod.conf &lt;&lt; EOF
-storage:
-  dbPath: /var/lib/mongodb
-  journal:
-    enabled: false
-
-storage:
-  mmapv1:
-    smallFiles: true
-
-systemLog:
-  destination: file
-  logAppend: true
-  path: /var/log/mongodb/mongod.log
-
-net:
-  port: 27017
-  bindIp: 0.0.0.0
-
-processManagement:
-  timeZoneInfo: /usr/share/zoneinfo
-
-security:
-  authorization: enabled
-EOF
-</code></pre>
-
-<p>Restart MongoDB for the config changes to take affect:</p>
-
-<pre><code class="bash">$ systemctl restart mongod
-</code></pre>
-
-<h2>Authentication:</h2>
-
-<p>Create the Authentication:</p>
-
-<pre><code class="bash">$ mongo
-MongoDB shell version v3.6.3
-connecting to: mongodb://127.0.0.1:27017
-MongoDB server version: 3.6.3
-Welcome to the MongoDB shell.
-
-&gt; use admin
-&gt; db.createUser({user: "ruan", pwd: "pass123", roles:[{role: "root", db: "admin"}]})
-Successfully added user: {
-        "user" : "ruan",
-        "roles" : [
-                {
-                        "role" : "root",
-                        "db" : "admin"
-                }
-        ]
-}
-
-&gt; exit
-</code></pre>
-
-<p>Restart MongoDB and logon with your credentials:</p>
-
-<pre><code class="bash">$ systemctl restart mongod
-
-$ mongo --authenticationDatabase admin --host localhost --port 27017 -u ruan -p
-MongoDB shell version v3.6.3
-Enter password:
-connecting to: mongodb://localhost:27017/
-MongoDB server version: 3.6.3
-&gt;
-</code></pre>
-
-<h2>Write and Read from MongoDB</h2>
-
-<p>While you are on the MongoDB Shell, we will insert a couple of documents, first drop in to the database that you would like to write to:</p>
-
-<pre><code class="bash">&gt; use testdb
-switched to db testdb
-</code></pre>
-
-<p>Now we will write to the collection: <code>collection1</code>:</p>
-
-<pre><code class="bash">&gt; db.collection1.insert({"name": "ruan", "surname": "bekker", "age": 31, "country": "south africa"})
-WriteResult({ "nInserted" : 1 })
-
-&gt; db.collection1.insert({"name": "stefan", "surname": "bester", "age": 30, "country": "south africa"})
-WriteResult({ "nInserted" : 1 })
-</code></pre>
-
-<p>To find all the documents in our collection:</p>
-
-<pre><code class="bash">&gt; db.collection1.find()
-{ "_id" : ObjectId("5ac15ff0f4a5500484defd23"), "name" : "ruan", "surname" : "bekker", "age" : 31, "country" : "south africa" }
-{ "_id" : ObjectId("5ac16003f4a5500484defd24"), "name" : "stefan", "surname" : "bester", "age" : 30, "country" : "south africa" }
-</code></pre>
-
-<p>To prettify the output:</p>
-
-<pre><code class="bash">&gt; db.collection1.find().pretty()
-{
-        "_id" : ObjectId("5ac15ff0f4a5500484defd23"),
-        "name" : "ruan",
-        "surname" : "bekker",
-        "age" : 31,
-        "country" : "south africa"
-}
-{
-        "_id" : ObjectId("5ac16003f4a5500484defd24"),
-        "name" : "stefan",
-        "surname" : "bester",
-        "age" : 30,
-        "country" : "south africa"
-}
-</code></pre>
-
-<p>To find a document with the key/value of <code>name: ruan</code>:</p>
-
-<pre><code class="bash">&gt; db.collection1.find({"name": "ruan"}).pretty()
-{
-        "_id" : ObjectId("5ac15ff0f4a5500484defd23"),
-        "name" : "ruan",
-        "surname" : "bekker",
-        "age" : 31,
-        "country" : "south africa"
-}
-</code></pre>
-
-<p>To view the database that you are currently switched to:</p>
-
-<pre><code class="bash">&gt; db
-testdb
-</code></pre>
-
-<p>To view all the databases:</p>
-
-<pre><code class="bash">&gt; show dbs
-admin   0.000GB
-config  0.000GB
-local   0.000GB
-testdb  0.000GB
-</code></pre>
-
-<p>To view the collections in the database:</p>
-
-<pre><code class="bash">&gt; show collections
-collection1
-
-&gt; exit
-</code></pre>
-
-<p>That was just a quick post on installing MongoDB on ARM64 using Scaleway. Try them out, and they are also hiring: <a href="https://careers.scaleway.com/">careers.scaleway.com</a></p>
 ]]></content>
   </entry>
   

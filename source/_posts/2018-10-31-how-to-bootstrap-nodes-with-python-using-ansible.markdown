@@ -14,7 +14,7 @@ As Ansible depends on Python, therefore we can bootstrap our nodes with Python u
 
 The nodes we want to bootstrap:
 
-``` inventory.ini
+```bash inventory.ini
 [new]
 node-1
 node-2

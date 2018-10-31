@@ -6,6 +6,8 @@ comments: true
 categories: ["ansible", "ansible-tutorial", "devops", "linux"] 
 ---
 
+![](https://res.cloudinary.com/rbekker/image/upload/v1531083331/ansible_tojf8l.png)
+
 We will use Ansible to deploy packages to remote systems and in this case all the remote systems are running Debian, therefore we will be using the APT package manager.
 
 ## Pre-Requisites:

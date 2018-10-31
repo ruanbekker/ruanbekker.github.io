@@ -28,7 +28,7 @@ ansible_python_interpreter=/usr/bin/python3
 
 Our playbook with what we want to do:
 
-``` bootstrap-python.yml
+```yaml bootstrap-python.yml
 ---
 - hosts: all
   gather_facts: False

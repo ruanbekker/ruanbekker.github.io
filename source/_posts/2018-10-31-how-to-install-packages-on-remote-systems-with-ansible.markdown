@@ -18,7 +18,7 @@ Ensure that you have installed Ansible and setup the SSH Config for your remote 
 
 The inventory file that describes our hosts:
 
-```bash inventory.ini
+``` inventory.ini
 [scaleway]
 cluster-node-1
 cluster-node-2

@@ -46,4 +46,6 @@ Total time:	0.926420
 ```
 
 Similar Posts:
+
+- https://blog.josephscott.org/2011/10/14/timing-details-with-curl/
 - https://ops.tips/gists/measuring-http-response-times-curl/

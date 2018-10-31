@@ -18,7 +18,7 @@ Ensure that you have installed Ansible and setup the SSH Config for your remote 
 
 The inventory file that describes our hosts:
 
-``` inventory.ini
+```bash inventory.ini
 [scaleway]
 cluster-node-1
 cluster-node-2
@@ -45,7 +45,7 @@ location=germany
 
 Our playbook that we will define that we want to deploy packages using apt to all hosts:
 
-```bash packages.yml
+```yaml packages.yml
 ---
 - hosts: all
   tasks:

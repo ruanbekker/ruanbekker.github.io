@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-11T13:03:55-05:00</updated>
+  <updated>2018-11-11T15:50:56-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,403 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/"/>
+    <updated>2018-11-11T13:09:18-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
+
+<p>In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. If you have not setup the Elastic Stack with / or APM Server, you <a href="https://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">can follow this post</a> to setup the needed.</p>
+
+<p>Then we will make a bunch of HTTP Requests to our Application and will go through the metrics per request type.</p>
+
+<h2>Application Metrics</h2>
+
+<p>Our Application will have the following Request Paths:</p>
+
+<ul>
+<li><code>/</code> - Returns static text</li>
+<li><code>/delay</code> - random delays to simulate increased response latencies</li>
+<li><code>/upstream</code> - get data from a upstream provider, if statements to provide dummy 200, 404 and 502 reponses to visualize</li>
+<li><code>/5xx</code> - request path that will raise an exception so that we can see the error via apm</li>
+<li><code>/sql-write</code> - inserts 5 rows into a sqlite database</li>
+<li><code>/sql-read</code> - executes a select all from the database</li>
+<li><code>/sql-group</code> - sql query to group all the cities and count them</li>
+</ul>
+
+
+<p>This is just simple request paths to demonstrate the metrics via APM (Application Performance Monitoring) on Kibana.</p>
+
+<h2>Install Flask and APM Agent</h2>
+
+<p>Create a virtual environment and install the dependencies:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install python python-setuptools -y
+</span><span class='line'><span class="nv">$ </span>easy_install pip
+</span><span class='line'><span class="nv">$ </span>pip install virtualenv
+</span><span class='line'><span class="nv">$ </span>pip install elastic-apm<span class="o">[</span>flask<span class="o">]</span>
+</span><span class='line'><span class="nv">$ </span>pip install flask
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For more info on <a href="https://www.elastic.co/guide/en/apm/agent/python/current/getting-started.html">APM Configuration</a>.</p>
+
+<h2>Instrument a Bare Bones Python Flask app with APM:</h2>
+
+<p>A Barebones app with APM Configured will look like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.contrib.flask</span> <span class="kn">import</span> <span class="n">ElasticAPM</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.handlers.logging</span> <span class="kn">import</span> <span class="n">LoggingHandler</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'><span class="n">apm</span> <span class="o">=</span> <span class="n">ElasticAPM</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">server_url</span><span class="o">=</span><span class="s">&#39;http://localhost:8200&#39;</span><span class="p">,</span> <span class="n">service_name</span><span class="o">=</span><span class="s">&#39;flask-app-1&#39;</span><span class="p">,</span> <span class="n">logging</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response ok&quot;</span><span class="p">}),</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This will provide metrics on the <code>/</code> request path. In order to trace transaction ids from the metrics, we need to configure the index on Kibana. To do this, head over to Kibana, Management, Index Patterns, Add Index Pattern, <code>apm*</code>, select <code>@timestamp</code> as the time filter field name.</p>
+
+<p>This will allow you to see the data when tracing the transaction id&rsquo;s via the Discover UI.</p>
+
+<h2>Create the Python Flask App</h2>
+
+<p>Create the Flask App with the request paths as mentioned in the beginning:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">sqlite3</span><span class="o">,</span> <span class="nn">requests</span><span class="o">,</span> <span class="nn">time</span><span class="o">,</span> <span class="nn">logging</span><span class="o">,</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.contrib.flask</span> <span class="kn">import</span> <span class="n">ElasticAPM</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.handlers.logging</span> <span class="kn">import</span> <span class="n">LoggingHandler</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;ruan&#39;</span><span class="p">,</span> <span class="s">&#39;stefan&#39;</span><span class="p">,</span> <span class="s">&#39;philip&#39;</span><span class="p">,</span> <span class="s">&#39;norman&#39;</span><span class="p">,</span> <span class="s">&#39;frank&#39;</span><span class="p">,</span> <span class="s">&#39;pete&#39;</span><span class="p">,</span> <span class="s">&#39;johnny&#39;</span><span class="p">,</span> <span class="s">&#39;peter&#39;</span><span class="p">,</span> <span class="s">&#39;adam&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">cities</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;cape town&#39;</span><span class="p">,</span> <span class="s">&#39;johannesburg&#39;</span><span class="p">,</span> <span class="s">&#39;pretoria&#39;</span><span class="p">,</span> <span class="s">&#39;dublin&#39;</span><span class="p">,</span> <span class="s">&#39;kroonstad&#39;</span><span class="p">,</span> <span class="s">&#39;bloemfontein&#39;</span><span class="p">,</span> <span class="s">&#39;port elizabeth&#39;</span><span class="p">,</span> <span class="s">&#39;auckland&#39;</span><span class="p">,</span> <span class="s">&#39;sydney&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">lastnames</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;smith&#39;</span><span class="p">,</span> <span class="s">&#39;bekker&#39;</span><span class="p">,</span> <span class="s">&#39;admams&#39;</span><span class="p">,</span> <span class="s">&#39;phillips&#39;</span><span class="p">,</span> <span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;adamson&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;CREATE TABLE IF NOT EXISTS people (name STRING, age INTEGER, surname STRING, city STRING)&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="c">#sqlquery_write = conn.execute(&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))</span>
+</span><span class='line'><span class="n">seconds</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.003</span><span class="p">,</span> <span class="mf">0.004</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.009</span><span class="p">,</span> <span class="mf">0.015</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">,</span> <span class="mf">0.009</span><span class="p">,</span> <span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mf">0.030</span><span class="p">,</span> <span class="mf">0.018</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'><span class="n">apm</span> <span class="o">=</span> <span class="n">ElasticAPM</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">server_url</span><span class="o">=</span><span class="s">&#39;http://localhost:8200&#39;</span><span class="p">,</span> <span class="n">service_name</span><span class="o">=</span><span class="s">&#39;my-app-01&#39;</span><span class="p">,</span> <span class="n">logging</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response ok&quot;</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/delay&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">delay</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">seconds</span><span class="p">))</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response delay&quot;</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/upstream&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">upstream</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;https://api.ruanbekker.com/people&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;italy&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Italalia!&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>    <span class="k">elif</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;canada&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Canada!&#39;</span><span class="p">,</span> <span class="mi">502</span>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Not Found&#39;</span><span class="p">,</span> <span class="mi">404</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/5xx&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">fail_with_5xx</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">value</span> <span class="o">=</span> <span class="s">&#39;a&#39;</span> <span class="o">+</span> <span class="mi">1</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="n">value</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-write&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">sqlw</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-read&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">sqlr</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+</span><span class='line'>    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select * from people&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-group&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">slqg</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+</span><span class='line'>    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select count(*) as num, city from people group by city&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the app:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At this point, we wont have any data on APM as we need to make requests to our application. Let&rsquo;s make 10 HTTP GET Requests on the <code>/</code> Request Path:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ count</span><span class="o">=</span><span class="m">0</span> <span class="o">&amp;&amp;</span> <span class="k">while</span> <span class="o">[</span> <span class="nv">$count</span> -lt <span class="m">10</span> <span class="o">]</span><span class="p">;</span> <span class="k">do</span> curl http://application-routable-address:80/<span class="p">;</span> sleep 1<span class="p">;</span> <span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span><span class="p">;</span> <span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Visualize the Root Request Path</h2>
+
+<p>Head over to Kibana, Select APM and you will see something similar like below when selecting the timepicker to 15 minutes at the right top corner. This page will give you the overview of all your configured applications and the average response times over the selected time, transactions per minute, errors per minute etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-home-root.png" alt="" /></p>
+
+<p>When you select your application, you will find the graphs on you response times and requests per minute, also a breakdown per request path:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-1.png" alt="" /></p>
+
+<p>When selecting the request path, in this case <code>GET /</code>, you will find a breakdown of metrics only for that request and also the response time distribution for that request path, if you select frame from the response time distribution, it will filter the focus to that specific transaction.</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-1.png" alt="" /></p>
+
+<p>When you scroll a bit down to the Transaction Sample section, you will find data about the request, response, system etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-transaction-1.png" alt="" /></p>
+
+<p>From the Transaction Sample, you can select the View Transaction in Discover button, which will trace that transaction id on the Discover UI:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-transaction-disc-1.png" alt="" /></p>
+
+<p>Increasing the http curl clients running simultaneously from different servers and increasing the time for 15 minutes to have more metrics will result in the screenshot below, notice the 6ms response time can easily be traced selecting it in the response time distribution, then discovering it in the UI, which will give you the raw data from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-2.png" alt="" /></p>
+
+<h2>Viewing Application Errors in APM</h2>
+
+<p>Make a couple of requests to <code>/5xx</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://application-routable-endpoint:80/5xx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Navigate to the app, select Errors, then you will see the exception details that was returned. Here we can see that in our code we tried to concatenate integers with strings:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-1.png" alt="" /></p>
+
+<p>Furthermore we can select that error and it will provide us a direct view on where in our code the error gets generated:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-details-1.png" alt="" /></p>
+
+<p>Pretty cool right?! You can also further select the library frames, which will take you to the lower level code that raised the exception. If this errors can be drilled down via the discover ui, to group by source address etc.</p>
+
+<h2>Simulate Response Latencies:</h2>
+
+<p>Make a couple of requests to the <code>/delay</code> request path, and you should see the increased response times from earlier:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-delay.png" alt="" /></p>
+
+<h2>Requests where Database Calls are Executed</h2>
+
+<p>The while loop to call random request paths:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">count</span><span class="o">=</span><span class="m">0</span> <span class="o">&amp;&amp;</span> <span class="k">while</span> <span class="o">[</span> <span class="nv">$count</span> -lt <span class="m">1000</span> <span class="o">]</span><span class="p">;</span>
+</span><span class='line'><span class="k">do</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-read<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-us-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-read<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-us-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  <span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span><span class="p">;</span>
+</span><span class='line'><span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When we look at our applications performance monitoring overview, we can see the writes provide more latencies as the group by&rsquo;s:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-view-1.png" alt="" /></p>
+
+<p>The <code>/sql-write</code> request overview:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1.png" alt="" /></p>
+
+<p>When selecting a transaction sample, we can see the timeline of each database call:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1-details.png" alt="" /></p>
+
+<p>When looking at the <code>/sql-group</code> request overview, we can see that the response times increasing overtime, as more data is written to the database, it takes longer to read and group all the data from the database:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1.png" alt="" /></p>
+
+<p>The transaction details shows the timeline of the database query from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-details.png" alt="" /></p>
+
+<p>When you select the database select query on the timeline view, it will take you to the exact database query that was executed:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-span.png" alt="" /></p>
+
+<p>When we include a database call with a external request to a remote http endpoint, we will see something like:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlread-ext.png" alt="" /></p>
+
+<h2>Viewing 4xx and 5xx Response Codes</h2>
+
+<p>From the application code we are returning 2xx, 4xx, and 5xx response codes for this demonstration to visualize them:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-response-codes.png" alt="" /></p>
+
+<h2>Configuring more Applications</h2>
+
+<p>Once more apps are configured, and they start serving traffic, they will start appearing on the APM UI as below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-apps.png" alt="" /></p>
+
+<p>APM is available for other languages as well and provides a getting started snippets from the APM UI. For more information on APM, have a look at their <a href="https://www.elastic.co/solutions/apm">Documentation</a></p>
+
+<p>Hope this was useful.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics]]></title>
@@ -4513,175 +4910,6 @@
 <ul>
 <li><a href="https://www.facebook.com/security/">https://www.facebook.com/security/</a></li>
 <li><a href="https://www.facebook.com/support">https://www.facebook.com/support</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Distributing a Shared Secret Amongst a Group of Participants Using Shamirs Secret Sharing Scheme Aka Ssss]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/08/27/distributing-a-shared-secret-amongst-a-group-of-participants-using-shamirs-secret-sharing-scheme-aka-ssss/"/>
-    <updated>2018-08-27T18:29:48-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/08/27/distributing-a-shared-secret-amongst-a-group-of-participants-using-shamirs-secret-sharing-scheme-aka-ssss</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/cryptography-word-logo.png" alt="" /></p>
-
-<p>In situations where a group of participants join together to split up a secret in a form of secret sharing, where the secret is devided into parts, giving each participant their own unique part. Together contributing to reconstruct the initial secret. We can achieve this with Shamir&rsquo;s Secret Sharing which is an algorithm in cryptography created by <a href="https://en.wikipedia.org/wiki/Shamir%27s_Secret_Sharing">Adi Shamir</a>.</p>
-
-<h2>More info on Secret Sharing</h2>
-
-<p>Referenced from <a href="https://en.wikipedia.org/wiki/Secret_sharing">Wikipedia: Secret Sharing</a>:</p>
-
-<p>&ldquo;Secret sharing (also called secret splitting) refers to methods for distributing a secret amongst a group of participants, each of whom is allocated a share of the secret. The secret can be reconstructed only when a sufficient number, of possibly different types, of shares are combined together; individual shares are of no use on their own.&rdquo;</p>
-
-<h2>Installing ssss</h2>
-
-<p>On Mac OSX:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ brew install ssss</span></code></pre></td></tr></table></div></figure>
-
-
-<p>On Debian:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt install ssss -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Creating a Secret:</h2>
-
-<p>Generate a Secret where we will distribute 5 shares, where each participant will have their own unique share, and to reconstruct the secret, we will need 3 participants to rebuild the secret. In our case our shares will be distributed to the following example users:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>- Share 1: James
-</span><span class='line'>- Share 2: John
-</span><span class='line'>- Share 3: Frank
-</span><span class='line'>- Share 4: Paul
-</span><span class='line'>- Share 5: Ryan</span></code></pre></td></tr></table></div></figure>
-
-
-<p>For this demonstration our secret&rsquo;s value will be <code>SuperSecret@123!</code>, which we will split into 5 shares, but to reconstruct, we need 3 parts / shares:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssss-split -t <span class="m">3</span> -n 5
-</span><span class='line'>Generating shares using a <span class="o">(</span>3,5<span class="o">)</span> scheme with dynamic security level.
-</span><span class='line'>Enter the secret, at most <span class="m">128</span> ASCII characters: Using a <span class="m">128</span> bit security level.
-</span><span class='line'>1-41ac84013bf568d1cc88b751539f1ff5
-</span><span class='line'>2-7d9ca3ca26442bfcca35e0ad205e5659
-</span><span class='line'>3-519038837bbf1b7ceefde331ad1ae40f
-</span><span class='line'>4-6d4f4e0f086af5be033f516bb3e227d2
-</span><span class='line'>5-4143d5465591c53e27f752f73ea69596
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In this case, each share will be distributed to each user to save in a secure location.</p>
-
-<h2>Reconstructing the Secret:</h2>
-
-<p>Let&rsquo;s reconstruct the secret, and as we need 3 participants, we will ask <code>John</code>, <code>Paul</code> and <code>Ryan</code> for their shares, so that we can reconstruct the secret:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssss-combine -t 3
-</span><span class='line'>Enter <span class="m">3</span> shares separated by newlines:
-</span><span class='line'>Share <span class="o">[</span>1/3<span class="o">]</span>: 2-7d9ca3ca26442bfcca35e0ad205e5659
-</span><span class='line'>Share <span class="o">[</span>2/3<span class="o">]</span>: 4-6d4f4e0f086af5be033f516bb3e227d2
-</span><span class='line'>Share <span class="o">[</span>3/3<span class="o">]</span>: 5-4143d5465591c53e27f752f73ea69596
-</span><span class='line'>Resulting secret: SuperSecret@123!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see the secret is verified the same as the initial secret.</p>
-
-<h2>Using ssss and qrencode for MFA Codes</h2>
-
-<p>This can be useful for Multi Factor Authentication as well. Setup a Virtual MFA with a Identity that supports MFA Authentication, copy or make note of the &ldquo;Secret Key / Secret Configuration Key&rdquo;, go ahead and setup the MFA Device on your MFA Device to complete the setup.</p>
-
-<p>Once verified and able to logon, logout and delete the MFA Account from your Device.</p>
-
-<p>Generate the same share scheme for the MFA Secret Key, for this example: <code>ABCDEXAMPLE1029384756</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssss-split -t <span class="m">3</span> -n 5
-</span><span class='line'>Generating shares using a <span class="o">(</span>3,5<span class="o">)</span> scheme with dynamic security level.
-</span><span class='line'>Enter the secret, at most <span class="m">128</span> ASCII characters: Using a <span class="m">168</span> bit security level.
-</span><span class='line'>1-8d2cf979fb346297cab47ff691bddc1c5a5f34af37
-</span><span class='line'>2-4d0f2cdcfff653cc60a4f293c15805f7e84b0a956d
-</span><span class='line'>3-dadb6d2cbe42772c9a9042273f0b71dd71422f19cb
-</span><span class='line'>4-546bcef428151ceb01fdc6007ac2e5e4f1516670ca
-</span><span class='line'>5-c3bf8f0469a1380bfbc976b4849191ce685843fc7e
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Distribute the Shares, and when the MFA Device needs to be restored on a Device, reconstruct the secret to get the Secret Key for the MFA Device:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssss-combine -t 3
-</span><span class='line'>Enter <span class="m">3</span> shares separated by newlines:
-</span><span class='line'>Share <span class="o">[</span>1/3<span class="o">]</span>: 1-8d2cf979fb346297cab47ff691bddc1c5a5f34af37
-</span><span class='line'>Share <span class="o">[</span>2/3<span class="o">]</span>: 2-4d0f2cdcfff653cc60a4f293c15805f7e84b0a956d
-</span><span class='line'>Share <span class="o">[</span>3/3<span class="o">]</span>: 3-dadb6d2cbe42772c9a9042273f0b71dd71422f19cb
-</span><span class='line'>Resulting secret: ABCDEXAMPLE1029384756
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have the Secret Key for our MFA Device, let&rsquo;s Generate a QRCode that we can scan in from our device, which will save us from typing a lot of characters. We will need <code>qrencode</code> for this:</p>
-
-<p>For Mac OSX:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew install qrencode
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>for Debian:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install qrencode -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To generate the QRCode, we will pass the filename: <code>myqrcode.png</code>, the name that will appear on our device: <code>MyNewMFADevice</code>, and the Secret: <code>ABCDEXAMPLE1029384756</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>qrencode -o myqrcode.png -d <span class="m">300</span> -s <span class="m">10</span> <span class="s2">&quot;otpauth://totp/MyNewMFADevice?secret=ABCDEXAMPLE1029384756&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will find the <code>myqrcode.png</code> in your current working directory, open the file scan the barcode and your MFA device will be setup and enabled to use.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://en.wikipedia.org/wiki/Secret_sharing">https://en.wikipedia.org/wiki/Secret_sharing</a></li>
-<li><a href="http://point-at-infinity.org/ssss/">http://point-at-infinity.org/ssss/</a></li>
-<li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-iam-user">https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-iam-user</a></li>
 </ul>
 
 ]]></content>

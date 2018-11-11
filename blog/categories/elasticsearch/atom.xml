@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Elasticsearch | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/elasticsearch/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-11T13:03:55-05:00</updated>
+  <updated>2018-11-11T15:50:56-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,281 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/"/>
+    <updated>2018-11-11T13:09:18-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
+
+<p>In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. If you have not setup the Elastic Stack with / or APM Server, you <a href="https://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">can follow this post</a> to setup the needed.</p>
+
+<p>Then we will make a bunch of HTTP Requests to our Application and will go through the metrics per request type.</p>
+
+<h2>Application Metrics</h2>
+
+<p>Our Application will have the following Request Paths:</p>
+
+<ul>
+<li><code>/</code> - Returns static text</li>
+<li><code>/delay</code> - random delays to simulate increased response latencies</li>
+<li><code>/upstream</code> - get data from a upstream provider, if statements to provide dummy 200, 404 and 502 reponses to visualize</li>
+<li><code>/5xx</code> - request path that will raise an exception so that we can see the error via apm</li>
+<li><code>/sql-write</code> - inserts 5 rows into a sqlite database</li>
+<li><code>/sql-read</code> - executes a select all from the database</li>
+<li><code>/sql-group</code> - sql query to group all the cities and count them</li>
+</ul>
+
+
+<p>This is just simple request paths to demonstrate the metrics via APM (Application Performance Monitoring) on Kibana.</p>
+
+<h2>Install Flask and APM Agent</h2>
+
+<p>Create a virtual environment and install the dependencies:</p>
+
+<pre><code class="bash">$ apt install python python-setuptools -y
+$ easy_install pip
+$ pip install virtualenv
+$ pip install elastic-apm[flask]
+$ pip install flask
+</code></pre>
+
+<p>For more info on <a href="https://www.elastic.co/guide/en/apm/agent/python/current/getting-started.html">APM Configuration</a>.</p>
+
+<h2>Instrument a Bare Bones Python Flask app with APM:</h2>
+
+<p>A Barebones app with APM Configured will look like this:</p>
+
+<pre><code class="python">from flask import Flask, jsonify
+from elasticapm.contrib.flask import ElasticAPM
+from elasticapm.handlers.logging import LoggingHandler
+
+app = Flask(__name__)
+apm = ElasticAPM(app, server_url='http://localhost:8200', service_name='flask-app-1', logging=True)
+
+@app.route('/')
+def index():
+    return jsonify({"message": "response ok"}), 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)
+</code></pre>
+
+<p>This will provide metrics on the <code>/</code> request path. In order to trace transaction ids from the metrics, we need to configure the index on Kibana. To do this, head over to Kibana, Management, Index Patterns, Add Index Pattern, <code>apm*</code>, select <code>@timestamp</code> as the time filter field name.</p>
+
+<p>This will allow you to see the data when tracing the transaction id&rsquo;s via the Discover UI.</p>
+
+<h2>Create the Python Flask App</h2>
+
+<p>Create the Flask App with the request paths as mentioned in the beginning:</p>
+
+<pre><code class="python">import sqlite3, requests, time, logging, random
+from flask import Flask, jsonify
+from elasticapm.contrib.flask import ElasticAPM
+from elasticapm.handlers.logging import LoggingHandler
+
+names = ['ruan', 'stefan', 'philip', 'norman', 'frank', 'pete', 'johnny', 'peter', 'adam']
+cities = ['cape town', 'johannesburg', 'pretoria', 'dublin', 'kroonstad', 'bloemfontein', 'port elizabeth', 'auckland', 'sydney']
+lastnames = ['smith', 'bekker', 'admams', 'phillips', 'james', 'adamson']
+
+conn = sqlite3.connect('database.db')
+conn.execute('CREATE TABLE IF NOT EXISTS people (name STRING, age INTEGER, surname STRING, city STRING)')
+#sqlquery_write = conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
+seconds = [0.002, 0.003, 0.004, 0.01, 0.3, 0.2, 0.009, 0.015, 0.02, 0.225, 0.009, 0.001, 0.25, 0.030, 0.018]
+
+app = Flask(__name__)
+apm = ElasticAPM(app, server_url='http://localhost:8200', service_name='my-app-01', logging=False)
+
+@app.route('/')
+def index():
+    return jsonify({"message": "response ok"})
+
+@app.route('/delay')
+def delay():
+    time.sleep(random.choice(seconds))
+    return jsonify({"message": "response delay"})
+
+@app.route('/upstream')
+def upstream():
+    r = requests.get('https://api.ruanbekker.com/people').json()
+    r.get('country')
+    if r.get('country') == 'italy':
+        return 'Italalia!', 200
+    elif r.get('country') == 'canada':
+        return 'Canada!', 502
+    else:
+        return 'Not Found', 404
+
+@app.route('/5xx')
+def fail_with_5xx():
+    value = 'a' + 1
+    return jsonify({"message": value})
+
+@app.route('/sql-write')
+def sqlw():
+    conn = sqlite3.connect('database.db')
+    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
+    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
+    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
+    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
+    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
+    conn.commit()
+    conn.close()
+    return 'ok', 200
+
+@app.route('/sql-read')
+def sqlr():
+    conn = sqlite3.connect('database.db')
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute('select * from people')
+    rows = cur.fetchall()
+    conn.close()
+    return 'ok', 200
+
+@app.route('/sql-group')
+def slqg():
+    conn = sqlite3.connect('database.db')
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute('select count(*) as num, city from people group by city')
+    rows = cur.fetchall()
+    conn.close()
+    return 'ok', 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)
+</code></pre>
+
+<p>Run the app:</p>
+
+<pre><code class="bash">$ python app.py
+</code></pre>
+
+<p>At this point, we wont have any data on APM as we need to make requests to our application. Let&rsquo;s make 10 HTTP GET Requests on the <code>/</code> Request Path:</p>
+
+<pre><code class="bash">$ count=0 &amp;&amp; while [ $count -lt 10 ]; do curl http://application-routable-address:80/; sleep 1; count=$((count+1)); done
+</code></pre>
+
+<h2>Visualize the Root Request Path</h2>
+
+<p>Head over to Kibana, Select APM and you will see something similar like below when selecting the timepicker to 15 minutes at the right top corner. This page will give you the overview of all your configured applications and the average response times over the selected time, transactions per minute, errors per minute etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-home-root.png" alt="" /></p>
+
+<p>When you select your application, you will find the graphs on you response times and requests per minute, also a breakdown per request path:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-1.png" alt="" /></p>
+
+<p>When selecting the request path, in this case <code>GET /</code>, you will find a breakdown of metrics only for that request and also the response time distribution for that request path, if you select frame from the response time distribution, it will filter the focus to that specific transaction.</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-1.png" alt="" /></p>
+
+<p>When you scroll a bit down to the Transaction Sample section, you will find data about the request, response, system etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-transaction-1.png" alt="" /></p>
+
+<p>From the Transaction Sample, you can select the View Transaction in Discover button, which will trace that transaction id on the Discover UI:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-transaction-disc-1.png" alt="" /></p>
+
+<p>Increasing the http curl clients running simultaneously from different servers and increasing the time for 15 minutes to have more metrics will result in the screenshot below, notice the 6ms response time can easily be traced selecting it in the response time distribution, then discovering it in the UI, which will give you the raw data from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-2.png" alt="" /></p>
+
+<h2>Viewing Application Errors in APM</h2>
+
+<p>Make a couple of requests to <code>/5xx</code>:</p>
+
+<pre><code class="bash">$ curl http://application-routable-endpoint:80/5xx
+</code></pre>
+
+<p>Navigate to the app, select Errors, then you will see the exception details that was returned. Here we can see that in our code we tried to concatenate integers with strings:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-1.png" alt="" /></p>
+
+<p>Furthermore we can select that error and it will provide us a direct view on where in our code the error gets generated:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-details-1.png" alt="" /></p>
+
+<p>Pretty cool right?! You can also further select the library frames, which will take you to the lower level code that raised the exception. If this errors can be drilled down via the discover ui, to group by source address etc.</p>
+
+<h2>Simulate Response Latencies:</h2>
+
+<p>Make a couple of requests to the <code>/delay</code> request path, and you should see the increased response times from earlier:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-delay.png" alt="" /></p>
+
+<h2>Requests where Database Calls are Executed</h2>
+
+<p>The while loop to call random request paths:</p>
+
+<pre><code class="bash">count=0 &amp;&amp; while [ $count -lt 1000 ]; 
+do 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-read; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-group; 
+  curl -H "Host: my-eu-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-us-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-read; 
+  curl -H "Host: my-eu-server" -i http://x.x.x.x/sql-group; 
+  curl -H "Host: my-us-server" -i http://x.x.x.x/sql-group; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
+  curl -H "Host: my-eu-server" -i http://x.x.x.x/sql-group; 
+  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-group; 
+  count=$((count+1)); 
+done
+</code></pre>
+
+<p>When we look at our applications performance monitoring overview, we can see the writes provide more latencies as the group by&rsquo;s:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-view-1.png" alt="" /></p>
+
+<p>The <code>/sql-write</code> request overview:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1.png" alt="" /></p>
+
+<p>When selecting a transaction sample, we can see the timeline of each database call:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1-details.png" alt="" /></p>
+
+<p>When looking at the <code>/sql-group</code> request overview, we can see that the response times increasing overtime, as more data is written to the database, it takes longer to read and group all the data from the database:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1.png" alt="" /></p>
+
+<p>The transaction details shows the timeline of the database query from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-details.png" alt="" /></p>
+
+<p>When you select the database select query on the timeline view, it will take you to the exact database query that was executed:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-span.png" alt="" /></p>
+
+<p>When we include a database call with a external request to a remote http endpoint, we will see something like:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlread-ext.png" alt="" /></p>
+
+<h2>Viewing 4xx and 5xx Response Codes</h2>
+
+<p>From the application code we are returning 2xx, 4xx, and 5xx response codes for this demonstration to visualize them:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-response-codes.png" alt="" /></p>
+
+<h2>Configuring more Applications</h2>
+
+<p>Once more apps are configured, and they start serving traffic, they will start appearing on the APM UI as below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-apps.png" alt="" /></p>
+
+<p>APM is available for other languages as well and provides a getting started snippets from the APM UI. For more information on APM, have a look at their <a href="https://www.elastic.co/solutions/apm">Documentation</a></p>
+
+<p>Hope this was useful.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics]]></title>
@@ -770,194 +1045,6 @@ yellow open   docker-whoami-2018.05.01  YebUtKa1RnCy86iP5_ylgg   5   1         1
 <li><a href="https://github.com/moby/moby/issues/25694">https://github.com/moby/moby/issues/25694</a></li>
 <li><a href="https://docs.docker.com/v17.09/engine/admin/logging/view_container_logs/">https://docs.docker.com/v17.09/engine/admin/logging/view_container_logs/</a></li>
 <li><a href="https://sysadmins.co.za/how-to-setup-a-2-node-elasticsearch-cluster-on-centos-7-with-some-example-usage/">https://sysadmins.co.za/how-to-setup-a-2-node-elasticsearch-cluster-on-centos-7-with-some-example-usage/</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Running a 3 Node Elasticsearch Cluster With Docker Compose on Your Laptop for Testing]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing/"/>
-    <updated>2018-04-29T13:43:35-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing</id>
-    <content type="html"><![CDATA[<p>Having a Elasticsearch cluster on your laptop with Docker for testing is great. And in this post I will show you how quick and easy it is, to have a 3 node elasticsearch cluster running on docker for testing.</p>
-
-<h2>Pre-Requisites</h2>
-
-<p>We need to set the <code>vm.max_map_count</code> kernel parameter:</p>
-
-<pre><code class="bash">$ sudo sysctl -w vm.max_map_count=262144
-</code></pre>
-
-<p>To set this permanently, add it to <code>/etc/sysctl.conf</code> and reload with <code>sudo sysctl -p</code></p>
-
-<h2>Docker Compose:</h2>
-
-<p>The docker compose file that we will reference:</p>
-
-<pre><code class="yaml">version: '2.2'
-services:
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
-    container_name: elasticsearch
-    environment:
-      - cluster.name=docker-cluster
-      - bootstrap.memory_lock=true
-      - http.cors.enabled=true
-      - http.cors.allow-origin=*
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - esdata1:/home/ruan/workspace/docker/elasticsearch/data
-    ports:
-      - 9200:9200
-    networks:
-      - esnet
-  elasticsearch2:
-    image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
-    container_name: elasticsearch2
-    environment:
-      - cluster.name=docker-cluster
-      - bootstrap.memory_lock=true
-      - http.cors.enabled=true
-      - http.cors.allow-origin=*
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "discovery.zen.ping.unicast.hosts=elasticsearch"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - esdata2:/home/ruan/workspace/docker/elasticsearch/data
-    networks:
-      - esnet
-  elasticsearch3:
-    image: docker.elastic.co/elasticsearch/elasticsearch:6.2.4
-    container_name: elasticsearch3
-    environment:
-      - cluster.name=docker-cluster
-      - bootstrap.memory_lock=true
-      - http.cors.enabled=true
-      - http.cors.allow-origin=*
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "discovery.zen.ping.unicast.hosts=elasticsearch"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - esdata3:/home/ruan/workspace/docker/elasticsearch/data
-    networks:
-      - esnet
-
-  kibana:
-    image: 'docker.elastic.co/kibana/kibana:6.3.2'
-    container_name: kibana
-    environment:
-      SERVER_NAME: kibana.local
-      ELASTICSEARCH_URL: http://elasticsearch:9200
-    ports:
-      - '5601:5601'
-    networks:
-      - esnet
-
-  headPlugin:
-    image: 'mobz/elasticsearch-head:5'
-    container_name: head
-    ports:
-      - '9100:9100'
-    networks:
-      - esnet
-
-volumes:
-  esdata1:
-    driver: local
-  esdata2:
-    driver: local
-  esdata3:
-    driver: local
-
-networks:
-  esnet:
-</code></pre>
-
-<p>Now make sure the paths exist that we referenced in the compose file, in my case <code>/home/ruan/workspace/docker/elasticsearch/data</code></p>
-
-<h2>Deploy</h2>
-
-<p>Deploy your elasticsearch cluster with docker compose:</p>
-
-<pre><code class="bash">$ docker-compose up
-</code></pre>
-
-<p>This will run in the foreground, and you should see console output.</p>
-
-<h2>Testing Elasticsearch</h2>
-
-<p>Let&rsquo;s run a couple of queries, first up, check the cluster health api:</p>
-
-<pre><code class="bash">$ curl http://127.0.0.1:9200/_cluster/health?pretty
-{
-  "cluster_name" : "docker-cluster",
-  "status" : "green",
-  "timed_out" : false,
-  "number_of_nodes" : 3,
-  "number_of_data_nodes" : 3,
-  "active_primary_shards" : 1,
-  "active_shards" : 2,
-  "relocating_shards" : 0,
-  "initializing_shards" : 0,
-  "unassigned_shards" : 0,
-  "delayed_unassigned_shards" : 0,
-  "number_of_pending_tasks" : 0,
-  "number_of_in_flight_fetch" : 0,
-  "task_max_waiting_in_queue_millis" : 0,
-  "active_shards_percent_as_number" : 100.0
-}
-</code></pre>
-
-<p>Create a index with replication count of 2:</p>
-
-<pre><code class="bash">$ curl -H "Content-Type: application/json" -XPUT http://127.0.0.1:9200/test -d '{"number_of_replicas": 2}'
-</code></pre>
-
-<p>Ingest a document to elasticsearch:</p>
-
-<pre><code class="bash">$ curl -H "Content-Type: application/json" -XPUT http://127.0.0.1:9200/test/docs/1 -d '{"name": "ruan"}'
-{"_index":"test","_type":"docs","_id":"1","_version":1,"result":"created","_shards":{"total":3,"successful":3,"failed":0},"_seq_no":0,"_primary_term":1}
-</code></pre>
-
-<p>View the indices:</p>
-
-<pre><code class="bash">$ curl http://127.0.0.1:9200/_cat/indices?v
-health status index                       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   test                        w4p2Q3fTR4uMSYBfpNVPqw   5   2          1            0      3.3kb          1.1kb
-green  open   .monitoring-es-6-2018.04.29 W69lql-rSbORVfHZrj4vug   1   1       1601           38        4mb            2mb
-</code></pre>
-
-<h2>Kibana</h2>
-
-<p>Kibana is also included in the stack and is accessible via <a href="http://localhost:5601/">http://localhost:5601/</a> and you it should look more or less like:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/kibana-local-home.png" alt="" /></p>
-
-<h2>Elasticsearch Head UI</h2>
-
-<p>I always prefer working directly with the RESTFul API, but if you would like to use a UI to interact with Elasticsearch, you can access it via <a href="http://localhost:9100/">http://localhost:9100/</a> and should look like this:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elasticsearch-head-ui.png" alt="" /></p>
-
-<h2>Deleting the Cluster:</h2>
-
-<p>As its running in the foreground, you can just hit ctrl + c and as we persisted data in our compose, when you spin up the cluster again, the data will still be there.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html</a></li>
 </ul>
 
 ]]></content>

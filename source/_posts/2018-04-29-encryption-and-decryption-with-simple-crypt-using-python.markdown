@@ -119,7 +119,12 @@ this is a secret message
 This is one way of working with sensitive info that you would like to encrypt/decrypt.
 
 <script type="text/javascript">
-var infolinks_pid = 3143539;
-var infolinks_wsid = 0;
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
 </script>
-<script type="text/javascript" src="http://resources.infolinks.com/js/infolinks_main.js"></script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

@@ -6,7 +6,7 @@ comments: true
 categories: ["elastic", "kibana", "elasticsearch", "apm", "metrics", "flask"] 
 ---
 
-![](https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png)
+![](https://objects.ruanbekker.com/assets/images/elastic-apm-banner.png)
 
 In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. If you have not setup the Elastic Stack with / or APM Server, you [can follow this post](https://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/) to setup the needed.
 

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Monitoring | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/monitoring/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-10-31T02:25:48-04:00</updated>
+  <updated>2018-11-11T13:03:55-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,158 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/"/>
+    <updated>2018-11-11T12:31:43-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics</id>
+    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
+
+<p>In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive the metric data from the application side, and is then pushed to apm indices on Elasticsearch.</p>
+
+<p>This will be a 2 post blog on APM:</p>
+
+<ul>
+<li>1) Setup the Elastic Stack with Elasticsearch, Kibana and APM Server (this post)</li>
+<li>2) Setup a Python Flask application with the APM Agent</li>
+</ul>
+
+
+<h2>What is APM</h2>
+
+<p>This is Elastic&rsquo;s Open Source implementation of Application Performance Monitoring, which enables you to get insights in your applications performance. Having logs and system metrics is one thing, but having insights into your applications performance just enables you quicker resolution times to pinpoint when debugging a application that might be happening.</p>
+
+<p>You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred.</p>
+
+<ul>
+<li><a href="https://www.elastic.co/solutions/apm">More Info</a></li>
+</ul>
+
+
+<h2>APM Agents:</h2>
+
+<p>The APM Agents will be loaded inside your application, application metrics will then be pushed to the APM Server (which we will setup in this post), which then gets pushed to Elasticsearch and is then consumed by Kibana.</p>
+
+<p>At the time of writing, the APM Agents are supported in the following languages:</p>
+
+<ul>
+<li>Node.js</li>
+<li>Django</li>
+<li>Flask</li>
+<li>Ruby on Rails</li>
+<li>Rack</li>
+<li>RUM</li>
+<li>Golang</li>
+<li>Java</li>
+</ul>
+
+
+<h2>Setup the Elastic Stack</h2>
+
+<p>One thing to note, every service in your Elastic Stack needs to be running on the same version. In this post we will setup Elasticsearch, APM and Kibana all running on version <code>6.4.3</code></p>
+
+<h2>Setup the Pre-Requirements:</h2>
+
+<p>Elasticsearch depends on Java, se we will go ahead and setup the repositories:</p>
+
+<pre><code class="bash">$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+$ apt-get install apt-transport-https -y
+$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+$ apt update &amp;&amp; apt upgrade -y 
+$ apt install openjdk-8-jdk -y
+</code></pre>
+
+<p>Verify that Java is installed:</p>
+
+<pre><code class="bash">$ java -version
+openjdk version "1.8.0_181"
+OpenJDK Runtime Environment (build 1.8.0_181-8u181-b13-1ubuntu0.16.04.1-b13)
+OpenJDK 64-Bit Server VM (build 25.181-b13, mixed mode)
+</code></pre>
+
+<p>Setup Kernel parameters for Elasticsearch:</p>
+
+<pre><code class="bash">$ sysctl -w vm.max_map_count=262144
+$ echo 'vm.max_map_count=262144' &gt;&gt; /etc/sysctl.conf
+</code></pre>
+
+<h2>Setup Elasticsearch:</h2>
+
+<p>Search for the latest versions (when already having elasticsearch, either upgrade or install apm on the same version as elasticsearch/kibana):</p>
+
+<pre><code class="bash">$ apt-cache madison elasticsearch
+elasticsearch |      6.4.3 | https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
+elasticsearch |      6.4.2 | https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
+</code></pre>
+
+<p>Install Elasticsearch:</p>
+
+<pre><code class="bash">$ apt-get install elasticsearch=6.4.3 -y
+</code></pre>
+
+<p>Configure Elasticsearch to lock the memory on startup:</p>
+
+<pre><code class="bash">$ sed -i 's/#bootstrap.memory_lock: true/bootstrap.memory_lock: true/g' /etc/elasticsearch/elasticsearch.yml
+</code></pre>
+
+<p>Enable Elasticsearch on startup and start the service:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl enable elasticsearch.service
+$ systemctl start elasticsearch.service
+</code></pre>
+
+<h2>Install Kibana:</h2>
+
+<p>Install Kibana version <code>6.4.3</code>:</p>
+
+<pre><code class="bash">$ apt install kibana=6.4.3 -y
+</code></pre>
+
+<p>For demonstration, I will configure Kibana to listen on all interfaces on port <code>5601</code>, but note this will enable access for everyone, you can [follow this blogpost] to setup a Nginx Reverse Proxy to upstream to localhost on port 5601.</p>
+
+<p>Since this demonstration we are using Elasticsearch locally, so if you have a remote cluster, configuration can be applied where needed.</p>
+
+<pre><code class="bash">$ sed -i 's/#server.host: "localhost"/server.host: "0.0.0.0"/'g /etc/kibana/kibana.yml
+$ sed -i 's/#elasticsearch.url: "http:\/\/localhost:9200"/elasticsearch.url: "http:\/\/localhost:9200"/'g /etc/kibana/kibana.yml
+</code></pre>
+
+<p>Enable Kibana on startup and start the service:</p>
+
+<pre><code class="bash">$ systemctl enable kibana.service
+$ systemctl restart kibana.service
+</code></pre>
+
+<h2>Install the APM Server</h2>
+
+<p>Install APM Server version <code>6.4.3</code>:</p>
+
+<pre><code class="bash">$ apt install apm-server=6.4.3 -y
+</code></pre>
+
+<p>Since we have everything locally, the configuration can be kept as is, but if you need to configure the elasticsearch or kibana hosts, it can be done via <code>/etc/apm-server/apm-server.yml</code></p>
+
+<p>Then once Kibana and Elasticsearch is started, load the mapping templates, enable and start the service:</p>
+
+<pre><code class="bash">$ apm-server setup
+$ systemctl enable apm-server.service
+$ systemctl restart apm-server.service
+</code></pre>
+
+<p>Ensure all the services are running with <code>netstat -tulpn</code> and port <code>9200</code>, <code>9300</code>, <code>5601</code> and <code>8300</code> should be listening</p>
+
+<h2>Access Your Elastic Stack</h2>
+
+<p>Access Kibana on your routable endpoint on port <code>5601</code> and you should see something like this:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-startup.png" alt="" /></p>
+
+<h2>Configuring a Application to push metrics to APM</h2>
+
+<p>In the <a href="">next post</a> I will setup a Python Flask Application on APM</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Monitor a Amazon Elasticsearch Service Cluster Update Process]]></title>

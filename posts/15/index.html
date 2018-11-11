@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post I will show one way of referencing credentials from your application in Python, without setting them in your applications code. We will &hellip;">
+  <meta name="description" content="As until now, AWS does not offer VPC Support for Elasticsearch, so this make things a bit difficult authorizing Private IP Ranges. One workaround &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,294 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/08/31/secure-your-access-to-kibana-5-and-elasticsearch-5-with-nginx-for-aws/">Secure Your Access to Kibana 5 and Elasticsearch 5 With Nginx for AWS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-08-31T10:40:09-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2017</span></span> <span class='time'>10:40 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>As <del>until now, AWS does not offer VPC Support for Elasticsearch</del>, so this make things a bit difficult authorizing Private IP Ranges.</p>
+
+<p>One workaround would be to setup a Nginx Reverse Proxy on AWS within the your Private VPC, associate a EIP on your Nginx EC2 Instance, then authorize your EIP on your Elasticsearch IP Access Policy.</p>
+
+<p><strong>Update</strong>:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-vpc.html">Elasticsearch Announced VPC Support for Elasticsearch</a></li>
+</ul>
+
+
+<h2>Our Setup:</h2>
+
+<p>In this setup, we will have an Internal ELB (Elastic Load Balancer), which we will associate 1 or more EC2 Nginx Instances behind the ELB, then setup our Nginx to Revere Proxy our connections through to our Elasticsearch Endpoint.</p>
+
+<p>We will also setup Basic HTTP Authentication for our <code>/</code> elasticsearch endpoint, and our <code>/kibana</code> endpoint. But we will keep the authentication seperate from each other, so that credentials for ES and Kibana is not the same, but depending on your use case, you can allow both endpoints to reference the same credential file.</p>
+
+<h2>Install Nginx</h2>
+
+<p>Depending on your Linux Distribution, the package manager may differ, I am using Amazon Linux:</p>
+
+<figure class='code'><figcaption><span>Install Nginx</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo yum update -y
+</span><span class='line'><span class="nv">$ </span>sudo yum install nginx httpd-tools -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Nginx:</h2>
+
+<p>Remove the default configuration and replace the <code>nginx.conf</code> with the following:</p>
+
+<figure class='code'><figcaption><span>Remove Default Nginx Config</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo rm -r /etc/nginx/nginx.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Main Nginx Configuration:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/nginx.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user nginx<span class="p">;</span>
+</span><span class='line'>worker_processes auto<span class="p">;</span>
+</span><span class='line'>pid /run/nginx.pid<span class="p">;</span>
+</span><span class='line'>error_log /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>  worker_connections 1024<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Basic Settings</span>
+</span><span class='line'>  sendfile on<span class="p">;</span>
+</span><span class='line'>  tcp_nopush on<span class="p">;</span>
+</span><span class='line'>  tcp_nodelay on<span class="p">;</span>
+</span><span class='line'>  keepalive_timeout 65<span class="p">;</span>
+</span><span class='line'>  types_hash_max_size 2048<span class="p">;</span>
+</span><span class='line'>  server_names_hash_bucket_size 128<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  include /etc/nginx/mime.types<span class="p">;</span>
+</span><span class='line'>  default_type application/octet-stream<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Logging Settings</span>
+</span><span class='line'>        log_format  main  <span class="s1">&#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  access_log /var/log/nginx/access.log main<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Gzip Settings</span>
+</span><span class='line'>  gzip on<span class="p">;</span>
+</span><span class='line'>  gzip_disable <span class="s2">&quot;msie6&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Elasticsearch Config</span>
+</span><span class='line'>  include /etc/nginx/conf.d/elasticsearch.conf<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The Reverse Proxy Configuration:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/conf.d/elasticsearch.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>server <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name elk.mydomain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># error logging</span>
+</span><span class='line'>  error_log /var/log/nginx/elasticsearch_error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># authentication: server wide</span>
+</span><span class='line'>  <span class="c">#auth_basic &quot;Auth&quot;;</span>
+</span><span class='line'>  <span class="c">#auth_basic_user_file /etc/nginx/.secrets;</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># authentication: elasticsearch</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;Elasticsearch Auth&quot;</span><span class="p">;</span>
+</span><span class='line'>    auth_basic_user_file /etc/nginx/.secrets_elasticsearch<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host https://search.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="o">{</span>NGINX-EIP<span class="o">}</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Authorization <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass https://search.eu-west-1.es.amazonaws.com/<span class="p">;</span>
+</span><span class='line'>    proxy_redirect https://search.eu-west-1.es.amazonaws.com/ http://<span class="o">{</span>NGINX-EIP<span class="o">}</span>/<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location /kibana <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># authentication: kibana</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;Kibana Auth&quot;</span><span class="p">;</span>
+</span><span class='line'>    auth_basic_user_file /etc/nginx/.secrets_kibana<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host https://search.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="o">{</span>NGINX-EIP<span class="o">}</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Authorization <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass https://search.eu-west-1.es.amazonaws.com/_plugin/kibana/<span class="p">;</span>
+</span><span class='line'>    proxy_redirect https://search.eu-west-1.es.amazonaws.com/_plugin/kibana/ http://<span class="o">{</span>NGINX_EIP<span class="o">}</span>/kibana/<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># elb checks</span>
+</span><span class='line'>  location /status <span class="o">{</span>
+</span><span class='line'>    root /usr/share/nginx/html/<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup Authentication:</h2>
+
+<p>Setup the authentication for elasticsearch and kibana:</p>
+
+<figure class='code'><figcaption><span>Create Auth for Kibana and Elasticsearch</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo htpasswd -c /etc/nginx/.secrets_elasticsearch admin
+</span><span class='line'><span class="nv">$ </span>sudo htpasswd -c /etc/nginx/.secrets_kibana admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Restart Nginx and Enable on Startup</h2>
+
+<p>Restart the nginx process and enable the process on boot:</p>
+
+<figure class='code'><figcaption><span>Restart Nginx</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo /etc/init.d/nginx restart
+</span><span class='line'><span class="nv">$ </span>sudo chkconfig nginx on
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure ELB:</h2>
+
+<p>Create a New Internal ELB, set the Backend Instances on Port 80, and the healthcheck should point to <code>/status/index.html</code> as this location block does not require authentication and our ELB will be able to get a 200 reponse if all is good.
+Next you can configure your Route 53 Hosted Zone, <code>elk.mydomain.com</code> to map to your ELB.</p>
+
+<h2>End Result</h2>
+
+<p>Now you should be able to access Elasticsearch on <code>http://elk.mydomain.com/</code> and Kibana on <code>http://elk.mydomain.com/kibana</code> after authenticating.</p>
+
+<p><p>
+<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init(&lsquo;Buy Me a Coffee&rsquo;, &lsquo;#46b798&rsquo;, &lsquo;A6423ZIQ&rsquo;);kofiwidget2.draw();</script></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3528,85 +3816,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/08/24/setup-mongodb-client-on-centos-6/">Setup MongoDB Client on CentOS 6</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-08-24T08:58:10-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>8:58 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>I have a bastion host that is still running CentOS6 and epel repos provides mongodb-shell version 2.x and Mlab requires version 3.x</p>
-
-<h2>Setup the Repositories</h2>
-
-<p>Create the repository:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat &gt; /etc/yum.repos.d/mongodb.repo &lt;&lt; EOF
-</span><span class='line'>[mongodb-org-3.4]
-</span><span class='line'>name=MongoDB Repository
-</span><span class='line'>baseurl=https://repo.mongodb.org/yum/redhat/\$releasever/mongodb-org/3.4/x86_64/
-</span><span class='line'>gpgcheck=1
-</span><span class='line'>enabled=1
-</span><span class='line'>gpgkey=https://www.mongodb.org/static/pgp/server-3.4.asc
-</span><span class='line'>EOF</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Update the repository index:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo yum update -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Install MongoDB-Shell</h2>
-
-<p>Install the MongoDB Shell Client:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo yum install mongodb-shell -y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Update: Thanks to Rick, when you use CentOS 7, you can install the Shell Client as instructed below:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo yum install mongodb-org-shell -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Connect to your Remote MongoDB Instance:</h2>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mongo remotedb.mlab.com:27017/&lt;dbname&gt; -u &lt;user&gt; -p &lt;pass&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/16">&larr; Older</a>
@@ -3624,6 +3833,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/10/31/benchmark-website-response-times-with-curl/">Benchmark Website Response Times With CURL</a>
       </li>
     
@@ -3637,10 +3850,6 @@
     
       <li class="post">
         <a href="/blog/2018/10/30/query-24-hours-worth-of-data-using-batchget-on-amazon-dynamodb-using-scan-and-filter-without-a-gsi/">Query 24 Hours Worth of Data Using BatchGet on Amazon DynamoDB Using Scan and Filter Without a GSI</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/10/24/using-python-flask-and-javascript-for-client-side-filtering-through-returned-data/">Using Python Flask and JavaScript for Client Side Filtering Through Returned Data</a>
       </li>
     
   </ul>

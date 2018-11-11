@@ -17,9 +17,9 @@ This will be a 2 post blog on APM:
 
 ## What is APM
 
-This is Elastic's Open Source implementation of Application Performance Monitoring, which enables you to get insights in your applications performance. Having logs and system metrics is one thing, but having insights into your applications performance just enables you quicker resolution times to pinpoint when debugging a application that might be happening.
+From their website APM is described as: "Elastic APM is an application performance monitoring system built on the Elastic Stack. It allows you to monitor software services and applications in real time, collecting detailed performance information on response time for incoming requests, database queries, calls to caches, external HTTP requests, etc."
 
-You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred.
+You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred etc.
 
 - [More Info](https://www.elastic.co/solutions/apm)
 

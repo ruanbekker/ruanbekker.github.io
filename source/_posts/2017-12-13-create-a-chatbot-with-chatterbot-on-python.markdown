@@ -271,3 +271,15 @@ That was a basic tutorial on Chatterbot, next I will be looking into mining data
 
 - [Chatterbot Documentation](https://chatterbot.readthedocs.io/en/stable/quickstart.html#quick-start-guide)
 - [Chatterbot Examples](https://github.com/gunthercox/ChatterBot/tree/master/examples)
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+

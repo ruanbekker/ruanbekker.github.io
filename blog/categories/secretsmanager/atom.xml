@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Secretsmanager | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/secretsmanager/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2018-11-12T17:01:29-05:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[IAM Policy to Allow Team Wide and User Level Permissions on AWS Secrets Manager]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/12/iam-policy-to-allow-team-wide-and-user-level-permissions-on-aws-secrets-manager/"/>
+    <updated>2018-11-12T16:32:24-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/12/iam-policy-to-allow-team-wide-and-user-level-permissions-on-aws-secrets-manager</id>
+    <content type="html"><![CDATA[<p>In this post we will simulate a scenario where a team would like to have access to create secrets under a team path name like <code>/security-team/prod/*</code> and <code>/security-team/dev/*</code> and allow all the users from that team to be able to write and read secrets from that path. Then have individual users create and read secrets from their own isolated path: <code>/security-team/personal/aws-username/*</code> so they can create their personal secrets.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299";
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>Our Scenario:</h2>
+
+<ul>
+<li>Create IAM Policy</li>
+<li>Create 2 IAM Users: <code>jack.smith</code> and <code>steve.adams</code></li>
+<li>Create IAM Group, Associate IAM Policy to the Group</li>
+<li>Attach 2 Users to the Group</li>
+</ul>
+
+
+<p>The IAM Policy:</p>
+
+<pre><code>{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "Stmt1541597166491",
+            "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:DeleteSecret",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:GetRandomPassword",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:ListSecretVersionIds",
+                "secretsmanager:ListSecrets",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:TagResource",
+                "secretsmanager:UpdateSecret"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/prod/*",
+                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/dev/*",
+                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/personal/${aws:username}/*"
+            ]
+        }
+    ]
+}
+</code></pre>
+
+<p>Either configure the access keys and secret keys into the credential provider using aws cli, or for this demonstration I will use them inside the code. But never hardcode your credentials.</p>
+
+<h2>Create Secrets with Secrets Manager in AWS using Python Boto3</h2>
+
+<p>Instantiate user1 and user2:</p>
+
+<pre><code class="python">&gt;&gt;&gt; import boto3
+&gt;&gt;&gt; jack = boto3.Session(aws_access_key_id='ya', aws_secret_access_key='xx', region_name='eu-west-1').client('secretsmanager')
+&gt;&gt;&gt; steve = boto3.Session(aws_access_key_id='yb', aws_secret_access_key='xx', region_name='eu-west-1').client('secretsmanager')
+</code></pre>
+
+<p>Create a team wide secret with jack:</p>
+
+<pre><code class="python">&gt;&gt;&gt; jack.create_secret(Name='/security-team/prod/app1/username', SecretString='appreader')
+{'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': 'x', 'HTTPHeaders': {'date': 'Thu, 08 Nov 2018 07:50:35 GMT', 'x-amzn-requestid': 'x', 'content-length': '193', 'content-type': 'application/x-amz-json-1.1', 'connection': 'keep-alive'}}, u'VersionId': u'x', u'Name': u'/security-team/prod/app1/username', u'ARN': u'arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/prod/app1/username-12ABC00'}
+</code></pre>
+
+<p>Let jack and steve try to read the secret:</p>
+
+<pre><code class="python">&gt;&gt;&gt; jack.get_secret_value(SecretId='/security-team/prod/app1/username')['SecretString']
+'appreader'
+&gt;&gt;&gt; steve.get_secret_value(SecretId='/security-team/prod/app1/username')['SecretString']
+'appreader'
+</code></pre>
+
+<p>Now let jack create a personal secret, let him read it:</p>
+
+<pre><code class="python">&gt;&gt;&gt; jack.create_secret(Name='/security-team/personal/jack.smith/svc1/password', SecretString='secret')
+&gt;&gt;&gt; jack.get_secret_value(SecretId='/security-team/personal/jack.smith/svc1/password')['SecretString']
+'secret'
+</code></pre>
+
+<p>Now let steve try to read the secret and you will see that access is denied:</p>
+
+<pre><code class="python">&gt;&gt;&gt; steve.get_secret_value(SecretId='/security-team/personal/jack.smith/username')['SecretString']
+Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+...
+    raise error_class(parsed_response, operation_name)
+botocore.exceptions.ClientError: An error occurred (AccessDeniedException) when calling the GetSecretValue operation: User: arn:aws:iam::123456789012:user/steve.adams is not authorized to perform: secretsmanager:GetSecretValue on resource: arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/personal/jack.smith/svc1/password-a1234b
+</code></pre>
+
+<p>Thats it for this post</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+]]></content>
+  </entry>
+  
+</feed>

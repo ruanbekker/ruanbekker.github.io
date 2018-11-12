@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-12T15:00:26-05:00</updated>
+  <updated>2018-11-12T17:01:29-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,173 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[IAM Policy to Allow Team Wide and User Level Permissions on AWS Secrets Manager]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/12/iam-policy-to-allow-team-wide-and-user-level-permissions-on-aws-secrets-manager/"/>
+    <updated>2018-11-12T16:32:24-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/12/iam-policy-to-allow-team-wide-and-user-level-permissions-on-aws-secrets-manager</id>
+    <content type="html"><![CDATA[<p>In this post we will simulate a scenario where a team would like to have access to create secrets under a team path name like <code>/security-team/prod/*</code> and <code>/security-team/dev/*</code> and allow all the users from that team to be able to write and read secrets from that path. Then have individual users create and read secrets from their own isolated path: <code>/security-team/personal/aws-username/*</code> so they can create their personal secrets.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299";
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>Our Scenario:</h2>
+
+<ul>
+<li>Create IAM Policy</li>
+<li>Create 2 IAM Users: <code>jack.smith</code> and <code>steve.adams</code></li>
+<li>Create IAM Group, Associate IAM Policy to the Group</li>
+<li>Attach 2 Users to the Group</li>
+</ul>
+
+
+<p>The IAM Policy:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{
+</span><span class='line'>    "Version": "2012-10-17",
+</span><span class='line'>    "Statement": [
+</span><span class='line'>        {
+</span><span class='line'>            "Sid": "Stmt1541597166491",
+</span><span class='line'>            "Action": [
+</span><span class='line'>                "secretsmanager:CreateSecret",
+</span><span class='line'>                "secretsmanager:DeleteSecret",
+</span><span class='line'>                "secretsmanager:DescribeSecret",
+</span><span class='line'>                "secretsmanager:GetRandomPassword",
+</span><span class='line'>                "secretsmanager:GetSecretValue",
+</span><span class='line'>                "secretsmanager:ListSecretVersionIds",
+</span><span class='line'>                "secretsmanager:ListSecrets",
+</span><span class='line'>                "secretsmanager:PutSecretValue",
+</span><span class='line'>                "secretsmanager:TagResource",
+</span><span class='line'>                "secretsmanager:UpdateSecret"
+</span><span class='line'>            ],
+</span><span class='line'>            "Effect": "Allow",
+</span><span class='line'>            "Resource": [
+</span><span class='line'>                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/prod/*",
+</span><span class='line'>                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/dev/*",
+</span><span class='line'>                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/personal/${aws:username}/*"
+</span><span class='line'>            ]
+</span><span class='line'>        }
+</span><span class='line'>    ]
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Either configure the access keys and secret keys into the credential provider using aws cli, or for this demonstration I will use them inside the code. But never hardcode your credentials.</p>
+
+<h2>Create Secrets with Secrets Manager in AWS using Python Boto3</h2>
+
+<p>Instantiate user1 and user2:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;ya&#39;</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;xx&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;secretsmanager&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">steve</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;yb&#39;</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;xx&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;secretsmanager&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a team wide secret with jack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">create_secret</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/security-team/prod/app1/username&#39;</span><span class="p">,</span> <span class="n">SecretString</span><span class="o">=</span><span class="s">&#39;appreader&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span><span class="s">&#39;ResponseMetadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;RetryAttempts&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;HTTPStatusCode&#39;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span> <span class="s">&#39;RequestId&#39;</span><span class="p">:</span> <span class="s">&#39;x&#39;</span><span class="p">,</span> <span class="s">&#39;HTTPHeaders&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;date&#39;</span><span class="p">:</span> <span class="s">&#39;Thu, 08 Nov 2018 07:50:35 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;x-amzn-requestid&#39;</span><span class="p">:</span> <span class="s">&#39;x&#39;</span><span class="p">,</span> <span class="s">&#39;content-length&#39;</span><span class="p">:</span> <span class="s">&#39;193&#39;</span><span class="p">,</span> <span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;application/x-amz-json-1.1&#39;</span><span class="p">,</span> <span class="s">&#39;connection&#39;</span><span class="p">:</span> <span class="s">&#39;keep-alive&#39;</span><span class="p">}},</span> <span class="s">u&#39;VersionId&#39;</span><span class="p">:</span> <span class="s">u&#39;x&#39;</span><span class="p">,</span> <span class="s">u&#39;Name&#39;</span><span class="p">:</span> <span class="s">u&#39;/security-team/prod/app1/username&#39;</span><span class="p">,</span> <span class="s">u&#39;ARN&#39;</span><span class="p">:</span> <span class="s">u&#39;arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/prod/app1/username-12ABC00&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let jack and steve try to read the secret:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/prod/app1/username&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="s">&#39;appreader&#39;</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">steve</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/prod/app1/username&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="s">&#39;appreader&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let jack create a personal secret, let him read it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">create_secret</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/security-team/personal/jack.smith/svc1/password&#39;</span><span class="p">,</span> <span class="n">SecretString</span><span class="o">=</span><span class="s">&#39;secret&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/personal/jack.smith/svc1/password&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="s">&#39;secret&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let steve try to read the secret and you will see that access is denied:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">steve</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/personal/jack.smith/username&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">Traceback</span> <span class="p">(</span><span class="n">most</span> <span class="n">recent</span> <span class="n">call</span> <span class="n">last</span><span class="p">):</span>
+</span><span class='line'>  <span class="n">File</span> <span class="s">&quot;&lt;stdin&gt;&quot;</span><span class="p">,</span> <span class="n">line</span> <span class="mi">1</span><span class="p">,</span> <span class="ow">in</span> <span class="o">&lt;</span><span class="n">module</span><span class="o">&gt;</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'>    <span class="k">raise</span> <span class="n">error_class</span><span class="p">(</span><span class="n">parsed_response</span><span class="p">,</span> <span class="n">operation_name</span><span class="p">)</span>
+</span><span class='line'><span class="n">botocore</span><span class="o">.</span><span class="n">exceptions</span><span class="o">.</span><span class="n">ClientError</span><span class="p">:</span> <span class="n">An</span> <span class="n">error</span> <span class="n">occurred</span> <span class="p">(</span><span class="n">AccessDeniedException</span><span class="p">)</span> <span class="n">when</span> <span class="n">calling</span> <span class="n">the</span> <span class="n">GetSecretValue</span> <span class="n">operation</span><span class="p">:</span> <span class="n">User</span><span class="p">:</span> <span class="n">arn</span><span class="p">:</span><span class="n">aws</span><span class="p">:</span><span class="n">iam</span><span class="p">::</span><span class="mi">123456789012</span><span class="p">:</span><span class="n">user</span><span class="o">/</span><span class="n">steve</span><span class="o">.</span><span class="n">adams</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">authorized</span> <span class="n">to</span> <span class="n">perform</span><span class="p">:</span> <span class="n">secretsmanager</span><span class="p">:</span><span class="n">GetSecretValue</span> <span class="n">on</span> <span class="n">resource</span><span class="p">:</span> <span class="n">arn</span><span class="p">:</span><span class="n">aws</span><span class="p">:</span><span class="n">secretsmanager</span><span class="p">:</span><span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="mi">123456789012</span><span class="p">:</span><span class="n">secret</span><span class="p">:</span><span class="o">/</span><span class="n">security</span><span class="o">-</span><span class="n">team</span><span class="o">/</span><span class="n">personal</span><span class="o">/</span><span class="n">jack</span><span class="o">.</span><span class="n">smith</span><span class="o">/</span><span class="n">svc1</span><span class="o">/</span><span class="n">password</span><span class="o">-</span><span class="n">a1234b</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Thats it for this post</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch]]></title>
@@ -4795,131 +4962,6 @@
 <li><a href="https://memcached.org/">https://memcached.org/</a></li>
 <li><a href="https://blog.serverdensity.com/monitor-memcached/">https://blog.serverdensity.com/monitor-memcached/</a></li>
 <li><a href="https://wiki.mikejung.biz/Memcached">https://wiki.mikejung.biz/Memcached</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Review and Secure Your Facebook Account]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/08/29/review-and-secure-your-facebook-account/"/>
-    <updated>2018-08-29T15:03:10-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/08/29/review-and-secure-your-facebook-account</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/fb-security-logo.png" alt="" /></p>
-
-<p>This post is a bit different from my other posts, but I feel it&rsquo;s a important one: Facebook Security.</p>
-
-<p>Facebook, everyone loves it right? Yeah, but what happens when you get locked out of your account, or an attacker gains access to your account and start doing things that you dont want to, and especially all the photos / messages that needs to remain private, can potentially end up in the wrong hands.</p>
-
-<p>Facebook usually detects strange behavior, but being able to be pro-active on security on this can help a lot.</p>
-
-<p>There&rsquo;s a couple of ways how attackers can gain access to your account, but I won&rsquo;t go into that, google will be your friend if you are curious how they do it.</p>
-
-<h2>Scenario: Something suspicious is up / weird behavior / getting unusual messages from groups etc</h2>
-
-<p>Usually Facebook will detect this, but if not you can and should do the following:</p>
-
-<ul>
-<li>Reset your password</li>
-<li>Enable Two-Factor Authentication</li>
-<li>Terminate or Logout all sessions from your account, if you find unknown sessions, report it to facebook and log them out.</li>
-<li>Review your account&rsquo;s activity</li>
-<li>Review Group Activity, if you are subscribed to groups, unsubscribe</li>
-<li>Reach out to facebook support</li>
-</ul>
-
-
-<h2>Head over to your Facebook Accounts Settings Page:</h2>
-
-<p>Head over to <a href="https://www.facebook.com/settings">https://www.facebook.com/settings</a> , this will be the main view where you are able to configure/review your account. It should look like this:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-1.png" alt="" /></p>
-
-<p>When you select the &ldquo;Security and Login&rdquo; tab: <a href="https://www.facebook.com/settings?tab=security">https://www.facebook.com/settings?tab=security</a> , you will be presented with a couple of login options:</p>
-
-<h2>Security and Login Info:</h2>
-
-<p>The list of your devices that is currently logged on:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-2.png" alt="" /></p>
-
-<p>Hit the <code>See More</code> dropdown to review all your devices, which is currently logged onto Facebook, if you are not aware of the sessions, hit the <code>Log Out</code> button to terminate that session, or select <code>Not You</code> if you are not aware of that session, then continue to report the activity to Facebook, so that they can look into it.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-3.png" alt="" /></p>
-
-<p>You can follow up on your incident via <a href="https://www.facebook.com/support/">https://www.facebook.com/support/</a> .</p>
-
-<h2>Password and Two Factor Authentication:</h2>
-
-<p>This is actually the first thing that I would do, is to change your password. If someone did manage to gain access to your password and you are still logged on, change it immediately. If they reset your password before you do, game over. Well kind of..</p>
-
-<p>From the same page, change your password:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-4.png" alt="" /></p>
-
-<p>Enable <code>"Two-Factor Authentication"</code>, when you are logged out, or trying to logon from a new device, a notification will be sent to your device where Facebook is installed, or alternatively, you will receive a code sent to you which you will need to enter after you have logged on, just to provide you with a extra layer of security.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-5.png" alt="" /></p>
-
-<p>Enable <code>"Get alerts about unrecognized logins"</code>, which allows you to set up to 5 friends that can help you unlock your account, if your account has been locked out.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-6.png" alt="" /></p>
-
-<h2>Review your Activity Log</h2>
-
-<p>From <a href="https://www.facebook.com/settings?tab=your_facebook_information">https://www.facebook.com/settings?tab=your_facebook_information</a> , head over to <code>"Activity Log"</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-7.png" alt="" /></p>
-
-<p>Select <code>"Activity Log"</code>, to review your recent activity:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-8.png" alt="" /></p>
-
-<p>Below <code>Comments</code>, select <code>more</code>, then <code>Security and Login Information</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-9.png" alt="" /></p>
-
-<p>Then we will be presented with the <code>Active Sessions</code>, <code>Login and Logouts</code> and <code>Recognized Devices</code>.</p>
-
-<p>First look at <code>Active Sessions</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-10.png" alt="" /></p>
-
-<p>Then <code>Logins and Logouts</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-11.png" alt="" /></p>
-
-<p>From this same page you can review other activity like <code>Search History</code>, <code>Groups</code>. etc.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-12.png" alt="" /></p>
-
-<p>If someone had to access/subscribed to groups, you will be able to review the activity, within 3 different views:</p>
-
-<ul>
-<li>Groups: any interaction with groups, such as likes, comments etc.</li>
-<li>Membership Activity: Any group memberships</li>
-<li>Posts and Comments: Self explanatory.</li>
-</ul>
-
-
-<h2>Final Note:</h2>
-
-<p>People try to access accounts all the time, watch out for the following:</p>
-
-<ul>
-<li>Friend Requests: people have a lot of private information on facebook, keep it private</li>
-<li>Watch out for strange applications that wants your permission, review the permission levels closely</li>
-<li>Reset your password time to time, use unique passwords, and not the same password as the password that your main email account is associated with</li>
-<li>Watch out for links, some of them can end you up in a bad spot.</li>
-<li>When you see weird activity from your friends account, report it, so that facebook can investigate it. It happened to a friend and Facebook sorted it out within 20 minutes.</li>
-</ul>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.facebook.com/security/">https://www.facebook.com/security/</a></li>
-<li><a href="https://www.facebook.com/support">https://www.facebook.com/support</a></li>
 </ul>
 
 ]]></content>

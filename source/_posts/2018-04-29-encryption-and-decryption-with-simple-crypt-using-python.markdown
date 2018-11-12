@@ -7,6 +7,14 @@ categories: ["python", "cryptography", "encryption", "decryption", "simple-crypt
 ---
 Today I wanted to encrypt sensitive information to not expose passwords, hostnames etc. I wanted to have a way to encrypt my strings with a master password and stumbled upon Simple Crypt.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Simple Crypt
 
 Why simple-crypt? Referenced from their [docs](https://pypi.org/project/simple-crypt/):

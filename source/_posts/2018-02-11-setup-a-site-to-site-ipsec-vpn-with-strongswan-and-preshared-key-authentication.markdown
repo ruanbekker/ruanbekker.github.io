@@ -295,13 +295,3 @@ paris-to-amsterdam{2}:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c7b36756_i 
 paris-to-amsterdam{2}:   10.10.27.1/24 === 10.9.141.1/24
 ```
 
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

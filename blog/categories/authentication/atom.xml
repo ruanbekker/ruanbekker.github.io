@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Authentication | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/authentication/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-12T17:01:29-05:00</updated>
+  <updated>2018-11-12T17:26:55-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,190 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Create Read Only Users in MongoDB]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/12/create-read-only-users-in-mongodb/"/>
+    <updated>2018-11-12T17:02:53-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/12/create-read-only-users-in-mongodb</id>
+    <content type="html"><![CDATA[<p>In this post I will demonstrate how to setup 2 read only users in MongoDB, one user that will have access to one MongoDB Database and all the Collections, and one user with access to one MongoDB Database and only one Collection.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299";
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>First Method: Creating and Assigning the User</h2>
+
+<p>The first method we will create the user and assign it the read permissions that he needs. In this case read only access to the mytest db.</p>
+
+<p>First logon to mongodb and switch to the admin database:</p>
+
+<pre><code class="bash">$ mongo -u dbadmin -p --authenticationDatabase admin
+&gt; use admin
+switched to db admin
+</code></pre>
+
+<p>Now list the dbs:</p>
+
+<pre><code class="bash">&gt; show dbs
+admin       0.000GB
+mytest      0.000GB
+</code></pre>
+
+<p>List the collections and read the data from it for demonstration purposes:</p>
+
+<pre><code class="bash">&gt; use mytest
+&gt; show collections;
+col1
+col2
+&gt; db.col1.find()
+{ "_id" : ObjectId("5be3d377b54849bb738e3b6b"), "name" : "ruan" }
+&gt; db.col2.find()
+{ "_id" : ObjectId("5be3d383b54849bb738e3b6c"), "name" : "stefan" }
+</code></pre>
+
+<p>Now create the user collectionreader that will have access to read all the collections from the database:</p>
+
+<pre><code class="bash">$ &gt; db.createUser({user: "collectionreader", pwd: "secretpass", roles: [{role: "read", db: "mytest"}]})
+Successfully added user: {
+  "user" : "collectionreader",
+  "roles" : [
+    {
+      "role" : "read",
+      "db" : "mytest"
+    }
+  ]
+}
+</code></pre>
+
+<p>Exit and log out and log in with the new user to test the permissions:</p>
+
+<pre><code class="bash">$ mongo -u collectionreader -p --authenticationDatabase mytest
+&gt; use mytest
+switched to db mytest
+
+&gt; show collections
+col1
+col2
+
+&gt; db.col1.find()
+{ "_id" : ObjectId("5be3d377b54849bb738e3b6b"), "name" : "ruan" }
+</code></pre>
+
+<p>Now lets try to write to a collection:</p>
+
+<pre><code class="bash">&gt; db.col1.insert({"name": "james"})
+WriteResult({
+  "writeError" : {
+    "code" : 13,
+    "errmsg" : "not authorized on mytest to execute command { insert: \"col1\", documents: [ { _id: ObjectId('5be3d6c0492818b2c966d61a'), name: \"james\" } ], ordered: true }"
+  }
+})
+</code></pre>
+
+<p>So we can see it works as expected.</p>
+
+<h2>Second Method: Create Roles and Assign Users to the Roles</h2>
+
+<p>In the second method, we will create the roles then assign the users to the roles. And in this scenario, we will only grant a user <code>reader</code> access to one collection on a database. Login with the admin user:</p>
+
+<pre><code class="bash">$ mongo -u dbadmin -p --authenticationDatabase admin
+&gt; use admin
+</code></pre>
+
+<p>First create the read only role <code>myReadOnlyRole</code>:</p>
+
+<pre><code class="bash">&gt; db.createRole({ role: "myReadOnlyRole", privileges: [{ resource: { db: "mytest", collection: "col2"}, actions: ["find"]}], roles: []})
+</code></pre>
+
+<p>Now create the user and assign it to the role:</p>
+
+<pre><code class="bash">&gt; db.createUser({ user: "reader", pwd: "secretpass", roles: [{ role: "myReadOnlyRole", db: "mytest"}]})
+</code></pre>
+
+<p>Similarly, if we had an existing user that we also would like to add to that role, we can do that by doing this:</p>
+
+<pre><code class="bash">&gt; db.grantRolesToUser("anotheruser", [ { role: "myReadOnlyRole", db: "mytest" } ])
+</code></pre>
+
+<p>Logout and login with the reader user:</p>
+
+<pre><code class="bash">$ mongo -u reader -p --authenticationDatabase mytest
+&gt; use mytest
+</code></pre>
+
+<p>Now try to list the collections:</p>
+
+<pre><code class="bash">&gt; show collections
+2018-11-08T07:42:39.907+0100 E QUERY    [thread1] Error: listCollections failed: {
+  "ok" : 0,
+  "errmsg" : "not authorized on mytest to execute command { listCollections: 1.0, filter: {} }",
+  "code" : 13,
+  "codeName" : "Unauthorized"
+}
+</code></pre>
+
+<p>As we only have read (find) access on col2, lets try to read data from collection col1:</p>
+
+<pre><code class="bash">&gt; db.col1.find()
+Error: error: {
+  "ok" : 0,
+  "errmsg" : "not authorized on mytest to execute command { find: \"col1\", filter: {} }",
+  "code" : 13,
+  "codeName" : "Unauthorized"
+}
+</code></pre>
+
+<p>And finally try to read data from the collection we are allowed to read from:</p>
+
+<pre><code class="bash">&gt; db.col2.find()
+{ "_id" : ObjectId("5be3d383b54849bb738e3b6c"), "name" : "stefan" }
+</code></pre>
+
+<p>And also making sure we cant write to that collection:</p>
+
+<pre><code>&gt; db.col2.insert({"name": "frank"})
+WriteResult({
+  "writeError" : {
+    "code" : 13,
+    "errmsg" : "not authorized on mytest to execute command { insert: \"col2\", documents: [ { _id: ObjectId('5be3db1530a86d900c361465'), name: \"frank\" } ], ordered: true }"
+  }
+})
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.mongodb.com/manual/tutorial/create-users/">https://docs.mongodb.com/manual/tutorial/create-users/</a></li>
+<li><a href="https://docs.mongodb.com/manual/core/collection-level-access-control/">https://docs.mongodb.com/manual/core/collection-level-access-control/</a></li>
+<li><a href="https://docs.mongodb.com/manual/reference/privilege-actions/">https://docs.mongodb.com/manual/reference/privilege-actions/</a></li>
+<li><a href="https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/">https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/</a></li>
+<li><a href="https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/">https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/</a></li>
+</ul>
+
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Distributing a Shared Secret Amongst a Group of Participants Using Shamirs Secret Sharing Scheme Aka Ssss]]></title>
@@ -533,119 +717,6 @@ Date: Fri, 01 Jun 2018 07:27:03 GMT
 <h2>Note:</h2>
 
 <p>From a best practice, its not a good decision to hard code sensitive details in your code, but rather read that from an encrypted database and store that in your applications environment variables, and let your application read from the environment variables, something like that :D</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[SSH Tools That Comes in Handy When Dealing With Multiple Servers]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/05/31/ssh-tools-that-comes-in-handy-when-dealing-with-multiple-servers/"/>
-    <updated>2018-05-31T05:18:11-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/05/31/ssh-tools-that-comes-in-handy-when-dealing-with-multiple-servers</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/header-ssh-tips.png" alt="" /></p>
-
-<p>When dealing with a lot of servers where you need to ssh to different servers and especially if they require different authentication from different private ssh keys, it kinda gets annoying specifying the private key you need, when you want to SSH to them.</p>
-
-<h2>SSH Config</h2>
-
-<p>SSH Config: <code>~/.ssh/config</code> is powerful!</p>
-
-<p>In this config file, you can specify the remote host, the key, user and the alias, so that when you want to SSH to it, you dont have to use the fully qualified domain name or IP address.</p>
-
-<p>Let&rsquo;s take for example our server-a with the following details:</p>
-
-<ul>
-<li>FQDN: host1.eu.compute.domain.coom</li>
-<li>User: james</li>
-<li>PrivateKeyFile: /path/to/key.pem</li>
-<li>Disable Strict Host Checking</li>
-</ul>
-
-
-<p>So to access that host, you would use the following command (without ssh config):</p>
-
-<pre><code class="bash">$ ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -i /path/to/key.pem james@host1.eu.compute.domain.com
-</code></pre>
-
-<p>Now with SSH Config, open up the config file:</p>
-
-<pre><code class="">$ vim ~/.ssh/config
-</code></pre>
-
-<p>and declare the host details:</p>
-
-<pre><code>Host host1
-  Hostname host1.eu.compute.domain.com
-  User james
-  IdentityFile /path/to/key.pem
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-</code></pre>
-
-<p>Now, if we need to SSH to it, we can do it as simply as:</p>
-
-<pre><code class="bash">$ ssh host1
-</code></pre>
-
-<p>as it will pull in the configs from the config that is described from the host alias that you calling from the argument of the ssh binary.</p>
-
-<h2>SSH Timeout</h2>
-
-<p>Appending to our SSH Config, we can configure either our client or server to prevent SSH Timeouts due to inactivity.</p>
-
-<ul>
-<li>SSH Timeout on our Client:</li>
-</ul>
-
-
-<pre><code class="bash">$ vim ~/.ssh/config
-</code></pre>
-
-<p>Here we can set how often a NULL Packet is sent to the SSH Connections to keep the connection alive, in this case every 120 seconds:</p>
-
-<pre><code>ServerAliveInterval 120
-</code></pre>
-
-<ul>
-<li>SSH Timeout on the Servers:</li>
-</ul>
-
-
-<pre><code class="bash">$ vim /etc/ssh/sshd_config
-</code></pre>
-
-<p>Below we have 2 properties, the interval of how often to instruct the client connected to send a NULL packet to keep the connection alive and the max number of intervals, so for a idle connection to timeout in 24 hours, we will take 86400 seconds which is 24 hours, divide into 120 second intervals, which gives as 720 intervals.</p>
-
-<p>So the config will look like this:</p>
-
-<pre><code>ClientAliveInterval 120
-ClientAliveCountMax 720
-</code></pre>
-
-<p>The restart the sshd service:</p>
-
-<pre><code class="bash">$ /etc/init.d/sshd restart
-</code></pre>
-
-<h2>SSH Agent</h2>
-
-<p>Another handy tool is <code>ssh-agent</code>, if you have password encryption on your key, everytime you need to ssh, a password will be prompted. A way to get around this is to use the ssh-agent.</p>
-
-<p>We also want to set a TTL to the ssh-agent, as we don&rsquo;t want it to run forever (unless you want it to). In this case I will let the ssh-agent exit after 2 hours. It will also only run in the shell session from where you execute it. Lets start up our ssh-agent:</p>
-
-<pre><code class="bash">$ eval $(ssh-agent -t 7200)
-Agent pid 88760 
-</code></pre>
-
-<p>Now add the private key to the ssh-agent. If your private key is password protected, it will prompt you for the password and after successful verification the key will be added:</p>
-
-<pre><code>$ ssh-add /path/to/key.pem
-Identity added: /path/to/key.pem (/path/to/key.pem)
-</code></pre>
-
-<h2>Multiple Github Accounts:</h2>
-
-<p>Here is a great post on how to work with different GitHub Accounts:
-- <a href="https://gist.github.com/jexchan/2351996">https://gist.github.com/jexchan/2351996</a></p>
 ]]></content>
   </entry>
   

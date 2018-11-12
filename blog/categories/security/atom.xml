@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Security | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/security/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-12T17:01:29-05:00</updated>
+  <updated>2018-11-12T17:26:55-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,190 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Create Read Only Users in MongoDB]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/12/create-read-only-users-in-mongodb/"/>
+    <updated>2018-11-12T17:02:53-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/12/create-read-only-users-in-mongodb</id>
+    <content type="html"><![CDATA[<p>In this post I will demonstrate how to setup 2 read only users in MongoDB, one user that will have access to one MongoDB Database and all the Collections, and one user with access to one MongoDB Database and only one Collection.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299";
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>First Method: Creating and Assigning the User</h2>
+
+<p>The first method we will create the user and assign it the read permissions that he needs. In this case read only access to the mytest db.</p>
+
+<p>First logon to mongodb and switch to the admin database:</p>
+
+<pre><code class="bash">$ mongo -u dbadmin -p --authenticationDatabase admin
+&gt; use admin
+switched to db admin
+</code></pre>
+
+<p>Now list the dbs:</p>
+
+<pre><code class="bash">&gt; show dbs
+admin       0.000GB
+mytest      0.000GB
+</code></pre>
+
+<p>List the collections and read the data from it for demonstration purposes:</p>
+
+<pre><code class="bash">&gt; use mytest
+&gt; show collections;
+col1
+col2
+&gt; db.col1.find()
+{ "_id" : ObjectId("5be3d377b54849bb738e3b6b"), "name" : "ruan" }
+&gt; db.col2.find()
+{ "_id" : ObjectId("5be3d383b54849bb738e3b6c"), "name" : "stefan" }
+</code></pre>
+
+<p>Now create the user collectionreader that will have access to read all the collections from the database:</p>
+
+<pre><code class="bash">$ &gt; db.createUser({user: "collectionreader", pwd: "secretpass", roles: [{role: "read", db: "mytest"}]})
+Successfully added user: {
+  "user" : "collectionreader",
+  "roles" : [
+    {
+      "role" : "read",
+      "db" : "mytest"
+    }
+  ]
+}
+</code></pre>
+
+<p>Exit and log out and log in with the new user to test the permissions:</p>
+
+<pre><code class="bash">$ mongo -u collectionreader -p --authenticationDatabase mytest
+&gt; use mytest
+switched to db mytest
+
+&gt; show collections
+col1
+col2
+
+&gt; db.col1.find()
+{ "_id" : ObjectId("5be3d377b54849bb738e3b6b"), "name" : "ruan" }
+</code></pre>
+
+<p>Now lets try to write to a collection:</p>
+
+<pre><code class="bash">&gt; db.col1.insert({"name": "james"})
+WriteResult({
+  "writeError" : {
+    "code" : 13,
+    "errmsg" : "not authorized on mytest to execute command { insert: \"col1\", documents: [ { _id: ObjectId('5be3d6c0492818b2c966d61a'), name: \"james\" } ], ordered: true }"
+  }
+})
+</code></pre>
+
+<p>So we can see it works as expected.</p>
+
+<h2>Second Method: Create Roles and Assign Users to the Roles</h2>
+
+<p>In the second method, we will create the roles then assign the users to the roles. And in this scenario, we will only grant a user <code>reader</code> access to one collection on a database. Login with the admin user:</p>
+
+<pre><code class="bash">$ mongo -u dbadmin -p --authenticationDatabase admin
+&gt; use admin
+</code></pre>
+
+<p>First create the read only role <code>myReadOnlyRole</code>:</p>
+
+<pre><code class="bash">&gt; db.createRole({ role: "myReadOnlyRole", privileges: [{ resource: { db: "mytest", collection: "col2"}, actions: ["find"]}], roles: []})
+</code></pre>
+
+<p>Now create the user and assign it to the role:</p>
+
+<pre><code class="bash">&gt; db.createUser({ user: "reader", pwd: "secretpass", roles: [{ role: "myReadOnlyRole", db: "mytest"}]})
+</code></pre>
+
+<p>Similarly, if we had an existing user that we also would like to add to that role, we can do that by doing this:</p>
+
+<pre><code class="bash">&gt; db.grantRolesToUser("anotheruser", [ { role: "myReadOnlyRole", db: "mytest" } ])
+</code></pre>
+
+<p>Logout and login with the reader user:</p>
+
+<pre><code class="bash">$ mongo -u reader -p --authenticationDatabase mytest
+&gt; use mytest
+</code></pre>
+
+<p>Now try to list the collections:</p>
+
+<pre><code class="bash">&gt; show collections
+2018-11-08T07:42:39.907+0100 E QUERY    [thread1] Error: listCollections failed: {
+  "ok" : 0,
+  "errmsg" : "not authorized on mytest to execute command { listCollections: 1.0, filter: {} }",
+  "code" : 13,
+  "codeName" : "Unauthorized"
+}
+</code></pre>
+
+<p>As we only have read (find) access on col2, lets try to read data from collection col1:</p>
+
+<pre><code class="bash">&gt; db.col1.find()
+Error: error: {
+  "ok" : 0,
+  "errmsg" : "not authorized on mytest to execute command { find: \"col1\", filter: {} }",
+  "code" : 13,
+  "codeName" : "Unauthorized"
+}
+</code></pre>
+
+<p>And finally try to read data from the collection we are allowed to read from:</p>
+
+<pre><code class="bash">&gt; db.col2.find()
+{ "_id" : ObjectId("5be3d383b54849bb738e3b6c"), "name" : "stefan" }
+</code></pre>
+
+<p>And also making sure we cant write to that collection:</p>
+
+<pre><code>&gt; db.col2.insert({"name": "frank"})
+WriteResult({
+  "writeError" : {
+    "code" : 13,
+    "errmsg" : "not authorized on mytest to execute command { insert: \"col2\", documents: [ { _id: ObjectId('5be3db1530a86d900c361465'), name: \"frank\" } ], ordered: true }"
+  }
+})
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.mongodb.com/manual/tutorial/create-users/">https://docs.mongodb.com/manual/tutorial/create-users/</a></li>
+<li><a href="https://docs.mongodb.com/manual/core/collection-level-access-control/">https://docs.mongodb.com/manual/core/collection-level-access-control/</a></li>
+<li><a href="https://docs.mongodb.com/manual/reference/privilege-actions/">https://docs.mongodb.com/manual/reference/privilege-actions/</a></li>
+<li><a href="https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/">https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/</a></li>
+<li><a href="https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/">https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/</a></li>
+</ul>
+
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[IAM Policy to Allow Team Wide and User Level Permissions on AWS Secrets Manager]]></title>
@@ -471,241 +655,6 @@ Resulting secret: ABCDEXAMPLE1029384756
 <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-iam-user">https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-iam-user</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using IAM Authentication With Amazon Elasticsearch Service]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service/"/>
-    <updated>2018-08-20T04:12:21-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/08/20/using-iam-authentication-with-amazon-elasticsearch-service</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/aws-logo.png" alt="" /></p>
-
-<p>Today I will demonstrate how to allow access to Amazons Elasticsearch Service using IAM Authenticationi using AWS Signature Version4.</p>
-
-<h2>Elasticsearch Service Authentication Support:</h2>
-
-<p>When it comes to security, Amazons Elasticsearch Service supports three types of access policies:</p>
-
-<ul>
-<li>Resource Based</li>
-<li>Identity Based</li>
-<li>IP Access Based</li>
-</ul>
-
-
-<p>More information on this can be found below:
-- <a href="https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html">https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html</a></p>
-
-<h2>Securing your Amazon Elasticsearch Search Domain:</h2>
-
-<p>To secure your domain with IAM Based Authentication, the following steps will be neeed:</p>
-
-<ul>
-<li>Create IAM Policy to be associated with a IAM User or Role</li>
-<li>On Elasticsearch Access Policy, associate the ARN to the Resource</li>
-<li>Use the AWS4Auth package to sign the requests as AWS supports Signature Version 4</li>
-</ul>
-
-
-<pre><code class="json">{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "VisualEditor0",
-            "Effect": "Allow",
-            "Action": [
-                "es:*"
-            ],
-            "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;"
-        }
-    ]
-}
-</code></pre>
-
-<p>Create the IAM Role with EC2 Identity Provider as a Trusted Relationship eg. es-role and associate the IAM Policy es-policy to the role.</p>
-
-<p>Create/Moodify the Elasticsearch Access Policy, in this example we will be using a combination of IAM Role, IAM User and IP Based access:</p>
-
-<ul>
-<li>IAM Role for EC2 Role Based Services</li>
-<li>IAM User for User/System Account</li>
-<li>IP Based for cients that needs to be whitelisted via IP (ip-based just for demonstration, as the tests will be used only for IAM)</li>
-</ul>
-
-
-<pre><code class="json">{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": [
-          "arn:aws:iam::&lt;ACCOUNT-ID&gt;:role/&lt;IAM-ROLE-NAME&gt;",
-          "arn:aws:iam::&lt;ACCOUNT-ID&gt;:user/&lt;IAM-USER-NAME&gt;"
-        ]
-      },
-      "Action": "es:*",
-      "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;/*"
-    },
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "*"
-      },
-      "Action": "es:*",
-      "Resource": "arn:aws:es:eu-west-1:&lt;ACCOUNT-ID&gt;:domain/&lt;ES-DOMAIN&gt;/*",
-      "Condition": {
-        "IpAddress": {
-          "aws:SourceIp": [
-            "x.x.x.x",
-            "x.x.x.x"
-          ]
-        }
-      }
-    }
-  ]
-}
-</code></pre>
-
-<p>After the Access Policy has been updated, the Elasticsearch Domain Status will show <code>Active</code></p>
-
-<h2>Testing from EC2 using IAM Instance Profile:</h2>
-
-<p>Launch a EC2 Instance with the IAM Role eg. es-role, then using Python, we will make a request to our Elasticsearch Domain using boto3, aws4auth and the native elasticsearch client for python via our IAM Role, which we will get the temporary credentials from boto3.Session.</p>
-
-<p>Installing the dependencies:</p>
-
-<pre><code class="bash">$ pip install virtualenv
-$ virtualenv .venv
-$ source .venv/bin/activate
-$ pip install boto3 elasticsearch requests_aws4auth
-</code></pre>
-
-<p>Our code:</p>
-
-<pre><code class="python">import boto3, json
-from elasticsearch import Elasticsearch, RequestsHttpConnection
-from requests_aws4auth import AWS4Auth
-
-my_region = 'eu-west-1'
-my_service = 'es'
-my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
-
-session = boto3.Session(region_name=my_region) # thanks Leon
-credentials = session.get_credentials()
-credentials = credentials.get_frozen_credentials()
-access_key = credentials.access_key
-secret_key = credentials.secret_key
-token = credentials.token
-
-aws_auth = AWS4Auth(
-    access_key,
-    secret_key,
-    my_region,
-    my_service,
-    session_token=token
-)
-
-es = Elasticsearch(
-    hosts = [{'host': my_eshost, 'port': 443}],
-    http_auth=aws_auth,
-    use_ssl=True,
-    verify_certs=True,
-    connection_class=RequestsHttpConnection
-)
-
-print(json.dumps(es.info(), indent=2))
-</code></pre>
-
-<p>Running our piece of code, will result in this:</p>
-
-<pre><code class="bash">$ python get-info-from-role.py
-{
-  "cluster_name": "&lt;ACCOUNT-ID&gt;:&lt;ES-DOMAIN&gt;",
-  "cluster_uuid": "sLUnqFSsQdCMlBLrn7BTUA",
-  "version": {
-    "lucene_version": "6.6.0",
-    "build_hash": "Unknown",
-    "build_snapshot": false,
-    "number": "5.5.2",
-    "build_date": "2017-10-18T04:35:01.381Z"
-  },
-  "name": "KXSwBvT",
-  "tagline": "You Know, for Search"
-}
-</code></pre>
-
-<h2>Testing using IAM Credentials from Credentials Provider:</h2>
-
-<p>Configure your credentials provider:</p>
-
-<pre><code class="bash">$ pip install awscli
-$ aws configure --profile ruan
-AWS Access Key ID [None]: xxxxxxxxx
-AWS Secret Access Key [None]: xxxxxx
-Default region name [None]: eu-west-1
-Default output format [None]: json
-</code></pre>
-
-<p>Using Python, we will get the credentials from the Credential Provider, using our profile name:</p>
-
-<pre><code class="python">import boto3, json
-from elasticsearch import Elasticsearch, RequestsHttpConnection
-from requests_aws4auth import AWS4Auth
-
-my_service = 'es'
-my_region = 'eu-west-1'
-my_eshost = 'search-replaceme.eu-west-1.es.amazonaws.com'
-
-session = boto3.Session(
-    region_name=my_region,
-    profile_name='ruan'
-)
-
-credentials = session.get_credentials()
-access_key = credentials.access_key
-secret_key = credentials.secret_key
-
-aws_auth = AWS4Auth(
-    access_key,
-    secret_key,
-    my_region,
-    my_service
-)
-
-es = Elasticsearch(
-    hosts = [{'host': my_eshost, 'port': 443}],
-    http_auth=aws_auth,
-    use_ssl=True,
-    verify_certs=True,
-    connection_class=RequestsHttpConnection
-)
-
-print(json.dumps(es.info(), indent=2))
-</code></pre>
-
-<p>Running it will result in:</p>
-
-<pre><code class="bash">$ python get-info-from-user.py
-{
-  "cluster_name": "&lt;ACCOUNT-ID&gt;:&lt;ES-DOMAIN&gt;",
-  "cluster_uuid": "sLUnqFSsQdCMlBLrn7BTUA",
-  "version": {
-    "lucene_version": "6.6.0",
-    "build_hash": "Unknown",
-    "build_snapshot": false,
-    "number": "5.5.2",
-    "build_date": "2017-10-18T04:37:21.381Z"
-  },
-  "name": "KXSwBvT",
-  "tagline": "You Know, for Search"
-}
-</code></pre>
-
-<p>For more blog posts on Elasticsearch have a look at:
-- <a href="http://blog.ruanbekker.com/blog/categories/elasticsearch">blog.ruanbekker.com:elasticsearch</a>
-- <a href="https://sysadmins.co.za/tags/elasticsearch">sysadmins.co.za:elasticsearch</a></p>
 ]]></content>
   </entry>
   

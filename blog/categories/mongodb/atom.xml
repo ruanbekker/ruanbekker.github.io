@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Mongodb | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/mongodb/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-12T17:01:29-05:00</updated>
+  <updated>2018-11-12T17:26:55-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,190 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Create Read Only Users in MongoDB]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/12/create-read-only-users-in-mongodb/"/>
+    <updated>2018-11-12T17:02:53-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/12/create-read-only-users-in-mongodb</id>
+    <content type="html"><![CDATA[<p>In this post I will demonstrate how to setup 2 read only users in MongoDB, one user that will have access to one MongoDB Database and all the Collections, and one user with access to one MongoDB Database and only one Collection.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299";
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>First Method: Creating and Assigning the User</h2>
+
+<p>The first method we will create the user and assign it the read permissions that he needs. In this case read only access to the mytest db.</p>
+
+<p>First logon to mongodb and switch to the admin database:</p>
+
+<pre><code class="bash">$ mongo -u dbadmin -p --authenticationDatabase admin
+&gt; use admin
+switched to db admin
+</code></pre>
+
+<p>Now list the dbs:</p>
+
+<pre><code class="bash">&gt; show dbs
+admin       0.000GB
+mytest      0.000GB
+</code></pre>
+
+<p>List the collections and read the data from it for demonstration purposes:</p>
+
+<pre><code class="bash">&gt; use mytest
+&gt; show collections;
+col1
+col2
+&gt; db.col1.find()
+{ "_id" : ObjectId("5be3d377b54849bb738e3b6b"), "name" : "ruan" }
+&gt; db.col2.find()
+{ "_id" : ObjectId("5be3d383b54849bb738e3b6c"), "name" : "stefan" }
+</code></pre>
+
+<p>Now create the user collectionreader that will have access to read all the collections from the database:</p>
+
+<pre><code class="bash">$ &gt; db.createUser({user: "collectionreader", pwd: "secretpass", roles: [{role: "read", db: "mytest"}]})
+Successfully added user: {
+  "user" : "collectionreader",
+  "roles" : [
+    {
+      "role" : "read",
+      "db" : "mytest"
+    }
+  ]
+}
+</code></pre>
+
+<p>Exit and log out and log in with the new user to test the permissions:</p>
+
+<pre><code class="bash">$ mongo -u collectionreader -p --authenticationDatabase mytest
+&gt; use mytest
+switched to db mytest
+
+&gt; show collections
+col1
+col2
+
+&gt; db.col1.find()
+{ "_id" : ObjectId("5be3d377b54849bb738e3b6b"), "name" : "ruan" }
+</code></pre>
+
+<p>Now lets try to write to a collection:</p>
+
+<pre><code class="bash">&gt; db.col1.insert({"name": "james"})
+WriteResult({
+  "writeError" : {
+    "code" : 13,
+    "errmsg" : "not authorized on mytest to execute command { insert: \"col1\", documents: [ { _id: ObjectId('5be3d6c0492818b2c966d61a'), name: \"james\" } ], ordered: true }"
+  }
+})
+</code></pre>
+
+<p>So we can see it works as expected.</p>
+
+<h2>Second Method: Create Roles and Assign Users to the Roles</h2>
+
+<p>In the second method, we will create the roles then assign the users to the roles. And in this scenario, we will only grant a user <code>reader</code> access to one collection on a database. Login with the admin user:</p>
+
+<pre><code class="bash">$ mongo -u dbadmin -p --authenticationDatabase admin
+&gt; use admin
+</code></pre>
+
+<p>First create the read only role <code>myReadOnlyRole</code>:</p>
+
+<pre><code class="bash">&gt; db.createRole({ role: "myReadOnlyRole", privileges: [{ resource: { db: "mytest", collection: "col2"}, actions: ["find"]}], roles: []})
+</code></pre>
+
+<p>Now create the user and assign it to the role:</p>
+
+<pre><code class="bash">&gt; db.createUser({ user: "reader", pwd: "secretpass", roles: [{ role: "myReadOnlyRole", db: "mytest"}]})
+</code></pre>
+
+<p>Similarly, if we had an existing user that we also would like to add to that role, we can do that by doing this:</p>
+
+<pre><code class="bash">&gt; db.grantRolesToUser("anotheruser", [ { role: "myReadOnlyRole", db: "mytest" } ])
+</code></pre>
+
+<p>Logout and login with the reader user:</p>
+
+<pre><code class="bash">$ mongo -u reader -p --authenticationDatabase mytest
+&gt; use mytest
+</code></pre>
+
+<p>Now try to list the collections:</p>
+
+<pre><code class="bash">&gt; show collections
+2018-11-08T07:42:39.907+0100 E QUERY    [thread1] Error: listCollections failed: {
+  "ok" : 0,
+  "errmsg" : "not authorized on mytest to execute command { listCollections: 1.0, filter: {} }",
+  "code" : 13,
+  "codeName" : "Unauthorized"
+}
+</code></pre>
+
+<p>As we only have read (find) access on col2, lets try to read data from collection col1:</p>
+
+<pre><code class="bash">&gt; db.col1.find()
+Error: error: {
+  "ok" : 0,
+  "errmsg" : "not authorized on mytest to execute command { find: \"col1\", filter: {} }",
+  "code" : 13,
+  "codeName" : "Unauthorized"
+}
+</code></pre>
+
+<p>And finally try to read data from the collection we are allowed to read from:</p>
+
+<pre><code class="bash">&gt; db.col2.find()
+{ "_id" : ObjectId("5be3d383b54849bb738e3b6c"), "name" : "stefan" }
+</code></pre>
+
+<p>And also making sure we cant write to that collection:</p>
+
+<pre><code>&gt; db.col2.insert({"name": "frank"})
+WriteResult({
+  "writeError" : {
+    "code" : 13,
+    "errmsg" : "not authorized on mytest to execute command { insert: \"col2\", documents: [ { _id: ObjectId('5be3db1530a86d900c361465'), name: \"frank\" } ], ordered: true }"
+  }
+})
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.mongodb.com/manual/tutorial/create-users/">https://docs.mongodb.com/manual/tutorial/create-users/</a></li>
+<li><a href="https://docs.mongodb.com/manual/core/collection-level-access-control/">https://docs.mongodb.com/manual/core/collection-level-access-control/</a></li>
+<li><a href="https://docs.mongodb.com/manual/reference/privilege-actions/">https://docs.mongodb.com/manual/reference/privilege-actions/</a></li>
+<li><a href="https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/">https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/</a></li>
+<li><a href="https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/">https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/</a></li>
+</ul>
+
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Experimenting With Python and TinyMongo a MongoDB Wrapper for TinyDB]]></title>
@@ -665,94 +849,6 @@ instances
 <li><a href="https://docs.mongodb.com/manual/reference/program/mongodump/">https://docs.mongodb.com/manual/reference/program/mongodump/</a></li>
 <li><a href="https://docs.mongodb.com/manual/reference/program/mongorestore/">https://docs.mongodb.com/manual/reference/program/mongorestore/</a></li>
 </ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup RocketChat on Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/09/10/setup-rocketchat-on-docker-swarm/"/>
-    <updated>2017-09-10T18:45:12-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/09/10/setup-rocketchat-on-docker-swarm</id>
-    <content type="html"><![CDATA[<p>Rocket Chat, a Self Hosted Alternative, which is very similar to Slack.</p>
-
-<p>We will setup a RocketChat Server which is hosted on Docker Swarm. In future posts, I will also go through the steps on working with the API, Custom Emoji&rsquo;s etc.</p>
-
-<h2>Requirements:</h2>
-
-<p>RocketChat uses MongoDB as its Database, we will keep the database outside of our swarm, if you don&rsquo;t already have a MongoDB Server in place, follow the <a href="http://blog.ruanbekker.com/blog/2017/09/02/setup-a-3-node-mongodb-replica-set-on-ubuntu-16/">Setup a 3 Node MongoDB</a> post to get that sorted.</p>
-
-<p>Another requirement is to have docker swarm running, alternatively, you can also follow <a href="https://rocket.chat/docs/installation/">RocketChat&rsquo;s Documentation</a> if you prefer setting it up elsewhere.</p>
-
-<h2>Setup Rocket Chat</h2>
-
-<p>We will assume MongoDB is accessible via <code>mongodb.domain.com</code> on port <code>27017</code>, with a username and password.</p>
-
-<p>Creating the RocketChat service and associate it to our <code>appnet</code> overlay network:</p>
-
-<pre><code class="bash">docker service create --name rocketchat \
---replicas 1 \
---network appnet \
---env DEPLOY_METHOD=docker \
---env NODE_ENV=production \
---env PORT=3000 \
---env MONGO_URL="mongodb://mongoadmin:mongopass@mongodb.domain.com:27017/rocketchat?authSource=admin" \
---env ROOT_URL=http://rocketchat.domain.com \
---env ADMIN_USERNAME=myadmin \
---env ADMIN_PASS=secret \
---env ADMIN_EMAIL=mail@domain.com \
---env Accounts_AvatarStorePath=/app/uploads \
---secret rocketchat_secret \
-rocketchat/rocket.chat
-</code></pre>
-
-<h2>View the RocketChat Service Logs</h2>
-
-<p>Lets monitor the docker service logs for our rocketchat service:</p>
-
-<pre><code class="bash">$ docker service logs -f rocketchat
-
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Using GridFS for custom sounds storage
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Using GridFS for custom emoji storage
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | ufs: temp directory created at "/tmp/ufs"
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | System startup
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | +--------------------------------------------------------------+
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |                        SERVER RUNNING                        |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | +--------------------------------------------------------------+
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |                                                              |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |  Rocket.Chat Version: 0.58.2                                 |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |       NodeJS Version: 4.8.4 - x64                            |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |             Platform: linux                                  |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |         Process Port: 3000                                   |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |             Site URL: http://rocketchat.domain.com           |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |     ReplicaSet OpLog: Disabled                               |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |          Commit Hash: 988103d449                             |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |        Commit Branch: HEAD                                   |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | |                                                              |
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | +--------------------------------------------------------------+
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Inserting admin user:
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Name: Administrator
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Email: mail@domain.com
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Username: myadmin
-rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    | Password: secret
-</code></pre>
-
-<p>Now you should be able to access Rocket Chat on the <code>ROOT_URL</code> that you have specified.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://rocket.chat/docs/installation/">https://rocket.chat/docs/installation/</a></li>
-<li><a href="https://github.com/RocketChat/Docker.Official.Image">https://github.com/RocketChat/Docker.Official.Image</a></li>
-<li><a href="https://rocket.chat/docs/installation/docker-containers">https://rocket.chat/docs/installation/docker-containers</a></li>
-</ul>
-
-
-<center>
-        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-
 
 ]]></content>
   </entry>

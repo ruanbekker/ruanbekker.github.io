@@ -10,7 +10,6 @@ categories: ["python", "flask", "forms", "wtforms", "bootstrap"]
 
 Quick demo with Web Forms using the WTForms module in Python Flask.
 
-<p>
 <script id="mNCC" language="javascript">
     medianet_width = "728";
     medianet_height = "90";
@@ -18,7 +17,6 @@ Quick demo with Web Forms using the WTForms module in Python Flask.
     medianet_versionId = "3111299"; 
   </script>
 <script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-</p>
 
 ## Requirements:
 

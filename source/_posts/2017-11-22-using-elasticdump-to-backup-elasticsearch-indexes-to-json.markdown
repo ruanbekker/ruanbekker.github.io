@@ -8,6 +8,14 @@ categories: ["elasticsearch", "elasticdump", "nodejs", "backup", "restore", "jso
 
 We will use Elasticdump to dump data from Elasticsearch to json files on disk, then delete the index, then restore data back to elasticsearch
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Install Elasticdump:
 
 ```bash

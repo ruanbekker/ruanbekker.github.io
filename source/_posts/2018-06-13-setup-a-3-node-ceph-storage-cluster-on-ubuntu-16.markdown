@@ -10,6 +10,14 @@ categories: ["ceph", "storage"]
 
 For some time now, I wanted to do a setup of Ceph, and I finally got the time to do it. This setup was done on Ubuntu 16.04
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## What is Ceph
 
 Ceph is a storage platform that implements object storage on a single distributed computer cluster and provides interfaces for object, block and file-level storage.
@@ -376,3 +384,14 @@ object-pool                1            1            0            0            0
 - https://github.com/lucj/swarm-rexray-ceph
 - http://docs.ceph.com/docs/mimic/rbd/
 - http://docs.ceph.com/docs/mimic/radosgw/
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

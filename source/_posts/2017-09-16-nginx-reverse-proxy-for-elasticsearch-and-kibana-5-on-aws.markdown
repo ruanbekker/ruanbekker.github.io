@@ -15,6 +15,14 @@ We will setup 2 configs, one for Kibana and one for Elasticsearch, each one havi
 - Kibana: `http://kibana.domain.com`
 - Elasticsearch: `http://elasticsearch.domain.com`
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Workaround:
 
 There's a couple of workarounds, which includes:
@@ -186,6 +194,13 @@ Once your Nginx Service is running, you should be able to access Kibana and Elas
 - https://www.elastic.co/blog/playing-http-tricks-nginx
 - https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/
 
-<center>
-<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
-</center>
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

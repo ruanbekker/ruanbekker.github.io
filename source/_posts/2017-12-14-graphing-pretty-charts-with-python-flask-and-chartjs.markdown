@@ -12,6 +12,14 @@ I am a big sucker for Charts and Graphs, and today I found one awesome library c
 
 As Bitcoin is doing so well, I decided to graph the monthly Bitcoin price from January up until now.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Dependencies:
 
 Install Flask:
@@ -123,3 +131,14 @@ When we access our `/pie` endpoint:
 
 - https://pythonspot.com/flask-and-great-looking-charts-using-chart-js/
 - http://www.chartjs.org/docs/latest/#installation
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

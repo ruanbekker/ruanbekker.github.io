@@ -10,6 +10,14 @@ categories: ["chatbot", "python", "machinelearning", "docker", "mongodb"]
 
 So I've been wanting to take a stab at chatbots for some time, and recently discovered [Chatterbot](https://github.com/gunthercox/ChatterBot), so in this tutorial I will go through some examples on setting up a very basic chatbot.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Getting the Dependencies:
 
 I will be using Alpine on [Docker](docker.com) to run all the the examples, I am using Alpine so that we have a basic container with nothing special pre-installed.

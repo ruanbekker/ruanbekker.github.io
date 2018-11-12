@@ -8,6 +8,14 @@ categories: ["docker", "elasticsearch", "docker-compose", "kibana", "development
 
 Having a Elasticsearch cluster on your laptop with Docker for testing is great. And in this post I will show you how quick and easy it is, to have a 3 node elasticsearch cluster running on docker for testing.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Pre-Requisites
 
 We need to set the `vm.max_map_count` kernel parameter:

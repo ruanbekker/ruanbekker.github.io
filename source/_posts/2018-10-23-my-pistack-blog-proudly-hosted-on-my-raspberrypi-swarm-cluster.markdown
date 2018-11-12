@@ -30,4 +30,12 @@ More details on how I did the setup, can be found from the [Setting Up a Docker 
 
 ## Thanks!
 
-Thanks for the visit, I will blog about awesome Docker and RaspberryPi related stuff as my mind stumble along awesome ideas :) 
+Thanks for the visit, I will blog about awesome Docker and RaspberryPi related stuff as my mind stumble along awesome ideas :)
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "346651356";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script> 

@@ -10,6 +10,14 @@ While testing DynamoDB for a specific use case I picked up at times where a GetI
 
 I will go through my steps drilling down on pointers where latency can be reduced.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## DynamoDB Performance Testing Overview
 
 Tests:

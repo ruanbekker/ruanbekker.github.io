@@ -8,6 +8,14 @@ categories: ["vpn", "networking"]
 
 So I got 3 Dedicated Servers each having its own Static IP and I wanted a way to build a private network between these servers. 
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## The Scenario:
 
 3 Servers with the following IP's (not real IP addresses):

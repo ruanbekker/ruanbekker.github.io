@@ -19,6 +19,14 @@ ID                  NAME                   MODE                REPLICAS         
 
 As you can see, we have no services running, but the remote swarm has a couple, so after forwarding the connection, we should see our remote services.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Setting up the SSH Tunnel:
 
 Here we will forward the remote docker socket: `/var/run/docker.sock` to a local port bound to localhost: `localhost:2377`:

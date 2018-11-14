@@ -10,6 +10,14 @@ categories: ["python", "flask", "api", "restful-api"]
 
 A Basic RESTFul API Service with Python Flask. We will be using the Flask, jsonify and request classes to build our API service.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Description of this demonstration:
 
 Our API will be able to do the following:

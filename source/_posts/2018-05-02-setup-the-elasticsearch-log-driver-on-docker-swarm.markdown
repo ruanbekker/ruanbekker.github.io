@@ -10,6 +10,14 @@ categories: ["docker", "docker-swarm", "elasticsearch", "devops"]
 
 Today we will look at a Elasticsearch logging driver for Docker.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Why a Log Driver?
 
 By default the log output can be retrieved when using the `docker service logs -f service_name`, where log output of that service is shown via stdout. When having a lot of services in your swarm, it becomes useful logging all of your log output to a database service.

@@ -14,6 +14,14 @@ The idea is to have 3 Raspberry Pi's (Model 3 B), a Manager Node, and 2 Worker N
 
 More Inforamtion on: [Docker Swarm](https://docs.docker.com/engine/swarm/)
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Provision Raspbian on each RaspberryPi
 
 Grab the [Latest Raspbian Lite ISO](https://downloads.raspberrypi.org/raspbian_lite_latest) and the following [source](https://www.raspberrypi.org/documentation/installation/installing-images/) will help provisioning your RaspberryPi with Raspbian.

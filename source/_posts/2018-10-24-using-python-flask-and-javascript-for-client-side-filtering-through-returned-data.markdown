@@ -12,6 +12,14 @@ This post will cover 2 sections, using Python Flask and Javascript to filter ret
 
 The other section will be used as a demo, with solving a problem with Amazon CloudWatch Logs. I'm a Massive AWS Fanatic, but when it comes to CloudWatch Logs, I'm not so big of a fan of that specific service. Especially when you use Docker Swarm for AWS and have your logdriver set to CloudWatch Logs.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## The Problem I have with CloudWatch Logs
 
 When you point to your CloudWatch LogGroups, you can search for your streams, and in my case searching for a specific swarm service, but you can't sort by date, like this:

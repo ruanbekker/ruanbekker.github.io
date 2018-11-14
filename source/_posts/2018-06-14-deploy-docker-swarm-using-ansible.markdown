@@ -14,6 +14,14 @@ With this setup, I have a client node, which will be my jump box, as it will be 
 
 The repository for the source code can be found on my [Github Repository](https://github.com/ruanbekker/ansible-docker-swarm)
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Pre-Check
 
 Hosts file: 

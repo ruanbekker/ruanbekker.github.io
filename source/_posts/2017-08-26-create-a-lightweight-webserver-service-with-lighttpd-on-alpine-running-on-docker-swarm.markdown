@@ -8,6 +8,14 @@ categories: ["docker", "alpine", "lighttpd", "html"]
 
 In this post we will create a docker service that will host a static html website. We are using the `alpine:edge` image and using the `lighttpd` package as our webserver application.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## The Directory Structure:
 
 Our working directory consists of:

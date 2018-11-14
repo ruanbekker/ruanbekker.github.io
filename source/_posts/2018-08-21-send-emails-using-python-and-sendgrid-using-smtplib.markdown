@@ -10,6 +10,14 @@ categories: ["email", "python", "smtp", "smtplib", "sendgrid"]
 
 Quick tutorial on how to send emails using Python and smtplib.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Sendgrid
 
 Sendgrid offers 100 free outbound emails per day, sign up with them via [sendgrid.com/free](https://sendgrid.com/free/), create a API Key and save your credentials in a safe place.

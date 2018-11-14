@@ -10,6 +10,14 @@ categories: ['python', 'nosql', 'databases', 'flata']
 
 [Flata](https://github.com/harryho/flata) is a lightweight document orientated database, which was inspired by [TinyDB](https://github.com/msiemens/tinydb) and [LowDB](https://github.com/typicode/lowdb).
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Why Flata?
 
 Most of the times my mind gets in its curious states and I think about alternative ways on doing things, especially testing lightweight apps and today I wondered if theres any NoSQL-like software out there that is easy to spin up and is backed by a flat file, something like `sqlite` for SQL-like services, so this time just something for NoSQL-like.

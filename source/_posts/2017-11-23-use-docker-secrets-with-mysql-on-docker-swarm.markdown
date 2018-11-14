@@ -10,6 +10,14 @@ categories: ["docker", "docker-swarm", "docker-secrets", "docker-compose", "mysq
 
 Today we will use Docker Secrets, more specifically store our MySQL Passwords in Secrets, which will be passed to our containers, so that we don't use clear text passwords in our Compose files.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## What is Docker Secrets:
 
 In Docker, Docker Secrets are encrypted during transit and at rest in a Docker Swarm Cluster. The great thing about Docker Secrets is that you can manage these secrets from a central place, and the fact that it encrypts the data and transfers the data securely to the containers that needs the secrets. So you authorize which containers needs access to these secrets.

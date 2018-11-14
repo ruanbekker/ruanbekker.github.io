@@ -8,6 +8,14 @@ categories: ["networking", "vpn"]
 
 In this post we will setup a [PPTP](https://en.wikipedia.org/wiki/Point-to-Point_Tunneling_Protocol) VPN on Ubuntu 16.04
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Disable IPv6 Networking:
 
 Edit the grub config:

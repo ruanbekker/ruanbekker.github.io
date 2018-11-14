@@ -28,6 +28,14 @@ We will be doing the following:
 
 If you are just getting started with DynamoDB, I recommend having a look at [Amazons DynamoDB Documentation](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Introduction.html) Page first.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## The Music Dataset:
 
 I used the [iTunes API](https://affiliate.itunes.apple.com/resources/documentation/itunes-store-web-service-search-api/) to get the music metadata, but I also have a post on [how to query the iTunes API](http://blog.ruanbekker.com/blog/2018/05/08/use-python-requests-to-interact-with-the-itunes-api-to-search-for-music-info/) to get data from them to use.

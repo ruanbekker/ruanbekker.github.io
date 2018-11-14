@@ -8,6 +8,14 @@ categories: ["elasticsearch", "bulk"]
 
 This tutorial will guide you how to use the Bulk API with Elasticsearch, this is great for when having a dataset that contains a lot of documents, where you want to insert them into elasticsearch in bulk uploads.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## The Dataset
 
 We will be using a dataset from elastic that contains 1000 documents that holds account data. 

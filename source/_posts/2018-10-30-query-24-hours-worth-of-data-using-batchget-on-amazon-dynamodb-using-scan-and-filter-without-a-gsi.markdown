@@ -10,6 +10,14 @@ I'm testing how to query data in DynamoDB which will always be the retrieval of 
 
 This is done just to see what other ways you can use to query data based on a specific timeframe.
 
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
 ## Use-Case:
 
 Data from DynamoDB needs to be batch processed (daily for the last 24-hours), into a external datasource. Data will be written into DynamoDB, the HK (uuid) and RK (timestamp) will be duplicated to the daily table. But only uuid and timestamp will be duplicated to the daily table, and only data for that day will be written into that datestamp formatted table name.

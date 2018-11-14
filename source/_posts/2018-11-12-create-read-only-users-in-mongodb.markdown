@@ -177,6 +177,7 @@ WriteResult({
 - https://docs.mongodb.com/manual/reference/privilege-actions/
 - https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/
 - https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/
+- https://studio3t.com/knowledge-base/articles/mongodb-users-roles-explained-part-1/
 
 <script type="text/javascript">
   ( function() {

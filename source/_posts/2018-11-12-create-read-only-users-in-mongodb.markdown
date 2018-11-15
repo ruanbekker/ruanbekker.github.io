@@ -169,6 +169,21 @@ WriteResult({
   }
 })
 ```
+## Assigning Permissions to Roles
+
+If you later on want to add more permissions to the role, this can easily be done by using `grantPrivilegesToRole()`:
+
+```bash
+$ mongo -u dbadmin -p --authenticationDatabase admin
+> use mytest
+> db.grantPrivilegesToRole("myReadOnlyRole", [{ resource: { db : "mytest", collection : "col1"}, actions : ["find"] }])
+```
+
+To view the permissions for that role:
+
+```bash
+> db.getRole("myReadOnlyRole", { showPrivileges : true })
+```
 
 ## Resources:
 

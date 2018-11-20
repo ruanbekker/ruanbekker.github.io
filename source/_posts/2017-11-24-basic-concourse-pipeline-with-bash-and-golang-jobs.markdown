@@ -207,3 +207,9 @@ Go App Executing:
 Hello, World!
 succeeded
 ```
+
+And you can also debug the job by dropping yourself into the container by using hijack:
+
+```
+$ fly -t ci hijack --job bash-and-golang/my-golang-job
+```

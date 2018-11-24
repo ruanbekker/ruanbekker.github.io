@@ -153,3 +153,14 @@ Access Kibana on your routable endpoint on port `5601` and you should see someth
 ## Configuring a Application to push metrics to APM
 
 In the [next post](https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/) I will setup a Python Flask Application on APM
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

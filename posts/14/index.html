@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="When using Cyberduck to access S3, and a account has restrictive policies, you may find error Listing Directory: / failed. If you have restrictive &hellip;">
+  <meta name="description" content="As up untill today, there&rsquo;s currently no VPC Support for Amazon&rsquo;s Elasticsearch Service. So for scenarios where you would like to allow &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,358 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/09/16/nginx-reverse-proxy-for-elasticsearch-and-kibana-5-on-aws/">Nginx Reverse Proxy for Elasticsearch and Kibana 5 on AWS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-09-16T17:24:32-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>16</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>5:24 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>As up untill today, there&rsquo;s currently no VPC Support for Amazon&rsquo;s Elasticsearch Service.</p>
+
+<p>So for scenarios where you would like to allow private network traffic to Elasticsearch is impossible straight out of the box as Amazon&rsquo;s Elasticsearch Services, only sees Public Internet Traffic.</p>
+
+<p>We will setup 2 configs, one for Kibana and one for Elasticsearch, each one having its own FQDN:</p>
+
+<ul>
+<li>Kibana: <code>http://kibana.domain.com</code></li>
+<li>Elasticsearch: <code>http://elasticsearch.domain.com</code></li>
+</ul>
+
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>Workaround:</h2>
+
+<p>There&rsquo;s a couple of workarounds, which includes:</p>
+
+<ul>
+<li>Nginx Reverse Proxy</li>
+<li>NAT Gateway</li>
+<li>Allow IAM Users/Roles</li>
+</ul>
+
+
+<p>Today we will tackle the Nginx Reverse Proxy Route.</p>
+
+<p>The benefit of this, would be to associate an EIP to the Nginx EC2 Instnace, then whitelist your EIP with Elasticsearch, so the only traffic that will be accepted will be the traffic that is coming from the Nginx Instance. We will also apply an additional layer of security, in this case we will use HTTP Basic Authentication, then also authorize network sources on a Security Group level.</p>
+
+<h2>Installing Nginx:</h2>
+
+<p>In this case I am using Ubuntu 16.04, so we will need to install <code>nginx</code> and <code>apache2-utils</code> for creating the Basic HTTP Auth accounts.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install nginx apache2-utils -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Nginx:</h2>
+
+<p>Our main config: <code>/etc/nginx/nginx.conf</code>:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/nginx.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user www-data<span class="p">;</span>
+</span><span class='line'>worker_processes auto<span class="p">;</span>
+</span><span class='line'>pid /run/nginx.pid<span class="p">;</span>
+</span><span class='line'>error_log /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>  worker_connections 1024<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Basic Settings</span>
+</span><span class='line'>  sendfile on<span class="p">;</span>
+</span><span class='line'>  tcp_nopush on<span class="p">;</span>
+</span><span class='line'>  tcp_nodelay on<span class="p">;</span>
+</span><span class='line'>  keepalive_timeout 65<span class="p">;</span>
+</span><span class='line'>  types_hash_max_size 2048<span class="p">;</span>
+</span><span class='line'>  server_names_hash_bucket_size 128<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  include /etc/nginx/mime.types<span class="p">;</span>
+</span><span class='line'>  default_type application/octet-stream<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Logging Settings</span>
+</span><span class='line'>        log_format  main  <span class="s1">&#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  access_log /var/log/nginx/access.log main<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Gzip Settings</span>
+</span><span class='line'>  gzip on<span class="p">;</span>
+</span><span class='line'>  gzip_disable <span class="s2">&quot;msie6&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Elasticsearch and Kibana Configs</span>
+</span><span class='line'>  include /etc/nginx/conf.d/elasticsearch.conf<span class="p">;</span>
+</span><span class='line'>  include /etc/nginx/conf.d/kibana.conf<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>/etc/nginx/conf.d/elasticsearch.conf</code> configuration:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/conf.d/elasticsearch.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>server <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name elasticsearch.domain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># error logging</span>
+</span><span class='line'>  error_log /var/log/nginx/elasticsearch_error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># authentication: elasticsearch</span>
+</span><span class='line'>  auth_basic <span class="s2">&quot;Elasticsearch Auth&quot;</span><span class="p">;</span>
+</span><span class='line'>  auth_basic_user_file /etc/nginx/.secrets_elasticsearch<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host https://search-elasticsearch-name.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP &lt;ELASTIC-IP&gt;<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Authorization <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass https://search-elasticsearch-name.eu-west-1.es.amazonaws.com/<span class="p">;</span>
+</span><span class='line'>    proxy_redirect https://search-elasticsearch-name.eu-west-1.es.amazonaws.com/ http://&lt;ELASTIC-IP&gt;/<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># ELB Health Checks</span>
+</span><span class='line'>  location /status <span class="o">{</span>
+</span><span class='line'>    root /usr/share/nginx/html/<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>/etc/nginx/conf.d/kibana.conf</code> configuration:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/conf.d/kibana.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>server <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name kibana.domain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># error logging</span>
+</span><span class='line'>  error_log /var/log/nginx/kibana_error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># authentication: kibana</span>
+</span><span class='line'>  auth_basic <span class="s2">&quot;Kibana Auth&quot;</span><span class="p">;</span>
+</span><span class='line'>  auth_basic_user_file /etc/nginx/.secrets_kibana<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host https://search.elasticsearch-name.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP &lt;ELASTIC-IP&gt;<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Authorization <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass https://search.elasticsearch-name.eu-west-1.es.amazonaws.com/_plugin/kibana/<span class="p">;</span>
+</span><span class='line'>    proxy_redirect https://search.elasticsearch-name.eu-west-1.es.amazonaws.com/_plugin/kibana/ http://&lt;ELASTIC-IP&gt;/kibana/<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>      location ~ <span class="o">(</span>/app/kibana<span class="p">|</span>/app/timelion<span class="p">|</span>/bundles<span class="p">|</span>/es_admin<span class="p">|</span>/plugins<span class="p">|</span>/api<span class="p">|</span>/ui<span class="p">|</span>/elasticsearch<span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>         proxy_pass              https://search.elasticsearch-name.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>         proxy_set_header        Host <span class="nv">$host</span><span class="p">;</span>
+</span><span class='line'>         proxy_set_header        X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>         proxy_set_header        X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>         proxy_set_header        X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>         proxy_set_header        X-Forwarded-Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>         proxy_set_header      Authorization  <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once you have replaced the elasticsearch endpoint and your EPI values, we can go ahead and create the auth accounts.</p>
+
+<h2>Create User Accounts for HTTP Basic Auth</h2>
+
+<p>Create the 2 accounts for authentication on kibana and elasticsearch:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>htpasswd -c /etc/nginx/.secrets_elasticsearch elasticsearch-admin
+</span><span class='line'><span class="nv">$ </span>htpasswd -c /etc/nginx/.secrets_kibana kibana-admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Restart Nginx:</h2>
+
+<p>Restart and enable Nginx on boot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>nginx
+</span><span class='line'><span class="nv">$ </span>systemctl restart nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once your Nginx Service is running, you should be able to access Kibana and Elasticsearch using the credentials that you created.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.nginx.com/blog/tcp-load-balancing-udp-load-balancing-nginx-tips-tricks/">https://www.nginx.com/blog/tcp-load-balancing-udp-load-balancing-nginx-tips-tricks/</a></li>
+<li><a href="https://www.elastic.co/blog/playing-http-tricks-nginx">https://www.elastic.co/blog/playing-http-tricks-nginx</a></li>
+<li><a href="https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/">https://sysadmins.co.za/aws-access-kibana-5-behind-elb-via-nginx-reverse-proxy-on-custom-dns/</a></li>
+</ul>
+
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1600,152 +1952,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/09/07/how-to-create-a-local-docker-swarm-cluster-with-docker-in-docker-on-your-workstation/">How to Create a Local Docker Swarm Cluster With Docker in Docker on Your Workstation</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-09-07T04:03:37-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>7</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>4:03 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Creating a Docker Swarm Cluster, locally on your Workstation using Docker in Docker (DID) for testing Purposes:</p>
-
-<h2>Project Resources:</h2>
-
-<ul>
-<li><a href="https://hub.docker.com/_/docker/">Docker in Docker</a></li>
-<li><a href="https://docs.traefik.io/">Traefik</a></li>
-</ul>
-
-
-<h2>Create The Nodes:</h2>
-
-<p>Create the Docker containers that will act as our Docker nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run --privileged --name docker-node1 -v /Users/ruan/docker/did/vols/node1:/var/lib/docker -d docker:dind --storage-driver<span class="o">=</span>vfs
-</span><span class='line'><span class="nv">$ </span>docker run --privileged --name docker-node2 -v /Users/ruan/docker/did/vols/node2:/var/lib/docker -d docker:dind --storage-driver<span class="o">=</span>vfs
-</span><span class='line'><span class="nv">$ </span>docker run --privileged --name docker-node3 -v /Users/ruan/docker/did/vols/node3:/var/lib/docker -d docker:dind --storage-driver<span class="o">=</span>vfs
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Initialize the Swarm:</h2>
-
-<p>Log onto the manager node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it docker-node1 sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Initialize the Swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker swarm init --advertise-addr eth0
-</span><span class='line'>Swarm initialized: current node <span class="o">(</span>17ydtkqdwxzwea2riadxj4zbw<span class="o">)</span> is now a manager.
-</span><span class='line'>
-</span><span class='line'>To add a worker to this swarm, run the following <span class="nb">command</span>:
-</span><span class='line'>
-</span><span class='line'>    docker swarm join --token SWMTKN-1-4goolm8dvwictc7d39aonpcv6ca1pfj31q7irjga17o2srzf6f-b4k3hln6ogvjgmnbs1qxnjvj9 172.17.0.2:2377
-</span><span class='line'>
-</span><span class='line'>To add a manager to this swarm, run <span class="s1">&#39;docker swarm join-token manager&#39;</span> and follow the instructions.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Join the Worker Nodes to the Swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it docker-node2 sh
-</span><span class='line'>/ <span class="c"># docker swarm join --token SWMTKN-1-4mvb68vefr3dogxr6omu3uq04r4gddftdbmfomxo9pefks9siu-3t7ua7k2xigl9rwgp4dwzcxm0 172.17.0.2:2377</span>
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it docker-node3 sh
-</span><span class='line'>/ <span class="c"># docker swarm join --token SWMTKN-1-4mvb68vefr3dogxr6omu3uq04r4gddftdbmfomxo9pefks9siu-3t7ua7k2xigl9rwgp4dwzcxm0 172.17.0.2:2377</span>
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>List the Nodes:</h2>
-
-<p>Log onto the Manager node and list the nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it docker-node1 sh
-</span><span class='line'>/ <span class="c"># docker node ls</span>
-</span><span class='line'>ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-</span><span class='line'>1hnq4b4w87w6trobwye5ap4sh *   5657c28bf618        Ready               Active              Leader
-</span><span class='line'>wglbb029g1kczttiaf5r6iavi     b2924bb8e555        Ready               Active
-</span><span class='line'>xxr9kdqy49u2tx61w31ife90j     6622a06a1b3c        Ready               Active
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Traefik:</h2>
-
-<p>Creating a HTTP Reverse Proxy, using Traefik:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker network create --driver overlay traefik-net
-</span><span class='line'><span class="nv">$ </span>docker service create <span class="se">\</span>
-</span><span class='line'>--name traefik <span class="se">\</span>
-</span><span class='line'>--constraint <span class="s1">&#39;node.role==manager&#39;</span> <span class="se">\</span>
-</span><span class='line'>--publish 80:80 <span class="se">\</span>
-</span><span class='line'>--publish 8080:8080 <span class="se">\</span>
-</span><span class='line'>--mount <span class="nb">type</span><span class="o">=</span><span class="nb">bind</span>,source<span class="o">=</span>/var/run/docker.sock,target<span class="o">=</span>/var/run/docker.sock <span class="se">\</span>
-</span><span class='line'>--network traefik-net <span class="se">\</span>
-</span><span class='line'>traefik:camembert --docker --docker.swarmmode --docker.domain<span class="o">=</span>ruanbekker.internal --docker.watch --logLevel<span class="o">=</span>DEBUG --web
-</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/15">&larr; Older</a>
@@ -1763,6 +1969,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/11/23/setup-a-relayhost-with-postfix-to-send-mail-via-sendgrid/">Setup a Relayhost With Postfix to Send Mail via Sendgrid</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/11/22/setup-a-golang-environment-on-ubuntu/">Setup a Golang Environment on Ubuntu</a>
       </li>
     
@@ -1776,10 +1986,6 @@
     
       <li class="post">
         <a href="/blog/2018/11/12/iam-policy-to-allow-team-wide-and-user-level-permissions-on-aws-secrets-manager/">IAM Policy to Allow Team Wide and User Level Permissions on AWS Secrets Manager</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch</a>
       </li>
     
   </ul>

@@ -6,6 +6,8 @@ comments: true
 categories: ["sendgrid", "email", "postfix"] 
 ---
 
+![](https://objects.ruanbekker.com/assets/images/sendgrid-logo.png)
+
 In this post we will setup Postfix to Relay Mail through SendGrid and we will also configure the authentication as SendGrid is not an open relay, but you can obtain credentials by signing up with the for a free account to obtain your username and password which will use to relay mail through them.
 
 ## Access Control on Postfix

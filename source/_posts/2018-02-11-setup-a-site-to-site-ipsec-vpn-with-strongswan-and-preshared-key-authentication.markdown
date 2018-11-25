@@ -33,7 +33,7 @@ Set the following kernel parameters:
 
 ```bash
 $ cat >> /etc/sysctl.conf << EOF
-echo net.ipv4.ip_forward = 1 
+net.ipv4.ip_forward = 1 
 net.ipv4.conf.all.accept_redirects = 0 
 net.ipv4.conf.all.send_redirects = 0
 EOF

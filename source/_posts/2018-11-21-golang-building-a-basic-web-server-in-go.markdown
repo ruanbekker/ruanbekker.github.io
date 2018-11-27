@@ -23,7 +23,7 @@ Our Web Server will respond on 2 Request Paths:
 
 If you have not setup your golang environment, you can do so by visiting [@AkyunaAkish's Post on Setting up a Golang Development Enviornment on MacOSX](https://medium.com/@AkyunaAkish/setting-up-a-golang-development-environment-mac-os-x-d58e5a7ea24f).
 
-Create the `server.go` or any filename of your choice:
+Create the `server.go` or any filename of your choice. Note: I created 2 ways of returning the content of http response for demonstration
 
 ```go
 package main
@@ -37,7 +37,7 @@ import (
 func hello(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, "Hello, World!" + "\n")
+	w.Write([]byte("Hello, World!" + "\n")
 	log.Println("hello function handler was executed")
 }
 
@@ -114,6 +114,8 @@ $ go run server.go
 
 - https://golang.org/doc/code.html
 - https://gowalker.org/net/http#HandleFunc
+- https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring
+- https://www.alexedwards.net/blog/golang-response-snippets
 
 <script type="text/javascript">
   ( function() {

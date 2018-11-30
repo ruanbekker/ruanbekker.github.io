@@ -5,14 +5,15 @@ date: 2018-11-30 02:51:24 -0500
 comments: true
 categories: ["aws", "serverless", "api-gateway", "lambda", "dynamodb", "python"] 
 ---
-! 
-[](https://objects.ruanbekker.com/assets/images/aws-logo.png)
+![](https://objects.ruanbekker.com/assets/images/aws-logo.png)
 
 Today we will set a Serverless URL Shortener using API Gateway, Lambda with Python and DynamoDB.
 
 ## Overview 
 
 The service that we will be creating, will shorten URLs via our API which will create an entry on DynamoDB. When a GET method is performed on the shortened URL, a GetItem is executed on DynamoDB to get the Long URL and a 301 Redirect is performed to redirect the client to intended destination URL.
+
+Note, I am using a domain name which is quite long, but its only for demonstration, if you can get hold of any short domains like `t.co` etc, that will make your Shortened URLs really short in character count. 
 
 ## The Setup
 

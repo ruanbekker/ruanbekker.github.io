@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Python | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/python/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-11-27T09:02:58-05:00</updated>
+  <updated>2018-11-30T09:40:38-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,350 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Setup a Serverless URL Shortener With API Gateway Lambda and DynamoDB on AWS]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws/"/>
+    <updated>2018-11-30T02:51:24-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws</id>
+    <content type="html"><![CDATA[<p>!
+<a href="https://objects.ruanbekker.com/assets/images/aws-logo.png"></a></p>
+
+<p>Today we will set a Serverless URL Shortener using API Gateway, Lambda with Python and DynamoDB.</p>
+
+<h2>Overview</h2>
+
+<p>The service that we will be creating, will shorten URLs via our API which will create an entry on DynamoDB. When a GET method is performed on the shortened URL, a GetItem is executed on DynamoDB to get the Long URL and a 301 Redirect is performed to redirect the client to intended destination URL.</p>
+
+<h2>The Setup</h2>
+
+<p>The following services will be used to create a URL Shortener:</p>
+
+<ul>
+<li>AWS API Gateway: ( <code>/create</code>: to create a shortened url and <code>/t/{id}</code> to redirect to long url)</li>
+<li>AWS IAM: (Role and Policy for Permissions to call DynamoDB from Lambda)</li>
+<li>AWS Lambda: (Application Logic)</li>
+<li>AWS DynamoDB: (Persistent Store to save our Data)</li>
+<li>AWS ACM: (Optional: Certificate for your Domain)</li>
+<li>AWS Route53: (Optional: DNS for the domain that you want to associate to your API)</li>
+</ul>
+
+
+<p>The flow will be like the following:</p>
+
+<ul>
+<li>POST Request gets made to the <code>/create</code> request path with the <code>long_url</code> data in the payload</li>
+<li>This data is then used by the Lambda function to create a short url and create a entry in DynamoDB</li>
+<li>In DynamoDB the entry is created with the short id as the hash key and the long url as one of the attributes</li>
+<li>The response to the client will be the short url</li>
+<li>When a GET method is performed on the id eg <code>/t/{short_id}</code>, a lookup gets done on the DynamoDB table, retrieves the long url from the table</li>
+<li>A 301 redirect gets performed on API Gateway and the client gets redirected to the intended url</li>
+</ul>
+
+
+<h2>Creating the URL Shortener</h2>
+
+<p>After completing this tutorial you will have your own Serverless URL Shortener using API Gateway, Lambda and DynamoDB.</p>
+
+<h2>IAM Permissions</h2>
+
+<p>On AWS IAM, create a IAM Policy, in my case the policy name is <code>lambda-dynamodb-url-shortener</code> and note that I masked out my account number:</p>
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:PutItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem"
+            ],
+            "Resource": "arn:aws:dynamodb:eu-west-1:xxxxxxxxxxxx:table/url-shortener-table"
+        }
+    ]
+}
+</code></pre>
+
+<p>Head over to <a href="https://console.aws.amazon.com/iam/home?region=eu-west-1#/roles">IAM Roles</a>, select Create Role, Select Lambda as the Trusted Entitiy from the AWS Service section, go ahead with the permissions and select your IAM Policy that was created, in my case <code>lambda-dynamodb-url-shortener</code> and <code>AWSLambdaBasicExecution</code> role. Give your Role a name, in my case <code>lambda-dynamodb-url-shortener-role</code>.</p>
+
+<h2>DynamoDB Table</h2>
+
+<p>Next, head over to <a href="https://eu-west-1.console.aws.amazon.com/dynamodb/home?region=eu-west-1#create-table:">DynamoDB</a> create a table, in my case the table name: <code>url-shortener-table</code> and the primary key <code>short_id</code> set to string:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-02.png" alt="" /></p>
+
+<h2>Lambda Functions</h2>
+
+<p>Once the table is created, head over to <a href="https://eu-west-1.console.aws.amazon.com/lambda/home?region=eu-west-1#/create?firstrun=true">Lambda</a> and create a Lambda function, in my case using Python 3.6 and provide a name, where I used: <code>url-shortener-create</code> and select the IAM role from the previous role that we created, this function will be the lambda function that will create the shortened urls:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-03-large.png" alt="" /></p>
+
+<p>The code for your lambda function which will take care of creating the short urls and save them to dynamodb, take note on the region and table name to ensure that it matches your setup:</p>
+
+<pre><code class="python">import os
+import json
+import boto3
+from string import ascii_letters, digits
+from random import choice, randint
+from time import strftime, time
+from urllib import parse
+
+app_url = os.getenv('APP_URL')
+min_char = int(os.getenv('MIN_CHAR'))
+max_char = int(os.getenv('MAX_CHAR'))
+string_format = ascii_letters + digits
+
+ddb = boto3.resource('dynamodb', region_name = 'eu-west-1').Table('url-shortener-table')
+
+def generate_timestamp():
+    response = strftime("%Y-%m-%dT%H:%M:%S")
+    return response
+
+def expiry_date():
+    response = int(time()) + int(604800)
+    return response
+
+def check_id(short_id):
+    if 'Item' in ddb.get_item(Key={'short_id': short_id}):
+        response = generate_id()
+    else:
+        return short_id
+
+def generate_id():
+    short_id = "".join(choice(string_format) for x in range(randint(min_char, max_char)))
+    print(short_id)
+    response = check_id(short_id)
+    return response
+
+def lambda_handler(event, context):
+    analytics = {}
+    print(event)
+    short_id = generate_id()
+    short_url = app_url + short_id
+    long_url = json.loads(event.get('body')).get('long_url')
+    timestamp = generate_timestamp()
+    ttl_value = expiry_date()
+
+    analytics['user_agent'] = event.get('headers').get('User-Agent')
+    analytics['source_ip'] = event.get('headers').get('X-Forwarded-For')
+    analytics['xray_trace_id'] = event.get('headers').get('X-Amzn-Trace-Id')
+
+    if len(parse.urlsplit(long_url).query) &gt; 0:
+        url_params = dict(parse.parse_qsl(parse.urlsplit(long_url).query))
+        for k in url_params:
+            analytics[k] = url_params[k]
+
+    response = ddb.put_item(
+        Item={
+            'short_id': short_id,
+            'created_at': timestamp,
+            'ttl': int(ttl_value),
+            'short_url': short_url,
+            'long_url': long_url,
+            'analytics': analytics,
+            'hits': int(0)
+        }
+    )
+
+    return {
+        "statusCode": 200,
+        "body": short_url
+    }
+</code></pre>
+
+<p>Set a couple of environment variables that will be used in our function, min and max chars from the screenshot below is the amount of characters that will be used in a random manner to make the short id unique. The app_url will be your domain name, as this will be returned to the client with the short id eg. <code>https://tiny.myserverlessapp.net/t/3f8Hf38n398t</code> :</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-04-lambda.png" alt="" /></p>
+
+<p>While you are on Lambda, create the function that will retrieve the long url, in my case <code>url-shortener-retrieve</code>:</p>
+
+<pre><code class="python">import os
+import json
+import boto3
+
+ddb = boto3.resource('dynamodb', region_name = 'eu-west-1').Table('eng-url-shortener')
+
+def lambda_handler(event, context):
+    short_id = event.get('short_id')
+
+    try:
+        item = ddb.get_item(Key={'short_id': short_id})
+        long_url = item.get('Item').get('long_url')
+        # increase the hit number on the db entry of the url (analytics?)
+        ddb.update_item(
+            Key={'short_id': short_id},
+            UpdateExpression='set hits = hits + :val',
+            ExpressionAttributeValues={':val': 1}
+        )
+
+    except:
+        return {
+            'statusCode': 301,
+            'location': 'https://objects.ruanbekker.com/assets/images/404-blue.jpg'
+        }
+
+    return {
+        "statusCode": 301,
+        "location": long_url
+    }
+</code></pre>
+
+<h2>API Gateway</h2>
+
+<p>Head over to <a href="https://console.aws.amazon.com/apigateway/home?region=us-east-1#/apis">API Gateway</a> and create your API, in my case <code>url-shortener-api</code></p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-05-api-gateway.png" alt="" /></p>
+
+<p>Head over to Resources:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-06-api-gateway.png" alt="" /></p>
+
+<p>and create a new resource called <code>/create</code>:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-07-api-gateway.png" alt="" /></p>
+
+<p>Once the resource is created, create a post method on the <code>create</code> resource and select Lambda as the integration type and lambda proxy integration as seen below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-09-api-gateway.png" alt="" /></p>
+
+<p>Once you save it, it will ask to give api gateway permission to invoike your lambda function wich you can accept by hitting ok as below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-10-iam-permission.png" alt="" /></p>
+
+<p>When you look at the POST method on your create resource, it should look like this:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-12-api-gateway.png" alt="" /></p>
+
+<p>Select the root resource <code>/</code> and from Actions create a new resource <code>/t</code>:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-13-api-gateway.png" alt="" /></p>
+
+<p>Select the <code>/t</code> resource and create a new resource named <code>shortid</code> and provide <code>{shortid}</code> in the resource path as this will be the data that will be proxied through to our lambda function:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-14-api-gateway.png" alt="" /></p>
+
+<p>Create a GET method on the <code>/t/{shortid}</code> resource and select <code>url-shortener-retrieve</code> lambda function as the function from the lambda integration selection as seen below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-17-api-gateway.png" alt="" /></p>
+
+<p>Again, grant api gateway permission to invoke your function:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-18-iam-permission.png" alt="" /></p>
+
+<p>When you select the GET method, it should look like this:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-19-api-gateway.png" alt="" /></p>
+
+<p>Select the Integration Request and head over to Mapping Templates:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-20-api-gateway.png" alt="" /></p>
+
+<p>from the Request body passtrhough, add a mapping template <code>application/json</code> and provide the following mapping template:</p>
+
+<pre><code>{
+    "short_id": "$input.params('shortid')"
+}
+</code></pre>
+
+<p>On the Method Response:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-21-api-gateway.png" alt="" /></p>
+
+<p>Delete the 200 HTTP Status Response and create a new response by &ldquo;Add Response&rdquo;, add <code>301</code> HTTP Status, add <code>Location</code> Header to the response.</p>
+
+<p>Navigate to the Integration Response from the <code>/{shortid}</code> GET method:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-21-api-gateway.png" alt="" /></p>
+
+<p>delete the 200 HTTP Response, add &ldquo;integration response&rdquo;, set method response status to 301 and add header mapping for location to integration.response.body.location as below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-23-api-gateway.png" alt="" /></p>
+
+<p>make sure to select the integration response to - so that the method response reflects to 301:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-24-api-gateway.png" alt="" /></p>
+
+<p>Navigate to Actions and select &ldquo;Deploy API&rdquo;, select your stage, in my case <code>test</code> and deploy:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-25-api-gateway.png" alt="" /></p>
+
+<p>Go to stages, select your stage, select the post request to reveal the API URL:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-26-api-gateway.png" alt="" /></p>
+
+<p>Time to test out the URL Shortener:</p>
+
+<pre><code class="bash">curl -XPOST -H "Content-Type: application/json" https://xxxxxx.execute-api.eu-west-1.amazonaws.com/test/create -d '{"long_url": "https://www.google.com/search?q=helloworld"}'
+https://tiny.myserverlessapp.net/t/pcnWoCGCr2ad1x
+</code></pre>
+
+<h2>ACM Certificates</h2>
+
+<p>At this moment we dont have our domain connected with our API Gateway, and we would also want a certificate on our application, which we can use ACM to request a certificate that can be associated to our domain. So in order to do that, first request a certificate on <a href="https://eu-west-1.console.aws.amazon.com/acm/home?region=eu-west-1#/privatewizard/">ACM</a>. Select Request a certificate, create a wildcard entry: <code>*.yourdomain.com</code>, select DNS Validation (If you host with Route53, they allow you the option to create the record).</p>
+
+<p>Head back to API Gateway to associate the Domain and ACM Certificate to our API:</p>
+
+<p>From the &ldquo;Custom Domain Names&rdquo; section, create a custom domain name, once you selected regional, it will ask for the target domain name, which will be the resolved to your API Endpoint that was created, and from the &ldquo;Base Path Mappings&rdquo; section, select <code>/</code> as the path to your API stage, in my case <code>url-shortener-api:test</code>:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-28-api-gateway.png" alt="" /></p>
+
+<h2>Route 53</h2>
+
+<p>Last part is to create a Route53 entry for tiny.yourdomain.com to resolve to the CNAME value of the target domain name that was provided in the custom domain names section:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tiny-url-setup-29-route53.png" alt="" /></p>
+
+<h2>Demo the URL Shortener Service:</h2>
+
+<p>Once everything is setup we can test, by creating a Shortened URL:</p>
+
+<pre><code class="bash">$ curl -XPOST -H "Content-Type: application/json" https://tiny.myserverlessapp.net/create -d '{"long_url": "https://www.google.com/search?q=helloworld"}'
+https://tiny.myserverlessapp.net/t/p7ISNcxTByXhN
+</code></pre>
+
+<p>Testing out the Short URL to redirect to the Destination URL:</p>
+
+<pre><code class="bash">$ curl -ivL https://tiny.myserverlessapp.net/t/p7ISNcxTByXhN
+*   Trying 34.226.10.0...
+* TCP_NODELAY set
+* Connected to tiny.myserverlessapp.net (34.226.10.0) port 443 (#0)
+* TLS 1.2 connection using TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+* Server certificate: *.myserverlessapp.net
+* Server certificate: Amazon
+* Server certificate: Amazon Root CA 1
+* Server certificate: Starfield Services Root Certificate Authority - G2
+&gt; GET /t/p7ISNcxTByXhN HTTP/1.1
+&gt; Host: tiny.myserverlessapp.net
+&gt; User-Agent: curl/7.54.0
+&gt; Accept: */*
+&gt;
+&lt; HTTP/1.1 301 Moved Permanently
+HTTP/1.1 301 Moved Permanently
+&lt; Date: Tue, 29 Nov 2018 00:05:02 GMT
+Date: Tue, 29 Nov 2018 00:05:02 GMT
+&lt; Content-Type: application/json
+Content-Type: application/json
+&lt; Content-Length: 77
+Content-Length: 77
+&lt; Connection: keep-alive
+Connection: keep-alive
+&lt; x-amzn-RequestId: f79048c8-cb56-41e8-b21d-b45fac47453a
+x-amzn-RequestId: f79048c8-cb56-41e8-b21d-b45fac47453a
+&lt; x-amz-apigw-id: OeKPHH7_DoEFdjg=
+x-amz-apigw-id: OeKPHH7_DoEFdjg=
+&lt; Location: https://www.google.com/search?q=helloworld
+Location: https://www.google.com/search?q=helloworld
+</code></pre>
+
+<p>At this moment our API is open to the world, which is probably not the best as everyone will be able to Shorten URL&rsquo;s. You can check out <a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-setup-api-key-with-console.html">Set Up API Keys Using the API Gateway Console</a> documentation on how to secure your application by utilizing a api key which can be included in your request headers when Shortening URLs.</p>
+
+<p>For a bit of housekeeping, you can implement TTL on DynamoDB so that old items expire, which can help you to refrain your dynamodb table from growing into large amounts of storage, you can have a look at a post on <a href="https://blog.ruanbekker.com/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature/">Delete Old Items with Amazons DynamoDB TTL Feature</a> to implement that.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Python Flask Tutorial Series: Create a Hello World App]]></title>
@@ -532,137 +876,6 @@ Getting 54 Items
 </code></pre>
 
 <p>Also note that depending on how you setup your GSI, in most cases its a exact duplicate in storage from your base table, so could potentially be double the costs.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using Python Flask and JavaScript for Client Side Filtering Through Returned Data]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/10/24/using-python-flask-and-javascript-for-client-side-filtering-through-returned-data/"/>
-    <updated>2018-10-24T05:39:33-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/10/24/using-python-flask-and-javascript-for-client-side-filtering-through-returned-data</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/python-logo.png" alt="" /></p>
-
-<p>This post will cover 2 sections, using Python Flask and Javascript to filter returned data, where you could have a table that represents 100 items, and you want to have a search box to filter down your results as you type.</p>
-
-<p>The other section will be used as a demo, with solving a problem with Amazon CloudWatch Logs. I&rsquo;m a Massive AWS Fanatic, but when it comes to CloudWatch Logs, I&rsquo;m not so big of a fan of that specific service. Especially when you use Docker Swarm for AWS and have your logdriver set to CloudWatch Logs.</p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>The Problem I have with CloudWatch Logs</h2>
-
-<p>When you point to your CloudWatch LogGroups, you can search for your streams, and in my case searching for a specific swarm service, but you can&rsquo;t sort by date, like this:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/cloudwatch-logs-date-issue.png" alt="" /></p>
-
-<p>This makes it really tedious when trying to search find your logs in a quick way.</p>
-
-<h2>Python Flask to the Resque</h2>
-
-<p>We will create a Python Flask application that retrieves your data about all your Docker Swarm Services and Container Id&rsquo;s running on each node. For this demonstration, I have hard coded the services and container id&rsquo;s, but using it in a real environment, you can utilise the Docker API or some logic that retrieves it from a datastore where a process populates it to.</p>
-
-<p>The Application Code will do the following:</p>
-
-<ul>
-<li>returns a list of your swarm services (mock data in the code)</li>
-<li>when you select a service, it will get a list of the container ids and run through a for loop unsing jinja templates and display them in table format</li>
-<li>when you select the containerId, it will populate the containerId to the cloudwatch logs filter, giving you the exact logstream which you are looking for</li>
-<li><p>this will do a redirect to the AWS Console, and you will see the data in the sorted time of interest</p></li>
-<li><p><code>app.py</code></p></li>
-</ul>
-
-
-<pre><code class="python">from flask import Flask, render_template
-
-app = Flask(__name__)
-
-# faking datasets that can be returned from a api or database
-swarm_services = ['my-web-service', 'my-api-service']
-swarm_tasks = {
-    "my-web-service": {
-        "container_names": [
-            "my-web-service.1.alfjshoehfosfn",
-            "my-web-service.2.fuebchduehakjdu"
-        ]
-    },
-    "my-api-service": {
-        "container_names": [
-            "my-api-service.1.oprudhyuythvbzx",
-            "my-api-service.2.sjduebansifotuf"
-        ]
-    }
-}
-
-def get_container_name(app_name):
-    data = []
-    response = swarm_tasks[app_name]
-    for container in response['container_names']:
-        data.append(container)
-    return render_template('index.html', app_name=app_name, number=len(data), data=data)
-
-@app.route('/')
-def list():
-    return render_template('list.html', number=len(swarm_services), apps=swarm_services, aws_region='eu-west-1', cloudwatch_log_stream='docker-swarm-lg')
-
-@app.route('/describe/&lt;string:app_name&gt;')
-def get_app(app_name):
-    app = get_container_name(app_name)
-    return app
-
-if __name__ == '__main__':
-    app.run()
-</code></pre>
-
-<p>The <code>index.html</code>:</p>
-
-<script src="https://gist.github.com/ruanbekker/08b02a3ef30367ea7306a31eb5f33cb1.js"></script>
-
-
-<p>The <code>list.html</code> :</p>
-
-<script src="https://gist.github.com/ruanbekker/98eab090e218bbbf0e46d5efc1595e04.js"></script>
-
-
-<h2>Filtering the Data</h2>
-
-<p>So at this moment all your data will be returned when a list is done, if you are in a case where you have lots of information, it can be overwelming and you will need to search for the service of interest. Using HTML and JavaScript, you can filter through the results:</p>
-
-<p>The JavaScript Function: <code>assets/js/filter.js</code></p>
-
-<pre><code class="javascript">function SearchAndFilterThingy() {
-  var input, filter, table, tr, td, x;
-  input = document.getElementById("UserInput");
-  filter = input.value.toUpperCase();
-  table = document.getElementById("ServicesTable");
-  tr = table.getElementsByTagName("tr");
-
-  for (x = 0; x &lt; tr.length; x++) {
-    td = tr[x].getElementsByTagName("td")[0];
-    if (td) {
-      if (td.innerHTML.toUpperCase().indexOf(filter) &gt; -1) {
-        tr[x].style.display = "";
-      }
-      else {
-        tr[x].style.display = "none";
-      }
-    }
-  }
-}
-</code></pre>
-
-<h2>Screenshot</h2>
-
-<p>Once you search for a specific keyword on the service you are looking for the output should more or less look like the following:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/docker-flask-running-services.png" alt="" /></p>
 ]]></content>
   </entry>
   

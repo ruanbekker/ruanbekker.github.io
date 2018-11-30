@@ -75,7 +75,7 @@ Next, head over to [DynamoDB](https://eu-west-1.console.aws.amazon.com/dynamodb/
 
 Once the table is created, head over to [Lambda](https://eu-west-1.console.aws.amazon.com/lambda/home?region=eu-west-1#/create?firstrun=true) and create a Lambda function, in my case using Python 3.6 and provide a name, where I used: `url-shortener-create` and select the IAM role from the previous role that we created, this function will be the lambda function that will create the shortened urls:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-03-large.png)
+![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-03-lambda.png)
 
 The code for your lambda function which will take care of creating the short urls and save them to dynamodb, take note on the region and table name to ensure that it matches your setup:
 

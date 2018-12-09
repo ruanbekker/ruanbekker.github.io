@@ -113,7 +113,7 @@ forrest gump
 
 This was just a basic example and will be covering more topics in detail at a further stage.
 
-Next up, setting up our Python Environment, with Virtual Environment (virtualenv)
+Next up, setting up our Python Environment, with [Virtual Environment (virtualenv)](https://blog.ruanbekker.com/blog/2018/12/09/python-flask-tutorial-series-setup-a-python-virtual-environment-p2/)
 
 ## Related Content
 

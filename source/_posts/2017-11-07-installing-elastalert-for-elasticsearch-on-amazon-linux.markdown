@@ -32,6 +32,7 @@ $ sudo su
 Clone Elastalert Repository and Install Dependencies:
 
 ```bash
+$ cd /opt/
 $ git clone https://github.com/Yelp/elastalert
 $ cd elastalert/
 $ pip install -r requirements.txt
@@ -61,3 +62,39 @@ $ python -m elastalert.elastalert --verbose --rule example_frequency.yaml
 INFO:elastalert:Starting up
 ```
 
+[Systemd](https://en.wikipedia.org/wiki/Systemd) Unit File:
+
+``` /etc/systemd/system/elastalert.service
+[Unit]
+Description=Elastalert
+# executed after this
+After=syslog.target
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/elastalert
+Environment="SOME_KEY_1=value" "SOME_KEY_2=value2"
+# restart on unexpected exits
+Restart=always
+# first argument must be an absolute path, rest are arguments to it
+ExecStart=/usr/bin/python -m elastalert.elastalert --verbose --rule example_frequency.yaml
+# startup/shutdown grace period
+TimeoutSec=60
+
+[Install]
+# executed before this
+WantedBy=multi-user.target
+# Thanks:
+# https://cloudership.com/blog/2016/4/8/init-scripts-for-web-apps-on-linux-and-why-you-should-be-using-them
+```
+
+Reload, enable and start:
+
+```bash
+$ systemctl daemon-reload
+$ systemctl enable elastalert.service
+$ systemctl start elastalert.service
+```

@@ -87,7 +87,7 @@ To exit your virtualenv, you do the following:
 $ deactivate
 ```
 
-I hope this was useful, next up in our [Python Flask Tutorial Series](http://blog.ruanbekker.com/blog/categories/flask-tutorial/) will be [Routing in Flask]()
+I hope this was useful, next up in our [Python Flask Tutorial Series](http://blog.ruanbekker.com/blog/categories/flask-tutorial/) will be [Routing in Flask](https://blog.ruanbekker.com/blog/2018/12/11/python-flask-tutorial-series-routing-in-flask-p3/)
 
 <script type="text/javascript">
   ( function() {

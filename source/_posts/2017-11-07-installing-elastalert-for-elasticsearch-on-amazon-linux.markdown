@@ -64,7 +64,8 @@ INFO:elastalert:Starting up
 
 [Systemd](https://en.wikipedia.org/wiki/Systemd) Unit File:
 
-``` /etc/systemd/system/elastalert.service
+``` 
+# /etc/systemd/system/elastalert.service
 [Unit]
 Description=Elastalert
 # executed after this

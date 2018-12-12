@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "VULTR Cloud Servers Limited Singup Promotion"
+title: "VULTR Cloud Servers Limited Signup Promotion"
 date: 2018-12-12 01:00:32 -0500
 comments: true
 categories: ["vultr", "cloud", "ssd", "linux", "servers"] 

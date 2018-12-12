@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. &hellip;">
+  <meta name="description" content="In this post we will simulate a scenario where a team would like to have access to create secrets under a team path name like /security-team/prod/* &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,193 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/11/12/iam-policy-to-allow-team-wide-and-user-level-permissions-on-aws-secrets-manager/">IAM Policy to Allow Team Wide and User Level Permissions on AWS Secrets Manager</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-11-12T16:32:24-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>12</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>4:32 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post we will simulate a scenario where a team would like to have access to create secrets under a team path name like <code>/security-team/prod/*</code> and <code>/security-team/dev/*</code> and allow all the users from that team to be able to write and read secrets from that path. Then have individual users create and read secrets from their own isolated path: <code>/security-team/personal/aws-username/*</code> so they can create their personal secrets.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299";
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>Our Scenario:</h2>
+
+<ul>
+<li>Create IAM Policy</li>
+<li>Create 2 IAM Users: <code>jack.smith</code> and <code>steve.adams</code></li>
+<li>Create IAM Group, Associate IAM Policy to the Group</li>
+<li>Attach 2 Users to the Group</li>
+</ul>
+
+
+<p>The IAM Policy:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{
+</span><span class='line'>    "Version": "2012-10-17",
+</span><span class='line'>    "Statement": [
+</span><span class='line'>        {
+</span><span class='line'>            "Sid": "Stmt1541597166491",
+</span><span class='line'>            "Action": [
+</span><span class='line'>                "secretsmanager:CreateSecret",
+</span><span class='line'>                "secretsmanager:DeleteSecret",
+</span><span class='line'>                "secretsmanager:DescribeSecret",
+</span><span class='line'>                "secretsmanager:GetRandomPassword",
+</span><span class='line'>                "secretsmanager:GetSecretValue",
+</span><span class='line'>                "secretsmanager:ListSecretVersionIds",
+</span><span class='line'>                "secretsmanager:ListSecrets",
+</span><span class='line'>                "secretsmanager:PutSecretValue",
+</span><span class='line'>                "secretsmanager:TagResource",
+</span><span class='line'>                "secretsmanager:UpdateSecret"
+</span><span class='line'>            ],
+</span><span class='line'>            "Effect": "Allow",
+</span><span class='line'>            "Resource": [
+</span><span class='line'>                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/prod/*",
+</span><span class='line'>                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/dev/*",
+</span><span class='line'>                "arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/personal/${aws:username}/*"
+</span><span class='line'>            ]
+</span><span class='line'>        }
+</span><span class='line'>    ]
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Either configure the access keys and secret keys into the credential provider using aws cli, or for this demonstration I will use them inside the code. But never hardcode your credentials.</p>
+
+<h2>Create Secrets with Secrets Manager in AWS using Python Boto3</h2>
+
+<p>Instantiate user1 and user2:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;ya&#39;</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;xx&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;secretsmanager&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">steve</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;yb&#39;</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;xx&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;secretsmanager&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a team wide secret with jack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">create_secret</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/security-team/prod/app1/username&#39;</span><span class="p">,</span> <span class="n">SecretString</span><span class="o">=</span><span class="s">&#39;appreader&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span><span class="s">&#39;ResponseMetadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;RetryAttempts&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;HTTPStatusCode&#39;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span> <span class="s">&#39;RequestId&#39;</span><span class="p">:</span> <span class="s">&#39;x&#39;</span><span class="p">,</span> <span class="s">&#39;HTTPHeaders&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;date&#39;</span><span class="p">:</span> <span class="s">&#39;Thu, 08 Nov 2018 07:50:35 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;x-amzn-requestid&#39;</span><span class="p">:</span> <span class="s">&#39;x&#39;</span><span class="p">,</span> <span class="s">&#39;content-length&#39;</span><span class="p">:</span> <span class="s">&#39;193&#39;</span><span class="p">,</span> <span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;application/x-amz-json-1.1&#39;</span><span class="p">,</span> <span class="s">&#39;connection&#39;</span><span class="p">:</span> <span class="s">&#39;keep-alive&#39;</span><span class="p">}},</span> <span class="s">u&#39;VersionId&#39;</span><span class="p">:</span> <span class="s">u&#39;x&#39;</span><span class="p">,</span> <span class="s">u&#39;Name&#39;</span><span class="p">:</span> <span class="s">u&#39;/security-team/prod/app1/username&#39;</span><span class="p">,</span> <span class="s">u&#39;ARN&#39;</span><span class="p">:</span> <span class="s">u&#39;arn:aws:secretsmanager:eu-west-1:123456789012:secret:/security-team/prod/app1/username-12ABC00&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let jack and steve try to read the secret:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/prod/app1/username&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="s">&#39;appreader&#39;</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">steve</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/prod/app1/username&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="s">&#39;appreader&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let jack create a personal secret, let him read it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">create_secret</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/security-team/personal/jack.smith/svc1/password&#39;</span><span class="p">,</span> <span class="n">SecretString</span><span class="o">=</span><span class="s">&#39;secret&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">jack</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/personal/jack.smith/svc1/password&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="s">&#39;secret&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let steve try to read the secret and you will see that access is denied:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">steve</span><span class="o">.</span><span class="n">get_secret_value</span><span class="p">(</span><span class="n">SecretId</span><span class="o">=</span><span class="s">&#39;/security-team/personal/jack.smith/username&#39;</span><span class="p">)[</span><span class="s">&#39;SecretString&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">Traceback</span> <span class="p">(</span><span class="n">most</span> <span class="n">recent</span> <span class="n">call</span> <span class="n">last</span><span class="p">):</span>
+</span><span class='line'>  <span class="n">File</span> <span class="s">&quot;&lt;stdin&gt;&quot;</span><span class="p">,</span> <span class="n">line</span> <span class="mi">1</span><span class="p">,</span> <span class="ow">in</span> <span class="o">&lt;</span><span class="n">module</span><span class="o">&gt;</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'>    <span class="k">raise</span> <span class="n">error_class</span><span class="p">(</span><span class="n">parsed_response</span><span class="p">,</span> <span class="n">operation_name</span><span class="p">)</span>
+</span><span class='line'><span class="n">botocore</span><span class="o">.</span><span class="n">exceptions</span><span class="o">.</span><span class="n">ClientError</span><span class="p">:</span> <span class="n">An</span> <span class="n">error</span> <span class="n">occurred</span> <span class="p">(</span><span class="n">AccessDeniedException</span><span class="p">)</span> <span class="n">when</span> <span class="n">calling</span> <span class="n">the</span> <span class="n">GetSecretValue</span> <span class="n">operation</span><span class="p">:</span> <span class="n">User</span><span class="p">:</span> <span class="n">arn</span><span class="p">:</span><span class="n">aws</span><span class="p">:</span><span class="n">iam</span><span class="p">::</span><span class="mi">123456789012</span><span class="p">:</span><span class="n">user</span><span class="o">/</span><span class="n">steve</span><span class="o">.</span><span class="n">adams</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">authorized</span> <span class="n">to</span> <span class="n">perform</span><span class="p">:</span> <span class="n">secretsmanager</span><span class="p">:</span><span class="n">GetSecretValue</span> <span class="n">on</span> <span class="n">resource</span><span class="p">:</span> <span class="n">arn</span><span class="p">:</span><span class="n">aws</span><span class="p">:</span><span class="n">secretsmanager</span><span class="p">:</span><span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="mi">123456789012</span><span class="p">:</span><span class="n">secret</span><span class="p">:</span><span class="o">/</span><span class="n">security</span><span class="o">-</span><span class="n">team</span><span class="o">/</span><span class="n">personal</span><span class="o">/</span><span class="n">jack</span><span class="o">.</span><span class="n">smith</span><span class="o">/</span><span class="n">svc1</span><span class="o">/</span><span class="n">password</span><span class="o">-</span><span class="n">a1234b</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Thats it for this post</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2738,322 +2925,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/">Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-23T17:00:02-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>5:00 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image.</p>
-
-<p>We will then push the image to gitlab&rsquo;s private registry, and then run the service on docker swarm.</p>
-
-<h2>Create the backend service:</h2>
-
-<p>We will upstream to our blog using ghost, which you can deploy using:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create --name blog --network docknet rbekker87/armhf-ghost:2.0.3
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Current File Structure:</h2>
-
-<p>Our file structure for the assets we need to build the reverse proxy:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>find .
-</span><span class='line'>./conf.d
-</span><span class='line'>./conf.d/blog.conf
-</span><span class='line'>./Dockerfile
-</span><span class='line'>./nginx.conf
-</span></code></pre></td></tr></table></div></figure>
-
-
-<ul>
-<li><code>Dockerfile</code></li>
-</ul>
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>FROM hypriot/rpi-alpine-scratch
-</span><span class='line'>MAINTAINER Ruan Bekker
-</span><span class='line'>
-</span><span class='line'>RUN apk update <span class="o">&amp;&amp;</span> <span class="se">\</span>
-</span><span class='line'>    apk add nginx <span class="o">&amp;&amp;</span> <span class="se">\</span>
-</span><span class='line'>    rm -rf /etc/nginx/nginx.conf <span class="o">&amp;&amp;</span> <span class="se">\</span>
-</span><span class='line'>    chown -R nginx:nginx /var/lib/nginx <span class="o">&amp;&amp;</span> <span class="se">\</span>
-</span><span class='line'>    rm -rf /var/cache/apk/*
-</span><span class='line'>
-</span><span class='line'>ADD nginx.conf /etc/nginx/
-</span><span class='line'>ADD conf.d/blog.conf /etc/nginx/conf.d/
-</span><span class='line'>
-</span><span class='line'>EXPOSE 80
-</span><span class='line'>
-</span><span class='line'>CMD <span class="o">[</span><span class="s2">&quot;nginx&quot;</span>, <span class="s2">&quot;-g&quot;</span>, <span class="s2">&quot;daemon off;&quot;</span><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<ul>
-<li><code>nginx.conf</code></li>
-</ul>
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>user nginx<span class="p">;</span>
-</span><span class='line'>worker_processes 1<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>events <span class="o">{</span>
-</span><span class='line'>    worker_connections 1024<span class="p">;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>error_log  /var/log/nginx/nginx_error.log warn<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>http <span class="o">{</span>
-</span><span class='line'>
-</span><span class='line'>    sendfile        on<span class="p">;</span>
-</span><span class='line'>    tcp_nodelay         on<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    gzip              on<span class="p">;</span>
-</span><span class='line'>    gzip_http_version 1.0<span class="p">;</span>
-</span><span class='line'>    gzip_proxied      any<span class="p">;</span>
-</span><span class='line'>    gzip_min_length   500<span class="p">;</span>
-</span><span class='line'>    gzip_disable      <span class="s2">&quot;MSIE [1-6]\.&quot;</span><span class="p">;</span>
-</span><span class='line'>    gzip_types        text/plain text/xml text/css
-</span><span class='line'>                      text/comma-separated-values
-</span><span class='line'>                      text/javascript
-</span><span class='line'>                      application/x-javascript
-</span><span class='line'>                      application/atom+xml<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    log_format  main  <span class="s1">&#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;</span>
-</span><span class='line'>                      <span class="s1">&#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;</span>
-</span><span class='line'>                      <span class="s1">&#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;</span><span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    access_log  /var/log/nginx/access.log  main<span class="p">;</span>
-</span><span class='line'>    error_log   /var/log/nginx/error.log<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    proxy_cache_path /var/cache/nginx/ <span class="nv">levels</span><span class="o">=</span>1:2 <span class="nv">keys_zone</span><span class="o">=</span>nginx_cache:5m <span class="nv">max_size</span><span class="o">=</span>128m <span class="nv">inactive</span><span class="o">=</span>60m<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    keepalive_timeout  60<span class="p">;</span>
-</span><span class='line'>    server_tokens      off<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    include /etc/nginx/conf.d/*.conf<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Hostname resolution to our Ghost Blog Service: In our swarm we have a service called blog which is associated to the docknet network, so the dns resolution will resolve to the vip of the service. As seen in the figure below:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
-</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
-</span><span class='line'>nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
-</span></code></pre></td></tr></table></div></figure>
-
-
-<ul>
-<li><code>conf.d/blog.conf</code></li>
-</ul>
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>upstream ghost_blog <span class="o">{</span>
-</span><span class='line'>    server blog:2368<span class="p">;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>server <span class="o">{</span>
-</span><span class='line'>    listen 80<span class="p">;</span>
-</span><span class='line'>    server_name blog.yourdomain.com<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    access_log  /var/log/nginx/blog_access.log  main<span class="p">;</span>
-</span><span class='line'>    error_log   /var/log/nginx/blog_error.log<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>    location / <span class="o">{</span>
-</span><span class='line'>
-</span><span class='line'>        proxy_cache                 nginx_cache<span class="p">;</span>
-</span><span class='line'>        add_header                  X-Proxy-Cache <span class="nv">$upstream_cache_status</span><span class="p">;</span>
-</span><span class='line'>        proxy_ignore_headers        Cache-Control<span class="p">;</span>
-</span><span class='line'>        proxy_cache_valid any       10m<span class="p">;</span>
-</span><span class='line'>        proxy_cache_use_stale       error timeout http_500 http_502 http_503 http_504<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>        proxy_pass                  http://ghost_blog<span class="p">;</span>
-</span><span class='line'>        proxy_redirect              off<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>        proxy_set_header            Host <span class="nv">$host</span><span class="p">;</span>
-</span><span class='line'>        proxy_set_header            X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
-</span><span class='line'>        proxy_set_header            X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
-</span><span class='line'>        proxy_set_header            X-Forwarded-Host <span class="nv">$server_name</span><span class="p">;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Building the Image and Pushing to Gitlab</h2>
-
-<p>I&rsquo;m using Gitlab in this demonstration, but you can use the registry of your choice:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker login registry.gitlab.com
-</span><span class='line'><span class="nv">$ </span>docker build -t registry.gitlab.com/user/docker/arm-nginx:caching .
-</span><span class='line'><span class="nv">$ </span>docker tag registry.gitlab.com/user/docker/arm-nginx:caching registry.gitlab.com/user/docker/arm-nginx:caching
-</span><span class='line'><span class="nv">$ </span>docker push registry.gitlab.com/user/docker/arm-nginx:caching
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy</h2>
-
-<p>Create the Nginx Reverse Proxy Service on Docker Swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create --name nginx_proxy <span class="se">\</span>
-</span><span class='line'>--network docknet <span class="se">\</span>
-</span><span class='line'>--publish 80:80 <span class="se">\</span>
-</span><span class='line'>--replicas <span class="m">1</span> <span class="se">\</span>
-</span><span class='line'>--with-registry-auth registry.gitlab.com/user/docker/arm-nginx:caching
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Listing our Services:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
-</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
-</span><span class='line'>je7x21l7egoh        nginx_proxy         replicated          1/1                 registry.gitlab.com/user/docker/arm-nginx:caching   *:80-&gt;80/tcp
-</span><span class='line'>nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once you access your proxy on port 80, you should see your Ghost Blog Homepage like below:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/ghost-blog-main.png" alt="" /></p>
-
-<p>Have a look at the <a href="https://blog.ruanbekker.com/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">benchmark performance</a> when using Nginx with caching enabled</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://hub.docker.com/r/rbekker87/armhf-ghost/">https://hub.docker.com/r/rbekker87/armhf-ghost/</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -3094,6 +2965,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/12/12/vultr-cloud-servers-limited-singup-promotion/">VULTR Cloud Servers Limited Singup Promotion</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/12/11/python-flask-tutorial-series-routing-in-flask-p3/">Python Flask Tutorial Series: Routing in Flask</a>
       </li>
     
@@ -3107,10 +2982,6 @@
     
       <li class="post">
         <a href="/blog/2018/11/27/python-flask-tutorial-series-create-a-hello-world-app-p1/">Python Flask Tutorial Series: Create a Hello World App</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/11/27/introduction-to-python-flask-tutorial-series/">Introduction to Python Flask: Tutorial Series</a>
       </li>
     
   </ul>

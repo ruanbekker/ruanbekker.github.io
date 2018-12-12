@@ -6,7 +6,7 @@ comments: true
 categories: ["vultr", "cloud", "ssd", "linux", "servers"] 
 ---
 
-![](https://www.vultr.com/media/logo_ondark.png)
+![](https://user-images.githubusercontent.com/567298/49853336-78c53000-fdef-11e8-8cc2-4b7684550060.png)
 
 It's promotion time with VULTR! Get a head start with some free credits.
 

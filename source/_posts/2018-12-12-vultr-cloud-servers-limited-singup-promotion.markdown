@@ -14,7 +14,7 @@ It's promotion time with VULTR! Get a head start with some free credits.
 
 VULTR has a promotion running for a limited time, when you sign up with this link below, use the coupon / promo code: *VULTRMATCH* and you will receive double the deposit in credits for up to $100. This applies to new customers only. 
 
-I'm not quite sure how long they will be running this promotion, but I just got $100 free in credits when I signed up. That is basically *20 months free hosting* of a Cloud Server with 1CPU, 1GB RAM, 1TB Bandwidth.
+I'm not quite sure how long they will be running this promotion, but you can get $100 free in credits when you sign up. That is basically *20 months free hosting* of a Cloud Server with 1CPU, 1GB RAM, 1TB Bandwidth.
 
 Here's the link:
 

@@ -6,7 +6,7 @@ comments: true
 categories: ["vultr", "cloud", "ssd", "linux", "servers"] 
 ---
 
-![](https://www.vultr.com/media/logo_onblue.png)
+![](https://www.vultr.com/media/logo_ondark.png)
 
 It's promotion time with VULTR! Get a head start with some free credits.
 
@@ -18,7 +18,7 @@ I'm not quite sure how long they will be running this promotion, but I just got 
 
 Here's the link:
 
-<a href="https://goo.gl/hiAamd"><img src="https://www.vultr.com/media/banner_2.png" width="468" height="60"></a>
+<a href="https://goo.gl/hiAamd"><img src="https://www.vultr.com/media/banner_1.png" width="468" height="60"></a>
 
 ## About VULTR
 

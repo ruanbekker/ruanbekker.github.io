@@ -9,4 +9,4 @@ footer: true
 
 ![](https://user-images.githubusercontent.com/567298/49854721-cfcd0400-fdf3-11e8-8bc0-92f59b451173.png)
 
-Thank you for your continued support, I appreaciate it.
+Thank you for your continued support, I appreciate it.

@@ -33,8 +33,6 @@ I would like to hear from you:
 
 ## Donations
 
-If you like my content, please feel free to show interest by any of the following:
-
 Please feel free to show support by, **sharing** my content, **subscribing**, making a **donation** on any of the below platformas or **reach out to me** if you want me to demo and write up on any specific tech topic.
 
 <center>

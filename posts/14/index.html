@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Create a Nodejs Application that responds GET requests with its Hostname. Our nodejs application will sit beind a HAProxy Load Balancer, we are &hellip;">
+  <meta name="description" content="From a previous post we&rsquo;ve Setup a MongoDB Cluster, and in this post we will go through the steps of backing up a database and restoring it to &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,189 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/10/03/backup-and-restore-mutliple-collections-from-a-database-with-mongodb/">Backup and Restore Mutliple Collections From a Database With MongoDB</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-10-03T16:42:34-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>3</span><span class='date-suffix'>rd</span>, <span class='date-year'>2017</span></span> <span class='time'>4:42 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>From a previous post we&rsquo;ve  <a href="http://blog.ruanbekker.com/blog/2017/09/02/setup-a-3-node-mongodb-replica-set-on-ubuntu-16/">Setup a MongoDB Cluster</a>, and in this post we will go through the steps of backing up a database and restoring it to another mongodb cluster.</p>
+
+<p><a href="http://mlab.com/">MLab</a> offers a free Shared MongoDB Hosted Service with a limitation of 500MB, which I will be using to restore my data from my own hosted cluster to the free MLab service.</p>
+
+<h2>Create the MongoDB Backup</h2>
+
+<p>First we will need to create our backup path, and then backup our database, in my case, I am backing up my <code>rocketchat</code> database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p /opt/backups/mongodb
+</span><span class='line'><span class="nv">$ </span>mongodump --host mongodb.example.com --port <span class="m">27017</span> -u &lt;mongouser&gt; --authenticationDatabase &lt;authdb&gt; --db rocketchat --out /opt/backups/mongodb/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Change into the backup directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd</span> /opt/backups/mongodb/rocketchat/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You will find the <code>bson</code> and <code>json metadata</code> files for each collection:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ls -l <span class="p">|</span> awk <span class="s1">&#39;{print $9}&#39;</span> <span class="p">|</span> head -9
+</span><span class='line'>custom_emoji.chunks.bson
+</span><span class='line'>custom_emoji.chunks.metadata.json
+</span><span class='line'>custom_emoji.files.bson
+</span><span class='line'>custom_emoji.files.metadata.json
+</span><span class='line'>instances.bson
+</span><span class='line'>instances.metadata.json
+</span><span class='line'>meteor_accounts_loginServiceConfiguration.bson
+</span><span class='line'>meteor_accounts_loginServiceConfiguration.metadata.json
+</span><span class='line'>...
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Restore MongoDB Database</h2>
+
+<p>We will need to restore all the collections to our new mongodb service, I have created a bash script (<code>restore-mongodb.sh</code>) that will restore each collection to our <code>rocketchat</code> database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
+</span><span class='line'>
+</span><span class='line'><span class="nv">mongo_user</span><span class="o">=</span>&lt;mongouser&gt;
+</span><span class='line'><span class="nv">mongo_pass</span><span class="o">=</span>&lt;mongopass&gt;
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> file in <span class="sb">`</span>ls <span class="p">|</span> grep bson<span class="sb">`</span>
+</span><span class='line'>  <span class="k">do</span>
+</span><span class='line'>    <span class="k">for</span> collection in <span class="sb">`</span><span class="nb">echo</span> <span class="nv">$file</span> <span class="p">|</span> sed <span class="s1">&#39;s/.bson//g&#39;</span><span class="sb">`</span>
+</span><span class='line'>  <span class="k">do</span>
+</span><span class='line'>    mongorestore --host mymongoid.mlab.com --port <span class="m">12345</span> -u <span class="nv">$mongo_user</span> -p <span class="nv">$mongo_pass</span> -d rocketchat -c <span class="nv">$collection</span> <span class="nv">$file</span>
+</span><span class='line'>    sleep 2
+</span><span class='line'>  <span class="k">done</span>
+</span><span class='line'><span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Change the permissions of your script to make it executable and execute the script:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chmod +x restore-mongodb.sh
+</span><span class='line'><span class="nv">$ </span>./restore-mongodb.sh
+</span><span class='line'>
+</span><span class='line'>2017-10-03T22:05:39.138+0200    checking <span class="k">for</span> collection data in custom_emoji.chunks.bson
+</span><span class='line'>2017-10-03T22:05:39.159+0200    reading metadata <span class="k">for</span> rocketchat.custom_emoji.chunks from custom_emoji.chunks.metadata.json
+</span><span class='line'>2017-10-03T22:05:39.211+0200    restoring rocketchat.custom_emoji.chunks from custom_emoji.chunks.bson
+</span><span class='line'>2017-10-03T22:05:39.900+0200    restoring indexes <span class="k">for</span> collection rocketchat.custom_emoji.chunks from metadata
+</span><span class='line'>2017-10-03T22:05:39.922+0200    finished restoring rocketchat.custom_emoji.chunks <span class="o">(</span><span class="m">20</span> documents<span class="o">)</span>
+</span><span class='line'>2017-10-03T22:05:39.922+0200    <span class="k">done</span>
+</span><span class='line'>2017-10-03T22:05:42.188+0200    checking <span class="k">for</span> collection data in custom_emoji.files.bson
+</span><span class='line'>2017-10-03T22:05:42.231+0200    reading metadata <span class="k">for</span> rocketchat.custom_emoji.files from custom_emoji.files.metadata.json
+</span><span class='line'>2017-10-03T22:05:42.252+0200    restoring rocketchat.custom_emoji.files from custom_emoji.files.bson
+</span><span class='line'>2017-10-03T22:05:42.623+0200    restoring indexes <span class="k">for</span> collection rocketchat.custom_emoji.files from metadata
+</span><span class='line'>2017-10-03T22:05:42.645+0200    finished restoring rocketchat.custom_emoji.files <span class="o">(</span><span class="m">20</span> documents<span class="o">)</span>
+</span><span class='line'>2017-10-03T22:05:42.645+0200    <span class="k">done</span>
+</span><span class='line'>...
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Checkout the New MongoDB Database:</h2>
+
+<p>Once the restore has been done, logon to your new mongodb database and have a look at the collections in the database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo mymongoid.mlab.com:12345/rocketchat -u &lt;mongouser&gt; -p
+</span><span class='line'>MongoDB shell version v3.4.7
+</span><span class='line'>Enter password:
+</span><span class='line'>connecting to: mongodb://mymongoid.mlab.com:12345/rocketchat
+</span><span class='line'>MongoDB server version: 3.4.9
+</span><span class='line'>
+</span><span class='line'>rs-mymongoid:PRIMARY&gt; show collections
+</span><span class='line'>_raix_push_app_tokens
+</span><span class='line'>_raix_push_notifications
+</span><span class='line'>custom_emoji.chunks
+</span><span class='line'>custom_emoji.files
+</span><span class='line'>instances
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.mongodb.com/manual/reference/program/mongodump/">https://docs.mongodb.com/manual/reference/program/mongodump/</a></li>
+<li><a href="https://docs.mongodb.com/manual/reference/program/mongorestore/">https://docs.mongodb.com/manual/reference/program/mongorestore/</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1918,155 +2101,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/09/10/setup-rocketchat-on-docker-swarm/">Setup RocketChat on Docker Swarm</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-09-10T18:45:12-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>6:45 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Rocket Chat, a Self Hosted Alternative, which is very similar to Slack.</p>
-
-<p>We will setup a RocketChat Server which is hosted on Docker Swarm. In future posts, I will also go through the steps on working with the API, Custom Emoji&rsquo;s etc.</p>
-
-<h2>Requirements:</h2>
-
-<p>RocketChat uses MongoDB as its Database, we will keep the database outside of our swarm, if you don&rsquo;t already have a MongoDB Server in place, follow the <a href="http://blog.ruanbekker.com/blog/2017/09/02/setup-a-3-node-mongodb-replica-set-on-ubuntu-16/">Setup a 3 Node MongoDB</a> post to get that sorted.</p>
-
-<p>Another requirement is to have docker swarm running, alternatively, you can also follow <a href="https://rocket.chat/docs/installation/">RocketChat&rsquo;s Documentation</a> if you prefer setting it up elsewhere.</p>
-
-<h2>Setup Rocket Chat</h2>
-
-<p>We will assume MongoDB is accessible via <code>mongodb.domain.com</code> on port <code>27017</code>, with a username and password.</p>
-
-<p>Creating the RocketChat service and associate it to our <code>appnet</code> overlay network:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker service create --name rocketchat <span class="se">\</span>
-</span><span class='line'>--replicas <span class="m">1</span> <span class="se">\</span>
-</span><span class='line'>--network appnet <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">DEPLOY_METHOD</span><span class="o">=</span>docker <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">NODE_ENV</span><span class="o">=</span>production <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">PORT</span><span class="o">=</span><span class="m">3000</span> <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">MONGO_URL</span><span class="o">=</span><span class="s2">&quot;mongodb://mongoadmin:mongopass@mongodb.domain.com:27017/rocketchat?authSource=admin&quot;</span> <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">ROOT_URL</span><span class="o">=</span>http://rocketchat.domain.com <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">ADMIN_USERNAME</span><span class="o">=</span>myadmin <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">ADMIN_PASS</span><span class="o">=</span>secret <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">ADMIN_EMAIL</span><span class="o">=</span>mail@domain.com <span class="se">\</span>
-</span><span class='line'>--env <span class="nv">Accounts_AvatarStorePath</span><span class="o">=</span>/app/uploads <span class="se">\</span>
-</span><span class='line'>--secret rocketchat_secret <span class="se">\</span>
-</span><span class='line'>rocketchat/rocket.chat
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>View the RocketChat Service Logs</h2>
-
-<p>Lets monitor the docker service logs for our rocketchat service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service logs -f rocketchat
-</span><span class='line'>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Using GridFS <span class="k">for</span> custom sounds storage
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Using GridFS <span class="k">for</span> custom emoji storage
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> ufs: temp directory created at <span class="s2">&quot;/tmp/ufs&quot;</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> System startup
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> +--------------------------------------------------------------+
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>                        SERVER RUNNING                        <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> +--------------------------------------------------------------+
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>                                                              <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>  Rocket.Chat Version: 0.58.2                                 <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>       NodeJS Version: 4.8.4 - x64                            <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>             Platform: linux                                  <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>         Process Port: <span class="m">3000</span>                                   <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>             Site URL: http://rocketchat.domain.com           <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>     ReplicaSet OpLog: Disabled                               <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>          Commit Hash: 988103d449                             <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>        Commit Branch: HEAD                                   <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> <span class="p">|</span>                                                              <span class="p">|</span>
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> +--------------------------------------------------------------+
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Inserting admin user:
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Name: Administrator
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Email: mail@domain.com
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Username: myadmin
-</span><span class='line'>rocketchat.1.lnbyfjiotqpz@docker-swarm-worker-03    <span class="p">|</span> Password: secret
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now you should be able to access Rocket Chat on the <code>ROOT_URL</code> that you have specified.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://rocket.chat/docs/installation/">https://rocket.chat/docs/installation/</a></li>
-<li><a href="https://github.com/RocketChat/Docker.Official.Image">https://github.com/RocketChat/Docker.Official.Image</a></li>
-<li><a href="https://rocket.chat/docs/installation/docker-containers">https://rocket.chat/docs/installation/docker-containers</a></li>
-</ul>
-
-
-<center>
-        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/15">&larr; Older</a>
@@ -2107,6 +2141,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2018/12/18/creating-a-ui-in-python-flask-and-bootstrap-for-our-serverless-url-shortener/">Creating a UI in Python Flask and Bootstrap for Our Serverless URL Shortener</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2018/12/12/vultr-cloud-servers-limited-singup-promotion/">VULTR Cloud Servers Limited Signup Promotion</a>
       </li>
     
@@ -2120,10 +2158,6 @@
     
       <li class="post">
         <a href="/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws/">How to Setup a Serverless URL Shortener With API Gateway Lambda and DynamoDB on AWS</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2018/11/27/python-flask-tutorial-series-create-a-hello-world-app-p1/">Python Flask Tutorial Series: Create a Hello World App</a>
       </li>
     
   </ul>

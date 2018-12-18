@@ -15,6 +15,8 @@ The service that we will be creating, will shorten URLs via our API which will c
 
 Note, I am using a domain name which is quite long, but its only for demonstration, if you can get hold of any short domains like `t.co` etc, that will make your Shortened URLs really short in character count. 
 
+Update: URL Shortener UI [available in this post](https://blog.ruanbekker.com/blog/2018/12/18/creating-a-ui-in-python-flask-and-bootstrap-for-our-serverless-url-shortener/)
+
 ## The Setup
 
 The following services will be used to create a URL Shortener:

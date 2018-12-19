@@ -10,6 +10,8 @@ categories: ["devops", "cicd", "pipelines", "gitlab"]
 
 In this tutorial we will setup a Basic CI (Continuous Integration) Pipeline on Gitlab. 
 
+The code for this example is available on [gitlab.com/rbekker87/demo-ci-basic-pipeline](https://gitlab.com/rbekker87/demo-ci-basic-pipeline).
+
 If you would like to read more on [Continuous Integration / Continuous Deliver (CI/CD)](https://www.atlassian.com/continuous-delivery/continuous-integration). 
 
 ## What will we be doing?

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Devops | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/devops/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-12-19T08:42:30-05:00</updated>
+  <updated>2018-12-20T05:09:05-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,169 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Gitlab Runner on Your Own Server to Run Your Jobs That Gets Triggered From Gitlab CI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci/"/>
+    <updated>2018-12-20T04:21:16-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
+
+<p>From our previous post, we went through the setup on setting up a <a href="https://blog.ruanbekker.com/blog/2018/12/19/setup-a-basic-ci-pipeline-on-gitlab/">Basic CI Pipeline on Gitlab</a>, in conjunction with Gitlab CI which coordinates your jobs, where we used the Shared Runners, which runs your jobs on Gitlab&rsquo;s Infrastructure.</p>
+
+<p>In Gitlab, you have Shared Runners and your Own Runners, which is used to run your jobs and send the results back to GitLab.</p>
+
+<p>In this tutorial we will Setup a Server with gitlab-runner and Docker on Ubuntu and then Setup a Basic Pipeline to Utilize your Gitlab Runner.</p>
+
+<h2>Setup Docker</h2>
+
+<p>Install Docker:</p>
+
+<pre><code class="bash">$ sudo apt update &amp;&amp; sudo apt upgrade -y
+$ sudo apt-get install apt-transport-https ca-certificates curl software-properties-common -y
+$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+$ sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+
+$ sudo apt update
+$ sudo apt install docker-ce -y
+$ docker run hello-world
+</code></pre>
+
+<h2>Install and Setup Gitlab Runner</h2>
+
+<p>This setup is intended for Linux 64bit, for other distributions, have a look at their <a href="https://docs.gitlab.com/runner/install/">docs</a></p>
+
+<p>Install the Runner:</p>
+
+<pre><code class="bash">$ wget -O /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+$ chmod +x /usr/local/bin/gitlab-runner
+$ useradd --comment 'GitLab Runner' --create-home gitlab-runner --shell /bin/bash
+$ gitlab-runner install --user=gitlab-runner --working-directory=/home/gitlab-runner
+$ gitlab-runner start
+</code></pre>
+
+<p>Register the Runner. The Gitlab-CI Token is available in your CI/CD Settings panel from the UI: <code>https://gitlab.com/&lt;account&gt;/&lt;repo&gt;/settings/ci_cd</code></p>
+
+<pre><code class="bash">$ gitlab-runner register
+Please enter the gitlab-ci coordinator URL (e.g. https://gitlab.com/):
+https://gitlab.com/
+
+Please enter the gitlab-ci token for this runner:
+__masked__
+
+Please enter the gitlab-ci description for this runner:
+Please enter the gitlab-ci tags for this runner (comma separated):
+my-runner,foobar
+Registering runner... succeeded                     runner=66m_339h
+
+Please enter the executor: docker-ssh+machine, docker, docker-ssh, parallels, shell, ssh, virtualbox, docker+machine, kubernetes:
+docker
+
+Please enter the default Docker image (e.g. ruby:2.1):
+alpine:latest
+
+Runner registered successfully. Feel free to start it, but if it's running already the config should be automatically reloaded!
+</code></pre>
+
+<p>Verify the Status and check if Docker and Gitlab Runner is enabled on startup:</p>
+
+<pre><code class="bash">$ gitlab-runner status
+Runtime platform                                    arch=amd64 os=linux pid=30363 revision=7f00c780 version=11.5.1
+gitlab-runner: Service is running!
+
+$ systemctl is-enabled gitlab-runner
+enabled
+
+$ systemctl is-enabled docker
+enabled
+</code></pre>
+
+<h2>Gitlab-CI Config for Shared Runners</h2>
+
+<p>If you would like to use the shared runners that Gitlab Offers, the <code>.gitlab-ci.yml</code> config will look like this:</p>
+
+<pre><code class="yaml">stages:
+  - build
+  - test
+
+build:
+  stage: build
+  script:
+    - echo "this is building"
+    - hostname
+    - mkdir builds
+    - touch builds/data.txt
+    - echo "true" &gt; builds/data.txt
+  artifacts:
+    paths:
+      - builds/
+
+test:
+  stage: test
+  script:
+    - echo "this is testing"
+    - hostname
+    - test -f builds/data.txt
+    - grep "true" builds/data.txt
+</code></pre>
+
+<h2>Gitlab-CI Config for your own Gitlab Runner</h2>
+
+<p>Gitlab utilizes the tags that was specified on registration to determine where the jobs gets executed on, for more information on this, have a look at their <a href="https://docs.gitlab.com/ce/ci/yaml/README.html#tags">docs</a></p>
+
+<p>The <code>.gitlab-ci.yml</code> config for using your gitlab runner:</p>
+
+<pre><code class="yaml">stages:
+  - build
+  - test
+
+build:
+  stage: build
+  tags:
+    - my-runner
+  script:
+    - echo "this is building"
+    - hostname
+    - mkdir builds
+    - touch builds/data.txt
+    - echo "true" &gt; builds/data.txt
+  artifacts:
+    paths:
+      - builds/
+
+test:
+  stage: test
+  tags:
+    - my-runner
+  script:
+    - echo "this is testing"
+    - hostname
+    - test -f builds/data.txt
+    - grep "true" builds/data.txt
+</code></pre>
+
+<h2>Trigger and Check Docker</h2>
+
+<p>Commit the config to master, let your pipeline run their jobs upon completion have a look at docker on your server for the containers that the jobs ran on:</p>
+
+<pre><code class="bash">$ docker ps -a
+CONTAINER ID        IMAGE               COMMAND                  CREATED              STATUS                          PORTS               NAMES
+04292a78de0b        c04b8be95e1e        "gitlab-runner-cache.."  About a minute ago   Exited (0) About a minute ago                       runner-xx-project-xx-concurrent-0-cache-3cxx0
+49b1b3c4adf9        c04b8be95e1e        "gitlab-runner-cache.."  About a minute ago   Exited (0) About a minute ago                       runner-xx-project-xx-concurrent-0-cache-6cxxa
+422b23191e8c        hello-world         "/hello"                 24 minutes ago       Exited (0) 24 minutes ago                           wizardly_meninsky
+</code></pre>
+
+<p>As we know each job gets executed in different containers, you can see from the output above that there was 2 different containers for the 2 jobs that was specified in our pipeline.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.gitlab.com/ee/ci/quick_start/">https://docs.gitlab.com/ee/ci/quick_start/</a></li>
+<li><a href="https://docs.gitlab.com/ee/ci/runners/">https://docs.gitlab.com/ee/ci/runners/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Basic CI Pipeline on Gitlab]]></title>
@@ -435,214 +598,6 @@ web-1                      : ok=4    changed=1    unreachable=0    failed=0
 
 Deployed with Ansible
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Getting Started With Ansible on Ubuntu]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/07/08/getting-started-with-ansible-on-ubuntu/"/>
-    <updated>2018-07-08T15:56:06-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/07/08/getting-started-with-ansible-on-ubuntu</id>
-    <content type="html"><![CDATA[<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1531083331/ansible_tojf8l.png" alt="" /></p>
-
-<p><a href="">Part 1</a> - This is a getting started series on Ansible.</p>
-
-<p>The first post will be on how to setup ansible and how to reach your nodes in order to deploy software to your nodes.</p>
-
-<h2>Install Ansible:</h2>
-
-<p>Ansible relies on python, so we will first install the dependencies:</p>
-
-<pre><code class="bash">$ apt update &amp;&amp; apt install python python-setuptools -y
-$ easy_install pip
-$ pip install ansible
-</code></pre>
-
-<h2>Populate the invetory configuration:</h2>
-
-<p>Your invetory file will hold your host and variable information. Lets say we have 3 nodes that we want to deploy software to; <code>node-1</code>, <code>node-2</code> and <code>node-3</code>. We will group them under <code>nodes</code>. This will be saved under the a new file <code>inventory.init</code>:</p>
-
-<pre><code class="bash inventory.ini">[nodes]
-node-1
-node-2
-node-3
-</code></pre>
-
-<p>Next we will populate information about our node names, this will be done under our <code>~/.ssh/config</code> configuration:</p>
-
-<p>```bash ~/.ssh/config
-Host node-1
-  Hostname 10.0.0.2
-  User root
-  IdentityFile ~/.ssh/id_rsa
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null</p>
-
-<p>Host node-2
-  Hostname 10.0.0.3
-  User root
-  IdentityFile ~/.ssh/id_rsa
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null</p>
-
-<p>Host node-3
-  Hostname 10.0.0.4
-  User root
-  IdentityFile ~/.ssh/id_rsa
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-```</p>
-
-<p>Now we need to generate a ssh key for our node where we will run our ansible commands from:</p>
-
-<pre><code class="bash">$ ssh-keygen -b 2048 -f ~/.ssh/id_rsa -t rsa -q -N ""
-</code></pre>
-
-<p>Now we will copy the contents of <code>~/.ssh/id_rsa.pub</code> into our destination nodes <code>~/.ssh/authorized_keys</code> or if you have password authentication enabled, we can do <code>$ ssh-copy-id root@10.0.0.x</code> etc. Now we should be able to ssh to our nodes to <code>node-1, node-2</code> and <code>node-3</code>.</p>
-
-<h2>Deploy Python:</h2>
-
-<p>As Ansible requires Python, we need to bootstrap our nodes with Python. Since we are able to ssh to our nodes, we will use ansible to deploy Python to our nodes:</p>
-
-<pre><code class="bash">$ ansible -m raw -s -a "apt update &amp;&amp; apt install python -y" -i inventory.ini nodes
-</code></pre>
-
-<p>This should succeed, then we can test our connection by running the ping module:</p>
-
-<pre><code class="bash">$ ansible -i inventory.ini nodes -m ping
-node-2 | SUCCESS =&gt; {
-    "changed": false,
-    "ping": "pong"
-}
-node-3 | SUCCESS =&gt; {
-    "changed": false,
-    "ping": "pong"
-}
-node-1 | SUCCESS =&gt; {
-    "changed": false,
-    "ping": "pong"
-}
-</code></pre>
-
-<h2>Run a command on your nodes:</h2>
-
-<p>Let&rsquo;s run a cat command on all the nodes:</p>
-
-<pre><code class="bash">$ ansible -i inventory.ini nodes -a "/bin/cat /etc/hostname"
-node-3 | SUCCESS | rc=0 &gt;&gt;
-node-3
-
-node-1 | SUCCESS | rc=0 &gt;&gt;
-node-1
-
-node-2 | SUCCESS | rc=0 &gt;&gt;
-node-2
-</code></pre>
-
-<h2>Ansible Playbooks:</h2>
-
-<p>Let&rsquo;s run shell commands, the traditional hello world, using the ansible-playbook command. First we need a task definition, which I will name <code>shell_command-1.yml</code>:</p>
-
-<pre><code class="bash shell_command.yml">---
-# Echo Static String
-- hosts: nodes
-  tasks:
-  - name: echo static value
-    shell: /bin/echo "hello world"
-    register: echo_static
-  - debug: msg=""
-</code></pre>
-
-<p>Now we have defined that our commands will be executed against the host group defined in our inventory.ini. Let&rsquo;s run our ansible playbook command:</p>
-
-<pre><code class="bash">$ ansible-playbook -i inventory.ini shell_command.yml
-
-PLAY [nodes] *************************************************************************************
-
-TASK [Gathering Facts] **********************************************************************************
-ok: [node-1]
-ok: [node-2]
-ok: [node-3]
-
-TASK [echo static value] ********************************************************************************
-changed: [node-1]
-changed: [node-2]
-changed: [node-3]
-
-TASK [debug] ********************************************************************************************
-ok: [node-1] =&gt; {
-    "msg": "hello world"
-}
-ok: [node-2] =&gt; {
-    "msg": "hello world"
-}
-ok: [node-3] =&gt; {
-    "msg": "hello world"
-}
-
-PLAY RECAP **********************************************************************************************
-node-1              : ok=3    changed=1    unreachable=0    failed=0
-node-2              : ok=3    changed=1    unreachable=0    failed=0
-node-3              : ok=3    changed=1    unreachable=0    failed=0
-</code></pre>
-
-<p>Let&rsquo;s define a variable <code>location_city = Cape Town</code> in our <code>inventory.ini</code> configuration, then we will call the variable key in our task definition:</p>
-
-<pre><code class="bash inventory.ini">[nodes]
-node-1
-node-2
-node-3
-
-[nodes:vars]
-location_city="Cape Town"
-</code></pre>
-
-<p>Now our task definition with our variable:</p>
-
-<pre><code class="yml shell_command-2.yml">---
-# Echo Variable
-- hosts: nodes
-  tasks:
-  - name: echo variable value
-    shell: /bin/echo ""
-    register: echo
-  - debug: msg=""
-</code></pre>
-
-<p>Running our ansible-playbook:</p>
-
-<pre><code class="bash">$ ansible-playbook -i inventory.ini shell_command.yml
-
-PLAY [nodes] **************************************************************************************************************************************************************************************
-
-TASK [Gathering Facts] ***********************************************************************************************************************************************************************************
-ok: [node-1]
-ok: [node-2]
-ok: [node-3]
-
-TASK [echo variable value] *******************************************************************************************************************************************************************************
-changed: [node-1]
-changed: [node-2]
-changed: [node-3]
-
-TASK [debug] *********************************************************************************************************************************************************************************************
-ok: [node-1] =&gt; {
-    "msg": "Cape Town"
-}
-ok: [node-2] =&gt; {
-    "msg": "Cape Town"
-}
-ok: [node-3] =&gt; {
-    "msg": "Cape Town"
-}
-
-PLAY RECAP ***********************************************************************************************************************************************************************************************
-node-1              : ok=3    changed=1    unreachable=0    failed=0
-node-2              : ok=3    changed=1    unreachable=0    failed=0
-node-3              : ok=3    changed=1    unreachable=0    failed=0
-</code></pre>
-
-<p>This is it for this post, all posts for this tutorial will be posted under <a href="http://blog.ruanbekker.com/blog/categories/ansible-tutorial">#ansible-tutorials</a></p>
 ]]></content>
   </entry>
   

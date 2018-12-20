@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-12-19T08:42:30-05:00</updated>
+  <updated>2018-12-20T05:09:05-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,169 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Gitlab Runner on Your Own Server to Run Your Jobs That Gets Triggered From Gitlab CI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci/"/>
+    <updated>2018-12-20T04:21:16-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
+
+<p>From our previous post, we went through the setup on setting up a <a href="https://blog.ruanbekker.com/blog/2018/12/19/setup-a-basic-ci-pipeline-on-gitlab/">Basic CI Pipeline on Gitlab</a>, in conjunction with Gitlab CI which coordinates your jobs, where we used the Shared Runners, which runs your jobs on Gitlab&rsquo;s Infrastructure.</p>
+
+<p>In Gitlab, you have Shared Runners and your Own Runners, which is used to run your jobs and send the results back to GitLab.</p>
+
+<p>In this tutorial we will Setup a Server with gitlab-runner and Docker on Ubuntu and then Setup a Basic Pipeline to Utilize your Gitlab Runner.</p>
+
+<h2>Setup Docker</h2>
+
+<p>Install Docker:</p>
+
+<pre><code class="bash">$ sudo apt update &amp;&amp; sudo apt upgrade -y
+$ sudo apt-get install apt-transport-https ca-certificates curl software-properties-common -y
+$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+$ sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+
+$ sudo apt update
+$ sudo apt install docker-ce -y
+$ docker run hello-world
+</code></pre>
+
+<h2>Install and Setup Gitlab Runner</h2>
+
+<p>This setup is intended for Linux 64bit, for other distributions, have a look at their <a href="https://docs.gitlab.com/runner/install/">docs</a></p>
+
+<p>Install the Runner:</p>
+
+<pre><code class="bash">$ wget -O /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+$ chmod +x /usr/local/bin/gitlab-runner
+$ useradd --comment 'GitLab Runner' --create-home gitlab-runner --shell /bin/bash
+$ gitlab-runner install --user=gitlab-runner --working-directory=/home/gitlab-runner
+$ gitlab-runner start
+</code></pre>
+
+<p>Register the Runner. The Gitlab-CI Token is available in your CI/CD Settings panel from the UI: <code>https://gitlab.com/&lt;account&gt;/&lt;repo&gt;/settings/ci_cd</code></p>
+
+<pre><code class="bash">$ gitlab-runner register
+Please enter the gitlab-ci coordinator URL (e.g. https://gitlab.com/):
+https://gitlab.com/
+
+Please enter the gitlab-ci token for this runner:
+__masked__
+
+Please enter the gitlab-ci description for this runner:
+Please enter the gitlab-ci tags for this runner (comma separated):
+my-runner,foobar
+Registering runner... succeeded                     runner=66m_339h
+
+Please enter the executor: docker-ssh+machine, docker, docker-ssh, parallels, shell, ssh, virtualbox, docker+machine, kubernetes:
+docker
+
+Please enter the default Docker image (e.g. ruby:2.1):
+alpine:latest
+
+Runner registered successfully. Feel free to start it, but if it's running already the config should be automatically reloaded!
+</code></pre>
+
+<p>Verify the Status and check if Docker and Gitlab Runner is enabled on startup:</p>
+
+<pre><code class="bash">$ gitlab-runner status
+Runtime platform                                    arch=amd64 os=linux pid=30363 revision=7f00c780 version=11.5.1
+gitlab-runner: Service is running!
+
+$ systemctl is-enabled gitlab-runner
+enabled
+
+$ systemctl is-enabled docker
+enabled
+</code></pre>
+
+<h2>Gitlab-CI Config for Shared Runners</h2>
+
+<p>If you would like to use the shared runners that Gitlab Offers, the <code>.gitlab-ci.yml</code> config will look like this:</p>
+
+<pre><code class="yaml">stages:
+  - build
+  - test
+
+build:
+  stage: build
+  script:
+    - echo "this is building"
+    - hostname
+    - mkdir builds
+    - touch builds/data.txt
+    - echo "true" &gt; builds/data.txt
+  artifacts:
+    paths:
+      - builds/
+
+test:
+  stage: test
+  script:
+    - echo "this is testing"
+    - hostname
+    - test -f builds/data.txt
+    - grep "true" builds/data.txt
+</code></pre>
+
+<h2>Gitlab-CI Config for your own Gitlab Runner</h2>
+
+<p>Gitlab utilizes the tags that was specified on registration to determine where the jobs gets executed on, for more information on this, have a look at their <a href="https://docs.gitlab.com/ce/ci/yaml/README.html#tags">docs</a></p>
+
+<p>The <code>.gitlab-ci.yml</code> config for using your gitlab runner:</p>
+
+<pre><code class="yaml">stages:
+  - build
+  - test
+
+build:
+  stage: build
+  tags:
+    - my-runner
+  script:
+    - echo "this is building"
+    - hostname
+    - mkdir builds
+    - touch builds/data.txt
+    - echo "true" &gt; builds/data.txt
+  artifacts:
+    paths:
+      - builds/
+
+test:
+  stage: test
+  tags:
+    - my-runner
+  script:
+    - echo "this is testing"
+    - hostname
+    - test -f builds/data.txt
+    - grep "true" builds/data.txt
+</code></pre>
+
+<h2>Trigger and Check Docker</h2>
+
+<p>Commit the config to master, let your pipeline run their jobs upon completion have a look at docker on your server for the containers that the jobs ran on:</p>
+
+<pre><code class="bash">$ docker ps -a
+CONTAINER ID        IMAGE               COMMAND                  CREATED              STATUS                          PORTS               NAMES
+04292a78de0b        c04b8be95e1e        "gitlab-runner-cache.."  About a minute ago   Exited (0) About a minute ago                       runner-xx-project-xx-concurrent-0-cache-3cxx0
+49b1b3c4adf9        c04b8be95e1e        "gitlab-runner-cache.."  About a minute ago   Exited (0) About a minute ago                       runner-xx-project-xx-concurrent-0-cache-6cxxa
+422b23191e8c        hello-world         "/hello"                 24 minutes ago       Exited (0) 24 minutes ago                           wizardly_meninsky
+</code></pre>
+
+<p>As we know each job gets executed in different containers, you can see from the output above that there was 2 different containers for the 2 jobs that was specified in our pipeline.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.gitlab.com/ee/ci/quick_start/">https://docs.gitlab.com/ee/ci/quick_start/</a></li>
+<li><a href="https://docs.gitlab.com/ee/ci/runners/">https://docs.gitlab.com/ee/ci/runners/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Local Dev Environment for Wordpress Using Docker Compose]]></title>
@@ -604,280 +767,6 @@ networks:
 <li><a href="https://github.com/ruanbekker/ghost-armhf">https://github.com/ruanbekker/ghost-armhf</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Build a Traefik Proxy Image for Your Raspberry Pi on Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/"/>
-    <updated>2018-10-23T17:31:02-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/traefik-logo-routing.png" alt="" /></p>
-
-<p>In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our Raspberry Pi Docker Swarm.</p>
-
-<p>Then we will build and push our image to a registry, then setup traefik and also setup a web application that sits behind our Traefik Proxy.</p>
-
-<h2>What is Traefik</h2>
-
-<p><a href="https://traefik.io/">Traefik</a> is a modern load balancer and reverse proxy built for micro services.</p>
-
-<h2>Dockerfile</h2>
-
-<p>We will be running Traefik on Alpine 3.8:</p>
-
-<pre><code class="dockerfile">FROM rbekker87/armhf-alpine:3.8
-
-ENV TRAEFIK_VERSION 1.7.0-rc3
-ENV ARCH arm
-
-ADD https://github.com/containous/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_linux-${ARCH} /traefik
-
-RUN apk add --no-cache ca-certificates \
-    &amp;&amp; chmod +x /traefik \
-    &amp;&amp; rm -rf /var/cache/apk/*
-
-EXPOSE 80 8080 443
-
-ENTRYPOINT ["/traefik"]
-</code></pre>
-
-<h2>Build and Push</h2>
-
-<p>Build and Push your image to your registry of choice:</p>
-
-<pre><code class="bash">$ docker build -t your-user/repo:tag .
-$ docker push your-user/repo:tag
-</code></pre>
-
-<p>If you do not want to push to a registry, I have a public image available at <a href="https://hub.docker.com/r/rbekker87/armhf-traefik/">https://hub.docker.com/r/rbekker87/armhf-traefik/</a>, the image itself is <code>rbekker87/armhf-traefik:1.7.0-rc3</code></p>
-
-<h2>Deploy Traefik to the Swarm</h2>
-
-<p>From our <code>traefik-compose.yml</code>, you will notice that I have set that our network is external, so the network should exist prior to deploying the stack.</p>
-
-<p>Let&rsquo;s create the overlay network:</p>
-
-<pre><code class="bash">$ docker network create --driver overlay appnet
-</code></pre>
-
-<p>Below, the <code>traefik-compose.yml</code>, note that I&rsquo;m using pistack.co.za as my domain:</p>
-
-<pre><code class="yml">version: "3.4"
-
-services:
-  traefik: 
-    image: rbekker87/armhf-traefik:1.7.0-rc3
-    command:
-      - "--api"
-      - "--docker"
-      - "--docker.swarmmode"
-      - "--docker.domain=pistack.co.za"
-      - "--docker.watch"
-      - "--logLevel=DEBUG"
-      - "--web"
-    networks:
-      - appnet
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - 80:80
-      - 8080:8080
-    deploy:
-      mode: global
-      restart_policy:
-        condition: on-failure
-      placement:
-        constraints: [node.role == manager]
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<p>Deploy the stack:</p>
-
-<pre><code class="bash">$ docker stack deploy -c traefik-compose.yml proxy
-</code></pre>
-
-<p>List the stacks:</p>
-
-<pre><code class="bash">$ docker stack ls
-NAME                SERVICES
-proxy               1
-</code></pre>
-
-<p>Check if the services in your stack is running. Since our deploy mode was global, there will be a replica running on each node, and in my swarm I&rsquo;ve got 3 nodes:</p>
-
-<pre><code class="bash">$ docker stack services proxy
-ID                  NAME                MODE                REPLICAS            IMAGE                    PORTS
-16x31j7o0f0r        proxy_traefik       global              3/3                 rbekker87/armhf-traefik:1.7.0-rc3   *:80-&gt;80/tcp,*:8080-&gt;8080/tcp
-</code></pre>
-
-<h2>Deploy a Web Service hooked up to Traefik</h2>
-
-<p>Pre-Requirement:</p>
-
-<p>To register subdomains on the fly, set you DNS for your domain to the following (im using pistack.co.za in this example):</p>
-
-<ul>
-<li><code>pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
-<li><code>*.pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
-</ul>
-
-
-<p>Next, we will deploy we app that will be associated to our Traefik service domain, so we will inform Traefik that our web app fqdn and port that will be registered with the proxy.</p>
-
-<p>Our <code>app-compose.yml</code> file for our webapp:</p>
-
-<pre><code class="yml">version: "3.4"
-
-services:
-  whoami:
-    image: rbekker87/golang-whoami:alpine-amrhf
-    networks:
-      - appnet
-    deploy:
-      replicas: 3
-      labels:
-        - "traefik.backend=whoami"
-        - "traefik.port=80"
-        - "traefik.frontend.rule=Host:whoami.pistack.co.za"
-      update_config:
-        parallelism: 1
-        delay: 10s
-      restart_policy:
-        condition: on-failure
-      placement:
-        constraints: [node.role == worker]
-    healthcheck:
-      test: nc -vz 127.0.0.1 80 || exit 1
-      interval: 60s
-      timeout: 3s
-      retries: 3
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<p>In the above compose, you will notice that our traefik backend is set to our service name, our port is the port that the proxy will forward requests to the containers port, since the proxy and the whoami container is in the same network, they will be able to communicate with each other. Then we also have our frontend rule which will be the endpoint we will reach our application on.</p>
-
-<p>Deploy the stack:</p>
-
-<pre><code class="bash">$ docker stack deploy -c whoami.yml web
-Creating service web_whoami
-</code></pre>
-
-<p>List the tasks running in our web stack:</p>
-
-<pre><code class="bash">$ docker stack services web
-ID                  NAME                MODE                REPLICAS            IMAGE                                  PORTS
-31ylfcfb7uyw        web_whoami          replicated          3/3                 rbekker87/golang-whoami:alpine-amrhf
-</code></pre>
-
-<p>Once all the replicas is running, move along to test the application</p>
-
-<h2>Testing our Application:</h2>
-
-<p>I have 3 replicas each running on their own container, so each container will respond with its own hostname:</p>
-
-<pre><code class="bash">$ docker service ps web_whoami
-ID                  NAME                IMAGE                                  NODE                DESIRED STATE       CURRENT STATE            ERROR                              PORTS
-ivn8fgfosvgd        web_whoami.1        rbekker87/golang-whoami:alpine-amrhf   rpi-01              Running             Running 26 minutes ago
-rze6u6z56aop        web_whoami.2        rbekker87/golang-whoami:alpine-amrhf   rpi-02              Running             Running 26 minutes ago
-6fjua869r498        web_whoami.3        rbekker87/golang-whoami:alpine-amrhf   rpi-04              Running             Running 23 minutes ago
-</code></pre>
-
-<p>Making our 1st GET request:</p>
-
-<pre><code class="bash">$ $ curl http://whoami.pistack.co.za/
-Hostname: 43f5f0a6682f
-IP: 127.0.0.1
-IP: 10.0.0.138
-IP: 10.0.0.218
-IP: 172.18.0.4
-GET / HTTP/1.1
-Host: whoami.pistack.co.za
-User-Agent: curl/7.38.0
-Accept: */*
-Accept-Encoding: gzip
-X-Forwarded-For: 165.73.96.95, 10.255.0.2
-X-Forwarded-Host: whoami.pistack.co.za
-X-Forwarded-Port: 80
-X-Forwarded-Proto: http
-X-Forwarded-Server: 31b37f9714d3
-X-Real-Ip: 10.255.0.2
-</code></pre>
-
-<p>Our 2nd GET Request:</p>
-
-<pre><code class="bash">$ curl http://whoami.pistack.co.za/
-Hostname: d1c17a476414
-IP: 127.0.0.1
-IP: 10.0.0.138
-IP: 10.0.0.71
-IP: 172.19.0.5
-GET / HTTP/1.1
-Host: whoami.pistack.co.za
-User-Agent: curl/7.38.0
-Accept: */*
-Accept-Encoding: gzip
-X-Forwarded-For: 165.73.96.95, 10.255.0.2
-X-Forwarded-Host: whoami.pistack.co.za
-X-Forwarded-Port: 80
-X-Forwarded-Proto: http
-X-Forwarded-Server: 02b0ff6eab73
-X-Real-Ip: 10.255.0.2
-</code></pre>
-
-<p>And our 3rd GET Request:</p>
-
-<pre><code>$ curl http://whoami.pistack.co.za/
-Hostname: 17c817a1813b
-IP: 172.18.0.6
-IP: 127.0.0.1
-IP: 10.0.0.138
-IP: 10.0.0.73
-GET / HTTP/1.1
-Host: whoami.pistack.co.za
-User-Agent: curl/7.38.0
-Accept: */*
-Accept-Encoding: gzip
-X-Forwarded-For: 165.73.96.95, 10.255.0.2
-X-Forwarded-Host: whoami.pistack.co.za
-X-Forwarded-Port: 80
-X-Forwarded-Proto: http
-X-Forwarded-Server: 31b37f9714d3
-X-Real-Ip: 10.255.0.2
-</code></pre>
-
-<p>Hope this was useful.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://hub.docker.com/r/rbekker87/armhf-traefik/tags/">https://hub.docker.com/r/rbekker87/armhf-traefik/tags/</a></li>
-<li><a href="https://github.com/containous/traefik/releases">https://github.com/containous/traefik/releases</a></li>
-<li><a href="https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile">https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile</a></li>
-</ul>
-
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-<p></p>
 ]]></content>
   </entry>
   

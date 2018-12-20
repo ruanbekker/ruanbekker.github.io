@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Ci | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/ci/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2018-12-19T08:42:30-05:00</updated>
+  <updated>2018-12-20T05:09:05-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,169 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Gitlab Runner on Your Own Server to Run Your Jobs That Gets Triggered From Gitlab CI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci/"/>
+    <updated>2018-12-20T04:21:16-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
+
+<p>From our previous post, we went through the setup on setting up a <a href="https://blog.ruanbekker.com/blog/2018/12/19/setup-a-basic-ci-pipeline-on-gitlab/">Basic CI Pipeline on Gitlab</a>, in conjunction with Gitlab CI which coordinates your jobs, where we used the Shared Runners, which runs your jobs on Gitlab&rsquo;s Infrastructure.</p>
+
+<p>In Gitlab, you have Shared Runners and your Own Runners, which is used to run your jobs and send the results back to GitLab.</p>
+
+<p>In this tutorial we will Setup a Server with gitlab-runner and Docker on Ubuntu and then Setup a Basic Pipeline to Utilize your Gitlab Runner.</p>
+
+<h2>Setup Docker</h2>
+
+<p>Install Docker:</p>
+
+<pre><code class="bash">$ sudo apt update &amp;&amp; sudo apt upgrade -y
+$ sudo apt-get install apt-transport-https ca-certificates curl software-properties-common -y
+$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+$ sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+
+$ sudo apt update
+$ sudo apt install docker-ce -y
+$ docker run hello-world
+</code></pre>
+
+<h2>Install and Setup Gitlab Runner</h2>
+
+<p>This setup is intended for Linux 64bit, for other distributions, have a look at their <a href="https://docs.gitlab.com/runner/install/">docs</a></p>
+
+<p>Install the Runner:</p>
+
+<pre><code class="bash">$ wget -O /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+$ chmod +x /usr/local/bin/gitlab-runner
+$ useradd --comment 'GitLab Runner' --create-home gitlab-runner --shell /bin/bash
+$ gitlab-runner install --user=gitlab-runner --working-directory=/home/gitlab-runner
+$ gitlab-runner start
+</code></pre>
+
+<p>Register the Runner. The Gitlab-CI Token is available in your CI/CD Settings panel from the UI: <code>https://gitlab.com/&lt;account&gt;/&lt;repo&gt;/settings/ci_cd</code></p>
+
+<pre><code class="bash">$ gitlab-runner register
+Please enter the gitlab-ci coordinator URL (e.g. https://gitlab.com/):
+https://gitlab.com/
+
+Please enter the gitlab-ci token for this runner:
+__masked__
+
+Please enter the gitlab-ci description for this runner:
+Please enter the gitlab-ci tags for this runner (comma separated):
+my-runner,foobar
+Registering runner... succeeded                     runner=66m_339h
+
+Please enter the executor: docker-ssh+machine, docker, docker-ssh, parallels, shell, ssh, virtualbox, docker+machine, kubernetes:
+docker
+
+Please enter the default Docker image (e.g. ruby:2.1):
+alpine:latest
+
+Runner registered successfully. Feel free to start it, but if it's running already the config should be automatically reloaded!
+</code></pre>
+
+<p>Verify the Status and check if Docker and Gitlab Runner is enabled on startup:</p>
+
+<pre><code class="bash">$ gitlab-runner status
+Runtime platform                                    arch=amd64 os=linux pid=30363 revision=7f00c780 version=11.5.1
+gitlab-runner: Service is running!
+
+$ systemctl is-enabled gitlab-runner
+enabled
+
+$ systemctl is-enabled docker
+enabled
+</code></pre>
+
+<h2>Gitlab-CI Config for Shared Runners</h2>
+
+<p>If you would like to use the shared runners that Gitlab Offers, the <code>.gitlab-ci.yml</code> config will look like this:</p>
+
+<pre><code class="yaml">stages:
+  - build
+  - test
+
+build:
+  stage: build
+  script:
+    - echo "this is building"
+    - hostname
+    - mkdir builds
+    - touch builds/data.txt
+    - echo "true" &gt; builds/data.txt
+  artifacts:
+    paths:
+      - builds/
+
+test:
+  stage: test
+  script:
+    - echo "this is testing"
+    - hostname
+    - test -f builds/data.txt
+    - grep "true" builds/data.txt
+</code></pre>
+
+<h2>Gitlab-CI Config for your own Gitlab Runner</h2>
+
+<p>Gitlab utilizes the tags that was specified on registration to determine where the jobs gets executed on, for more information on this, have a look at their <a href="https://docs.gitlab.com/ce/ci/yaml/README.html#tags">docs</a></p>
+
+<p>The <code>.gitlab-ci.yml</code> config for using your gitlab runner:</p>
+
+<pre><code class="yaml">stages:
+  - build
+  - test
+
+build:
+  stage: build
+  tags:
+    - my-runner
+  script:
+    - echo "this is building"
+    - hostname
+    - mkdir builds
+    - touch builds/data.txt
+    - echo "true" &gt; builds/data.txt
+  artifacts:
+    paths:
+      - builds/
+
+test:
+  stage: test
+  tags:
+    - my-runner
+  script:
+    - echo "this is testing"
+    - hostname
+    - test -f builds/data.txt
+    - grep "true" builds/data.txt
+</code></pre>
+
+<h2>Trigger and Check Docker</h2>
+
+<p>Commit the config to master, let your pipeline run their jobs upon completion have a look at docker on your server for the containers that the jobs ran on:</p>
+
+<pre><code class="bash">$ docker ps -a
+CONTAINER ID        IMAGE               COMMAND                  CREATED              STATUS                          PORTS               NAMES
+04292a78de0b        c04b8be95e1e        "gitlab-runner-cache.."  About a minute ago   Exited (0) About a minute ago                       runner-xx-project-xx-concurrent-0-cache-3cxx0
+49b1b3c4adf9        c04b8be95e1e        "gitlab-runner-cache.."  About a minute ago   Exited (0) About a minute ago                       runner-xx-project-xx-concurrent-0-cache-6cxxa
+422b23191e8c        hello-world         "/hello"                 24 minutes ago       Exited (0) 24 minutes ago                           wizardly_meninsky
+</code></pre>
+
+<p>As we know each job gets executed in different containers, you can see from the output above that there was 2 different containers for the 2 jobs that was specified in our pipeline.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://docs.gitlab.com/ee/ci/quick_start/">https://docs.gitlab.com/ee/ci/quick_start/</a></li>
+<li><a href="https://docs.gitlab.com/ee/ci/runners/">https://docs.gitlab.com/ee/ci/runners/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Basic Hello World Pipeline on Concourse]]></title>

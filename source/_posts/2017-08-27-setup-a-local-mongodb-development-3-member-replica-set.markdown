@@ -3,7 +3,7 @@ layout: post
 title: "Setup a Local MongoDB Development 3 Member Replica Set"
 date: 2017-08-27 01:10:16 -0400
 comments: true
-categories: ["mongodb", "nosql", "clustering", "databases"] 
+categories: ["mongodb", "nosql", "clustering", "databases", "dev-environment"] 
 ---
 
 Setup a Development Environment of a MongoDB Replica Set consisting of 3 mongod MongoDB Instances.

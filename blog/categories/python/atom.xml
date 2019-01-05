@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Python | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/python/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-01-04T19:52:46-05:00</updated>
+  <updated>2019-01-05T10:31:25-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,389 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Tutorial on Using Gitlab CI/CD Pipelines to Deploy Your Python Flask Restful API With Postgres on Heroku]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/01/05/tutorial-on-using-gitlab-cicd-pipelines-to-deploy-your-python-flask-restful-api-with-postgres-on-heroku/"/>
+    <updated>2019-01-05T10:27:31-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/01/05/tutorial-on-using-gitlab-cicd-pipelines-to-deploy-your-python-flask-restful-api-with-postgres-on-heroku</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
+
+<p>Today we will build a Restful API using Python Flask, SQLAlchemy using Postgres as our Database, testing using Python Unittest, a CI/CD Pipeline on Gitlab, and Deployment to Heroku.</p>
+
+<p>From our previous post, we demonstrated setting up a <a href="https://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci/">Custom Gitlab Runner on Your Own Server for  Gitlab CI</a>.</p>
+
+<h2>Heroku</h2>
+
+<p>If you don&rsquo;t have an account already, <a href="https://dashboard.heroku.com/account">Heroku</a> offer&rsquo;s 5 free applications in their free tier account. Once you have created your account, create 2 applications. I named mine flask-api-staging and flask-api-prod.</p>
+
+<p>You can create the applications via cli or the ui, from the ui it will look more or less like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50719120-69f53480-10a0-11e9-8720-aa3dc007b6fc.png" alt="" /></p>
+
+<p>Select an app name and check if the name is available then select create. Note down the name and config as we will use it in our <code>.gitlab-ci.yml</code> config:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50719134-8db87a80-10a0-11e9-80f4-cccd9a86752f.png" alt="" /></p>
+
+<h2>Heroku API Key</h2>
+
+<p>To allow the deployment of applications to Heroku from Gitlab, we need to generate a API Key on Heroku and save the config in Gitlab.</p>
+
+<p>Head over to your <a href="https://dashboard.heroku.com/account">Heroku Dashboard</a>, select Account Settings, scroll to the API Key section and generate a API Key.</p>
+
+<p>Head over to your Gitlab Repository, select Settings, CI/CD, then select Variables enter the Key: HEROKU_API_KEY and the Secret of the API Key into the Value and select Save Variable.</p>
+
+<p>We will reference this variable from our deploy steps.</p>
+
+<h2>Heroku Postgres Add-on</h2>
+
+<p>Heroku offers a free Postgres Add-On, to activate: Select your application, select Resources, search for the Add-on <code>Heroku Postgres</code>, select and select the Hobby Dev Free version and select provision.</p>
+
+<h2>Our Application Code</h2>
+
+<p>Clone your repository then let&rsquo;s start by creating our Flask API. Note this is more on Gitlab CI/CD than going into detail into the Flask Application.</p>
+
+<p>Create the files that we will need:</p>
+
+<pre><code class="bash">$ touch app.py config.cfg requirements.txt tests.py Procfile
+</code></pre>
+
+<p>Let&rsquo;s start by populating our configuration for our flask app: <code>config.cfg</code></p>
+
+<pre><code class="bash">#SQLALCHEMY_DATABASE_URI='sqlite:///database.db'
+SQLALCHEMY_TRACK_MODIFICATIONS=False
+</code></pre>
+
+<p>Our Flask Application: <code>app.py</code></p>
+
+<p>Note that we are using flask-heroku, with this package Heroku will automatically discover your configuration for your database using environment variables. So if you have a postgres add-on, you don&rsquo;t need to specify the location of your database.</p>
+
+<p>If you want to use sqlite, you can remove the heroku instantiation and uncomment the <code>SQLALCHEMY_DATABASE_URI</code> property in your <code>config.cfg</code></p>
+
+<pre><code class="python">from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from flask_marshmallow import Marshmallow
+from flask_heroku import Heroku
+from passlib.hash import sha256_crypt
+from datetime import datetime
+
+app = Flask(__name__)
+app.config.from_pyfile('config.cfg')
+heroku = Heroku(app)
+db = SQLAlchemy(app)
+ma = Marshmallow(app)
+
+## --Database Models--
+class Member(db.Model):
+    __tablename__ = 'members'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    username = db.Column(db.String(50), unique=True)
+    password_hash = db.Column(db.String(100))
+    firstname = db.Column(db.String(50), unique=False)
+    lastname = db.Column(db.String(50), unique=False)
+    registered_on = db.Column(db.DateTime, nullable=False)
+
+class MemberSchema(ma.ModelSchema):
+    class Meta:
+        model = Member
+        fields = ('id', 'username', 'email')
+
+member_schema = MemberSchema(strict=True, only=('id', 'username'))
+members_schema = MemberSchema(strict=True, many=True)
+
+## --Views--
+@app.route('/')
+def index():
+    return jsonify({'message': 'ok'}), 200
+
+# list users
+@app.route('/api/user', methods=['GET'])
+def list_users():
+    all_users = Member.query.all()
+    result = members_schema.dump(all_users)
+    return jsonify(result.data)
+
+# get user
+@app.route('/api/user/&lt;int:id&gt;', methods=['GET'])
+def get_user(id):
+    user = Member.query.get(id)
+    result = member_schema.dump(user)
+    return jsonify(result.data)
+
+# add user
+@app.route('/api/user', methods=['POST'])
+def add_user():
+    email = request.json['email']
+    username = request.json['username']
+    password_hash = sha256_crypt.encrypt(request.json['password'])
+    firstname = request.json['firstname']
+    lastname = request.json['lastname']
+    new_user = Member(email=email, username=username, password_hash=password_hash, firstname=firstname, lastname=lastname, registered_on=datetime.utcnow())
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        result = member_schema.dump(Member.query.get(new_user.id))
+        return jsonify({'member': result.data})
+    except:
+        db.session.rollback()
+        result = {'message': 'error'}
+        return jsonify(result)
+
+# update user
+@app.route('/api/user/&lt;int:id&gt;', methods=['PUT'])
+def update_user(id):
+    user = Member.query.get(id)
+    username = request.json['username']
+    email = request.json['email']
+    user.email = email
+    user.username = username
+    db.session.commit()
+    return member_schema.jsonify(user)
+
+# delete user
+@app.route('/api/user/&lt;int:id&gt;', methods=['DELETE'])
+def delete_user(id):
+    user = Member.query.get(id)
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({'message': '{} has been deleted'.format(user.username)})
+
+if __name__ == '__main__':
+    app.run()
+</code></pre>
+
+<p>Our tests: <code>tests.py</code></p>
+
+<pre><code class="python">import unittest
+import app as myapi
+import json
+import sys
+
+class TestFlaskApi(unittest.TestCase):
+    def setUp(self):
+        self.app = myapi.app.test_client()
+
+    def test_hello_world(self):
+        response = self.app.get('/')
+        self.assertEqual(
+            json.loads(response.get_data().decode(sys.getdefaultencoding())),
+            {"message": "ok"}
+        )
+
+if __name__ == '__main__':
+    unittest.main()
+</code></pre>
+
+<p>Our requirements file: <code>requirements.txt</code></p>
+
+<pre><code>Click==7.0
+Flask==1.0.2
+flask-heroku==0.1.9
+flask-marshmallow==0.9.0
+Flask-SQLAlchemy==2.3.2
+gunicorn==19.9.0
+itsdangerous==1.1.0
+Jinja2==2.10
+MarkupSafe==1.1.0
+marshmallow==2.17.0
+marshmallow-sqlalchemy==0.15.0
+passlib==1.7.1
+psycopg2-binary==2.7.6.1
+six==1.12.0
+SQLAlchemy==1.2.15
+Werkzeug==0.14.1
+</code></pre>
+
+<p>Our Procfile for Heroku: <code>Procfile</code></p>
+
+<pre><code>web: gunicorn app:app
+</code></pre>
+
+<p>And lastly, our gitlab-ci configuration which will include our build, test and deploy steps. As soon as a commit to master is received the pipeline will be acticated. Note that our production deploy step is a manual trigger.</p>
+
+<p>Our config for <code>.gitlab-ci.yml</code>. Note to replace your Heroku app names.</p>
+
+<pre><code class="yaml">image: rbekker87/build-tools:latest
+
+stages:
+  - ver
+  - init
+  - tests
+  - deploy
+
+ver:
+  stage: ver
+  script:
+    - python --version
+    - whoami
+
+init:
+  stage: init
+  script:
+    - apk add postgresql-dev --no-cache
+    - pip install psycopg2-binary
+    - pip install -r requirements.txt
+
+run_tests:
+  stage: tests
+  script:
+    - apk add postgresql-dev --no-cache
+    - pip install psycopg2-binary
+    - pip install -r requirements.txt
+    - python tests.py
+
+deploy_staging:
+  stage: deploy
+  script:
+    - git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/flask-api-staging.git
+    - git push heroku master
+    - echo "Deployed to Staging Server https://flask-api-staging.herokuapp.com"
+  environment:
+    name: staging
+    url: https://flask-api-staging.herokuapp.com/
+  only:
+    - master
+
+deploy_production:
+  stage: deploy
+  script:
+    - git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/flask-api-prod.git
+    - git push heroku master
+    - echo "Deployed to Production Server https://flask-api-prod.herokuapp.com"
+  environment:
+    name: production
+    url: https://flask-api-prod.herokuapp.com/
+  when: manual
+  only:
+    - master
+</code></pre>
+
+<h2>Send to Gitlab:</h2>
+
+<p>Once everything is populated, stage your changes, commit your work and push to master:</p>
+
+<pre><code class="bash">$ git add .
+$ git commit -m "initial commit"
+$ git push origin master
+</code></pre>
+
+<p>Once the code has been pushed to master, gitlab will pick it up and trigger the pipeline to run.</p>
+
+<h2>Gitlab Pipelines</h2>
+
+<p>Head over to Gitlab, select CI/CD -> Pipelines, you should see a running pipeline, select it, then you should see the overview of all your jobs:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50719350-85157380-10a3-11e9-9180-cc7c991feb6d.png" alt="" /></p>
+
+<p>If everything has passed you should see the <code>Passed</code> status as shown above.</p>
+
+<p>You will notice that the staging environment has been deployed. Now you can do some testing and when you are happy with it, you can select the play button which will deploy to production on the pipelines dashboard.</p>
+
+<h2>Creating the Tables on Postgres</h2>
+
+<p>Before we can interact with our API, we need to provision the postgres tables from the database models that we wrote in our application.</p>
+
+<p>Open up a Python shell on Heroku and initialize the tables:</p>
+
+<pre><code class="bash">$ heroku run python -a flask-api-prod
+&gt;&gt;&gt; from app import db
+&gt;&gt;&gt; db.create_all()
+&gt;&gt;&gt; exit()
+</code></pre>
+
+<h2>Testing the API:</h2>
+
+<p>Now that everything is up and running, its time to test our API.</p>
+
+<p>List the users:</p>
+
+<pre><code class="bash">$ curl https://flask-api-staging.herokuapp.com/api/user
+[]
+</code></pre>
+
+<p>Create a User:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPOST https://flask-api-staging.herokuapp.com/api/user -d '{"username": "ruanb", "password": "pass", "email": "r@r.com", "firstname": "ruan", "lastname": "bekker"}'
+{
+  "member": {
+    "id": 1,
+    "username": "ruanb"
+  }
+}
+</code></pre>
+
+<p>List Users:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XGET https://flask-api-staging.herokuapp.com/api/user
+[
+  {
+    "email": "ruan@r.com",
+    "id": 1,
+    "username": "ruanb"
+  }
+]
+</code></pre>
+
+<p>Update a User&rsquo;s email address:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPUT https://flask-api-staging.herokuapp.com/api/user/1 -d '{"username": "ruanb", "email": "ruan@r.com"}'
+{
+  "id": 1,
+  "username": "ruanb"
+}
+</code></pre>
+
+<p>Retrieve a single user:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XGET https://flask-api-staging.herokuapp.com/api/user/1
+{
+  "email": "ruan@r.com",
+  "id": 1,
+  "username": "ruanb"
+}
+</code></pre>
+
+<p>Delete User:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XDELETE https://flask-api-staging.herokuapp.com/api/user/1
+{
+  "message": "ruanb has been deleted"
+}
+</code></pre>
+
+<h2>Troubleshooting</h2>
+
+<p>I had some issues with Heroku, where one was after I deployed, I received this error in Heroku&rsquo;s logs:</p>
+
+<pre><code class="bash">code=H14 desc="No web processes running" method=GET path="/"
+</code></pre>
+
+<p>I just had to scale my web dyno to 1:</p>
+
+<pre><code class="bash">$ heroku ps:scale web=1 -a flask-api-staging
+Scaling dynos... done, now running web at 1:Free
+</code></pre>
+
+<p>Have a look at their <a href="https://devcenter.heroku.com/articles/heroku-cli">documentation</a> if you need help with the heroku cli.</p>
+
+<p>And to troubleshoot within the dyno, you can exec into it by running this:</p>
+
+<pre><code>heroku ps:exec -a flask-api-staging
+</code></pre>
+
+<p>I seriously dig Gitlab-CI and with this demonstration you can see how easy it is to setup a CI/CD Pipeline on Gitlab and Deploy them to Heroku.</p>
+
+<h2>Resources:</h2>
+
+<p>The code for this demo is available at: <a href="https://gitlab.com/rbekker87/demo-cicd-flask-heroku">gitlab.com/rbekker87/demo-cicd-flask-heroku</a></p>
+
+<p>For more blog posts on Gitlab, have a look at my <a href="https://blog.ruanbekker.com/blog/categories/gitlab/">gitlab</a> category on <a href="https://blog.ruanbekker.com/">blog.ruanbekker.com</a></p>
+
+<p>Thanks for reading!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Creating a UI in Python Flask and Bootstrap for Our Serverless URL Shortener]]></title>
@@ -824,137 +1207,6 @@ Location: https://www.google.com/search?q=helloworld
 <p>At this moment our API is open to the world, which is probably not the best as everyone will be able to Shorten URL&rsquo;s. You can check out <a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-setup-api-key-with-console.html">Set Up API Keys Using the API Gateway Console</a> documentation on how to secure your application by utilizing a api key which can be included in your request headers when Shortening URLs.</p>
 
 <p>For a bit of housekeeping, you can implement TTL on DynamoDB so that old items expire, which can help you to refrain your dynamodb table from growing into large amounts of storage, you can have a look at a post on <a href="https://blog.ruanbekker.com/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature/">Delete Old Items with Amazons DynamoDB TTL Feature</a> to implement that.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Python Flask Tutorial Series: Create a Hello World App]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/11/27/python-flask-tutorial-series-create-a-hello-world-app-p1/"/>
-    <updated>2018-11-27T08:36:20-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/11/27/python-flask-tutorial-series-create-a-hello-world-app-p1</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/python-flask.png" alt="" /></p>
-
-<p>This is post 1 of the <a href="http://blog.ruanbekker.com/blog/categories/flask-tutorial/">Python Flask Tutorial Series</a></p>
-
-<h2>What is Python Flask</h2>
-
-<p>Flask is a Micro Web Framework which is written in Python and is based on the Werkzeug Toolkit and the Jinja2 Template Engine.</p>
-
-<p>Flask is super lightweight, and you import the modules as you need them, from some research some say that Flask is more designed for smaller applications whereas Django is designed for your larger applications.</p>
-
-<p>a Good read on the [Differences and Performance Comparison]. With that being said, if you are planning with scale I am pretty sure that Flask can handle big applications, but it probably depends what your application is doing. More <a href="https://www.reddit.com/r/Python/comments/2jja20/is_flask_good_enough_to_develop_large_applications/">Detailed Discussion</a> on Reddit.</p>
-
-<h2>Hello World in Python Flask</h2>
-
-<p>In this post we will be creating a &ldquo;Hello, World&rdquo; application to demonstrate how easy it is to run a Flask Appliation.</p>
-
-<p>The only requirement you need to run this app, would be to to have <code>python</code> and <code>pip</code> installed so that we can install the <code>Flask</code> package which is needed.</p>
-
-<h2>Creating your Traditional Hello World App</h2>
-
-<p>We will install flask globally, but will write up a <a href="https://sysadmins.co.za/python-flask-series-environment-setup-p3/">future post</a> on how to setup a virtual environment for you application. Install the flask package:</p>
-
-<pre><code class="bash">$ pip install flask
-</code></pre>
-
-<p>The code for the Hello World Flask Application:</p>
-
-<pre><code class="python">from flask import Flask 
-
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return 'Hello, World!'
-
-if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=True)
-</code></pre>
-
-<p>Save the above code as <code>app.py</code> and then run the application as follows:</p>
-
-<pre><code>$ python app.py
- * Debug mode: on
- * Running on http://127.0.0.1:5000/ (Press CTRL+C to quit)
- * Restarting with stat
- * Debugger is active!
- * Debugger PIN: 282-492-812
-</code></pre>
-
-<h2>It&rsquo;s Running What Now?</h2>
-
-<p>We can see that our application is running on 127.0.0.1 and listening on port: 5000, if you point your browser to this URL, you will be returned with: Hello, World!</p>
-
-<pre><code class="bash">$ curl -i -XGET http://127.0.0.1:5000/
-HTTP/1.0 200 OK
-Content-Type: text/html; charset=utf-8
-Content-Length: 13
-Server: Werkzeug/0.12.1 Python/2.7.12
-Date: Thu, 27 Nov 2018 13:51:15 GMT
-
-Hello, World!
-</code></pre>
-
-<h2>Explaining the Application Code</h2>
-
-<ul>
-<li>First, we imported the <code>Flask</code> class from the flask module, using: <code>from flask import Flask</code></li>
-<li>Then we instantiate our application from the Flask class: <code>app = Flask(__name__)</code> using our module&rsquo;s name as a parameter, where our app object will use this to resolve resources. We are using <code>__name__</code> , which links our module to our app object.</li>
-<li>Next up we have the <code>@app.route('/')</code> decorator. Flask uses decorators for URL Routing.</li>
-<li>Below our decorator, we have a <code>view function</code>, this function will be executed when the <code>/</code> route gets matched, in this case returning <code>Hello, World!</code></li>
-<li>The last line starts our server, and from this example it runs locally on <code>127.0.0.1</code> on port: <code>5000</code> and <code>debug is enabled</code>, so any error details will be logged directly in the browser. This is only recommended for test/dev and not for production as you can make your service vulnerable for hackers.</li>
-</ul>
-
-
-<h2>Let&rsquo;s Extend our Hello World App</h2>
-
-<p>We would like to add the route &lsquo;/movie&rsquo; which will return a random movie name:</p>
-
-<pre><code class="python">import random
-from flask import Flask
-
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return 'Hello, World!'
-
-@app.route('/movie')
-def movie():
-    movies = ['godfather', 'deadpool', 'toy story', 'top gun', 'forrest gump']
-    return random.choice(movies)
-
-if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=True)
-</code></pre>
-
-<p>Making a GET Request on the &lsquo;/movie&rsquo; route:</p>
-
-<pre><code class="bash">$ curl -XGET http://127.0.0.1/movie
-forrest gump
-</code></pre>
-
-<p>This was just a basic example and will be covering more topics in detail at a further stage.</p>
-
-<p>Next up, setting up our Python Environment, with <a href="https://blog.ruanbekker.com/blog/2018/12/09/python-flask-tutorial-series-setup-a-python-virtual-environment-p2/">Virtual Environment (virtualenv)</a></p>
-
-<h2>Related Content</h2>
-
-<p>All posts related to this tutorial series will be listed under <a href="http://blog.ruanbekker.com/blog/categories/flask-tutorial/">Python Flask Tutorial Series</a> tag.</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
 ]]></content>
   </entry>
   

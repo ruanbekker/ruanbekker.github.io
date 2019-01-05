@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-01-04T19:52:46-05:00</updated>
+  <updated>2019-01-05T10:31:25-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,389 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Tutorial on Using Gitlab CI/CD Pipelines to Deploy Your Python Flask Restful API With Postgres on Heroku]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/01/05/tutorial-on-using-gitlab-cicd-pipelines-to-deploy-your-python-flask-restful-api-with-postgres-on-heroku/"/>
+    <updated>2019-01-05T10:27:31-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/01/05/tutorial-on-using-gitlab-cicd-pipelines-to-deploy-your-python-flask-restful-api-with-postgres-on-heroku</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
+
+<p>Today we will build a Restful API using Python Flask, SQLAlchemy using Postgres as our Database, testing using Python Unittest, a CI/CD Pipeline on Gitlab, and Deployment to Heroku.</p>
+
+<p>From our previous post, we demonstrated setting up a <a href="https://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci/">Custom Gitlab Runner on Your Own Server for  Gitlab CI</a>.</p>
+
+<h2>Heroku</h2>
+
+<p>If you don&rsquo;t have an account already, <a href="https://dashboard.heroku.com/account">Heroku</a> offer&rsquo;s 5 free applications in their free tier account. Once you have created your account, create 2 applications. I named mine flask-api-staging and flask-api-prod.</p>
+
+<p>You can create the applications via cli or the ui, from the ui it will look more or less like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50719120-69f53480-10a0-11e9-8720-aa3dc007b6fc.png" alt="" /></p>
+
+<p>Select an app name and check if the name is available then select create. Note down the name and config as we will use it in our <code>.gitlab-ci.yml</code> config:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50719134-8db87a80-10a0-11e9-80f4-cccd9a86752f.png" alt="" /></p>
+
+<h2>Heroku API Key</h2>
+
+<p>To allow the deployment of applications to Heroku from Gitlab, we need to generate a API Key on Heroku and save the config in Gitlab.</p>
+
+<p>Head over to your <a href="https://dashboard.heroku.com/account">Heroku Dashboard</a>, select Account Settings, scroll to the API Key section and generate a API Key.</p>
+
+<p>Head over to your Gitlab Repository, select Settings, CI/CD, then select Variables enter the Key: HEROKU_API_KEY and the Secret of the API Key into the Value and select Save Variable.</p>
+
+<p>We will reference this variable from our deploy steps.</p>
+
+<h2>Heroku Postgres Add-on</h2>
+
+<p>Heroku offers a free Postgres Add-On, to activate: Select your application, select Resources, search for the Add-on <code>Heroku Postgres</code>, select and select the Hobby Dev Free version and select provision.</p>
+
+<h2>Our Application Code</h2>
+
+<p>Clone your repository then let&rsquo;s start by creating our Flask API. Note this is more on Gitlab CI/CD than going into detail into the Flask Application.</p>
+
+<p>Create the files that we will need:</p>
+
+<pre><code class="bash">$ touch app.py config.cfg requirements.txt tests.py Procfile
+</code></pre>
+
+<p>Let&rsquo;s start by populating our configuration for our flask app: <code>config.cfg</code></p>
+
+<pre><code class="bash">#SQLALCHEMY_DATABASE_URI='sqlite:///database.db'
+SQLALCHEMY_TRACK_MODIFICATIONS=False
+</code></pre>
+
+<p>Our Flask Application: <code>app.py</code></p>
+
+<p>Note that we are using flask-heroku, with this package Heroku will automatically discover your configuration for your database using environment variables. So if you have a postgres add-on, you don&rsquo;t need to specify the location of your database.</p>
+
+<p>If you want to use sqlite, you can remove the heroku instantiation and uncomment the <code>SQLALCHEMY_DATABASE_URI</code> property in your <code>config.cfg</code></p>
+
+<pre><code class="python">from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from flask_marshmallow import Marshmallow
+from flask_heroku import Heroku
+from passlib.hash import sha256_crypt
+from datetime import datetime
+
+app = Flask(__name__)
+app.config.from_pyfile('config.cfg')
+heroku = Heroku(app)
+db = SQLAlchemy(app)
+ma = Marshmallow(app)
+
+## --Database Models--
+class Member(db.Model):
+    __tablename__ = 'members'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    username = db.Column(db.String(50), unique=True)
+    password_hash = db.Column(db.String(100))
+    firstname = db.Column(db.String(50), unique=False)
+    lastname = db.Column(db.String(50), unique=False)
+    registered_on = db.Column(db.DateTime, nullable=False)
+
+class MemberSchema(ma.ModelSchema):
+    class Meta:
+        model = Member
+        fields = ('id', 'username', 'email')
+
+member_schema = MemberSchema(strict=True, only=('id', 'username'))
+members_schema = MemberSchema(strict=True, many=True)
+
+## --Views--
+@app.route('/')
+def index():
+    return jsonify({'message': 'ok'}), 200
+
+# list users
+@app.route('/api/user', methods=['GET'])
+def list_users():
+    all_users = Member.query.all()
+    result = members_schema.dump(all_users)
+    return jsonify(result.data)
+
+# get user
+@app.route('/api/user/&lt;int:id&gt;', methods=['GET'])
+def get_user(id):
+    user = Member.query.get(id)
+    result = member_schema.dump(user)
+    return jsonify(result.data)
+
+# add user
+@app.route('/api/user', methods=['POST'])
+def add_user():
+    email = request.json['email']
+    username = request.json['username']
+    password_hash = sha256_crypt.encrypt(request.json['password'])
+    firstname = request.json['firstname']
+    lastname = request.json['lastname']
+    new_user = Member(email=email, username=username, password_hash=password_hash, firstname=firstname, lastname=lastname, registered_on=datetime.utcnow())
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        result = member_schema.dump(Member.query.get(new_user.id))
+        return jsonify({'member': result.data})
+    except:
+        db.session.rollback()
+        result = {'message': 'error'}
+        return jsonify(result)
+
+# update user
+@app.route('/api/user/&lt;int:id&gt;', methods=['PUT'])
+def update_user(id):
+    user = Member.query.get(id)
+    username = request.json['username']
+    email = request.json['email']
+    user.email = email
+    user.username = username
+    db.session.commit()
+    return member_schema.jsonify(user)
+
+# delete user
+@app.route('/api/user/&lt;int:id&gt;', methods=['DELETE'])
+def delete_user(id):
+    user = Member.query.get(id)
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({'message': '{} has been deleted'.format(user.username)})
+
+if __name__ == '__main__':
+    app.run()
+</code></pre>
+
+<p>Our tests: <code>tests.py</code></p>
+
+<pre><code class="python">import unittest
+import app as myapi
+import json
+import sys
+
+class TestFlaskApi(unittest.TestCase):
+    def setUp(self):
+        self.app = myapi.app.test_client()
+
+    def test_hello_world(self):
+        response = self.app.get('/')
+        self.assertEqual(
+            json.loads(response.get_data().decode(sys.getdefaultencoding())),
+            {"message": "ok"}
+        )
+
+if __name__ == '__main__':
+    unittest.main()
+</code></pre>
+
+<p>Our requirements file: <code>requirements.txt</code></p>
+
+<pre><code>Click==7.0
+Flask==1.0.2
+flask-heroku==0.1.9
+flask-marshmallow==0.9.0
+Flask-SQLAlchemy==2.3.2
+gunicorn==19.9.0
+itsdangerous==1.1.0
+Jinja2==2.10
+MarkupSafe==1.1.0
+marshmallow==2.17.0
+marshmallow-sqlalchemy==0.15.0
+passlib==1.7.1
+psycopg2-binary==2.7.6.1
+six==1.12.0
+SQLAlchemy==1.2.15
+Werkzeug==0.14.1
+</code></pre>
+
+<p>Our Procfile for Heroku: <code>Procfile</code></p>
+
+<pre><code>web: gunicorn app:app
+</code></pre>
+
+<p>And lastly, our gitlab-ci configuration which will include our build, test and deploy steps. As soon as a commit to master is received the pipeline will be acticated. Note that our production deploy step is a manual trigger.</p>
+
+<p>Our config for <code>.gitlab-ci.yml</code>. Note to replace your Heroku app names.</p>
+
+<pre><code class="yaml">image: rbekker87/build-tools:latest
+
+stages:
+  - ver
+  - init
+  - tests
+  - deploy
+
+ver:
+  stage: ver
+  script:
+    - python --version
+    - whoami
+
+init:
+  stage: init
+  script:
+    - apk add postgresql-dev --no-cache
+    - pip install psycopg2-binary
+    - pip install -r requirements.txt
+
+run_tests:
+  stage: tests
+  script:
+    - apk add postgresql-dev --no-cache
+    - pip install psycopg2-binary
+    - pip install -r requirements.txt
+    - python tests.py
+
+deploy_staging:
+  stage: deploy
+  script:
+    - git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/flask-api-staging.git
+    - git push heroku master
+    - echo "Deployed to Staging Server https://flask-api-staging.herokuapp.com"
+  environment:
+    name: staging
+    url: https://flask-api-staging.herokuapp.com/
+  only:
+    - master
+
+deploy_production:
+  stage: deploy
+  script:
+    - git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/flask-api-prod.git
+    - git push heroku master
+    - echo "Deployed to Production Server https://flask-api-prod.herokuapp.com"
+  environment:
+    name: production
+    url: https://flask-api-prod.herokuapp.com/
+  when: manual
+  only:
+    - master
+</code></pre>
+
+<h2>Send to Gitlab:</h2>
+
+<p>Once everything is populated, stage your changes, commit your work and push to master:</p>
+
+<pre><code class="bash">$ git add .
+$ git commit -m "initial commit"
+$ git push origin master
+</code></pre>
+
+<p>Once the code has been pushed to master, gitlab will pick it up and trigger the pipeline to run.</p>
+
+<h2>Gitlab Pipelines</h2>
+
+<p>Head over to Gitlab, select CI/CD -> Pipelines, you should see a running pipeline, select it, then you should see the overview of all your jobs:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50719350-85157380-10a3-11e9-9180-cc7c991feb6d.png" alt="" /></p>
+
+<p>If everything has passed you should see the <code>Passed</code> status as shown above.</p>
+
+<p>You will notice that the staging environment has been deployed. Now you can do some testing and when you are happy with it, you can select the play button which will deploy to production on the pipelines dashboard.</p>
+
+<h2>Creating the Tables on Postgres</h2>
+
+<p>Before we can interact with our API, we need to provision the postgres tables from the database models that we wrote in our application.</p>
+
+<p>Open up a Python shell on Heroku and initialize the tables:</p>
+
+<pre><code class="bash">$ heroku run python -a flask-api-prod
+&gt;&gt;&gt; from app import db
+&gt;&gt;&gt; db.create_all()
+&gt;&gt;&gt; exit()
+</code></pre>
+
+<h2>Testing the API:</h2>
+
+<p>Now that everything is up and running, its time to test our API.</p>
+
+<p>List the users:</p>
+
+<pre><code class="bash">$ curl https://flask-api-staging.herokuapp.com/api/user
+[]
+</code></pre>
+
+<p>Create a User:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPOST https://flask-api-staging.herokuapp.com/api/user -d '{"username": "ruanb", "password": "pass", "email": "r@r.com", "firstname": "ruan", "lastname": "bekker"}'
+{
+  "member": {
+    "id": 1,
+    "username": "ruanb"
+  }
+}
+</code></pre>
+
+<p>List Users:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XGET https://flask-api-staging.herokuapp.com/api/user
+[
+  {
+    "email": "ruan@r.com",
+    "id": 1,
+    "username": "ruanb"
+  }
+]
+</code></pre>
+
+<p>Update a User&rsquo;s email address:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPUT https://flask-api-staging.herokuapp.com/api/user/1 -d '{"username": "ruanb", "email": "ruan@r.com"}'
+{
+  "id": 1,
+  "username": "ruanb"
+}
+</code></pre>
+
+<p>Retrieve a single user:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XGET https://flask-api-staging.herokuapp.com/api/user/1
+{
+  "email": "ruan@r.com",
+  "id": 1,
+  "username": "ruanb"
+}
+</code></pre>
+
+<p>Delete User:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XDELETE https://flask-api-staging.herokuapp.com/api/user/1
+{
+  "message": "ruanb has been deleted"
+}
+</code></pre>
+
+<h2>Troubleshooting</h2>
+
+<p>I had some issues with Heroku, where one was after I deployed, I received this error in Heroku&rsquo;s logs:</p>
+
+<pre><code class="bash">code=H14 desc="No web processes running" method=GET path="/"
+</code></pre>
+
+<p>I just had to scale my web dyno to 1:</p>
+
+<pre><code class="bash">$ heroku ps:scale web=1 -a flask-api-staging
+Scaling dynos... done, now running web at 1:Free
+</code></pre>
+
+<p>Have a look at their <a href="https://devcenter.heroku.com/articles/heroku-cli">documentation</a> if you need help with the heroku cli.</p>
+
+<p>And to troubleshoot within the dyno, you can exec into it by running this:</p>
+
+<pre><code>heroku ps:exec -a flask-api-staging
+</code></pre>
+
+<p>I seriously dig Gitlab-CI and with this demonstration you can see how easy it is to setup a CI/CD Pipeline on Gitlab and Deploy them to Heroku.</p>
+
+<h2>Resources:</h2>
+
+<p>The code for this demo is available at: <a href="https://gitlab.com/rbekker87/demo-cicd-flask-heroku">gitlab.com/rbekker87/demo-cicd-flask-heroku</a></p>
+
+<p>For more blog posts on Gitlab, have a look at my <a href="https://blog.ruanbekker.com/blog/categories/gitlab/">gitlab</a> category on <a href="https://blog.ruanbekker.com/">blog.ruanbekker.com</a></p>
+
+<p>Thanks for reading!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Gitlab Runner on Your Own Server to Run Your Jobs That Gets Triggered From Gitlab CI]]></title>
@@ -483,290 +866,6 @@ if __name__ == '__main__':
 <p>Once you search for a specific keyword on the service you are looking for the output should more or less look like the following:</p>
 
 <p><img src="https://objects.ruanbekker.com/assets/images/docker-flask-running-services.png" alt="" /></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Building Ghost Version 2 Blog for the RaspberryPi]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/10/23/building-ghost-version-2-blog-for-the-raspberrypi/"/>
-    <updated>2018-10-23T17:37:49-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/10/23/building-ghost-version-2-blog-for-the-raspberrypi</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/ghost-blog-main.png" alt="" /></p>
-
-<p>In this post we will setup Ghost 2.0.3 for the Raspberry Pi on Docker Swarm</p>
-
-<h2>Dockerfile</h2>
-
-<p>Our dockerfile:</p>
-
-<pre><code>FROM rbekker87/armhf-node:8.11
-
-RUN apk add --no-cache 'su-exec&gt;=0.2' &amp;&amp; apk --update add bash gcc g++ make python &amp;&amp; npm install sqlite3 --build-from-source
-
-ENV NODE_ENV production
-ENV GHOST_CLI_VERSION 1.9.1
-ENV GHOST_VERSION 2.0.3
-ENV GHOST_INSTALL /var/lib/ghost
-ENV GHOST_CONTENT /var/lib/ghost/content
-
-RUN npm install -g "ghost-cli@$GHOST_CLI_VERSION"
-
-RUN set -ex; \
-        mkdir -p "$GHOST_INSTALL" \
-        &amp;&amp; adduser -s /bin/sh -D node \
-        &amp;&amp; chown node:node "$GHOST_INSTALL" \
-        &amp;&amp; su-exec node ghost install "$GHOST_VERSION" --db sqlite3 --no-prompt --no-stack --no-setup --dir "$GHOST_INSTALL" \
-        &amp;&amp; cd "$GHOST_INSTALL" \
-        &amp;&amp; su-exec node ghost config --ip 0.0.0.0 --port 2368 --no-prompt --db sqlite3 --url http://localhost:2368 --dbpath "$GHOST_CONTENT/data/ghost.db" \
-        &amp;&amp; su-exec node ghost config paths.contentPath "$GHOST_CONTENT" \
-        &amp;&amp; su-exec node ln -s config.production.json "$GHOST_INSTALL/config.development.json" \
-        &amp;&amp; readlink -f "$GHOST_INSTALL/config.development.json" \
-        &amp;&amp; mv "$GHOST_CONTENT" "$GHOST_INSTALL/content.orig" \
-        &amp;&amp; mkdir -p "$GHOST_CONTENT" &amp;&amp; chown node:node "$GHOST_CONTENT" \
-        &amp;&amp; "$GHOST_INSTALL/current/node_modules/knex-migrator/bin/knex-migrator" --version
-
-ENV PATH $PATH:$GHOST_INSTALL/current/node_modules/knex-migrator/bin
-
-WORKDIR $GHOST_INSTALL
-
-COPY docker-entrypoint.sh /usr/local/bin
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-ENTRYPOINT ["docker-entrypoint.sh"]
-
-CMD ["node", "current/index.js"]
-</code></pre>
-
-<h2>Our Boot Script</h2>
-
-<p>Our entrypoint script <code>docker-entrypoint.sh</code>:</p>
-
-<pre><code>#!/bin/bash
-set -e
-
-if [[ "$*" == node*current/index.js* ]] &amp;&amp; [ "$(id -u)" = '0' ];
-  then
-    chown -R node "$GHOST_CONTENT"
-    exec su-exec node "$BASH_SOURCE" "$@"
-fi
-
-if [[ "$*" == node*current/index.js* ]];
-  then
-    baseDir="$GHOST_INSTALL/content.orig"
-    for src in "$baseDir"/*/ "$baseDir"/themes/*;
-      do
-        src="${src%/}"
-        target="$GHOST_CONTENT/${src#$baseDir/}"
-        mkdir -p "$(dirname "$target")"
-        if [ ! -e "$target" ];
-          then
-            tar -cC "$(dirname "$src")" "$(basename "$src")" | tar -xC "$(dirname "$target")"
-        fi
-      done
-
-    knex-migrator-migrate --init --mgpath "$GHOST_INSTALL/current"
-fi
-
-prod() {
-cat &gt; /var/lib/ghost/config.development.json &lt;&lt; EOF
-{
-  "url": "http://${SERVER_URL:-localhost}:${SERVER_PORT:-2368}",
-  "server": {
-    "port": ${SERVER_PORT:-2368},
-    "host": "0.0.0.0"
-  },
-  "database": {
-    "client": "sqlite3",
-    "connection": {
-      "filename": "/var/lib/ghost/content/data/ghost.db"
-    }
-  },
-  "mail": {
-    "transport": "SMTP",
-    "from": "${FROM_NAME:-MyBlog} &lt;${FROM_EMAIL:-ghost-blog@localhost}&gt;",
-    "options": {
-      "service": "Mailgun",
-      "host": "${SMTP_HOST:-localhost}",
-      "port": ${SMTP_PORT:-25},
-      "auth": {
-        "user": "${SMTP_AUTH_USERNAME:-root}",
-        "pass": "${SMTP_AUTH_PASSWORD:-password}"
-      }
-    }
-  },
-  "logging": {
-    "transports": [
-      "file",
-      "stdout"
-    ]
-  },
-  "process": "systemd",
-  "paths": {
-    "contentPath": "/var/lib/ghost/content"
-  }
-}
-EOF
-}
-
-dev() {
-cat &gt; /var/lib/ghost/config.development.json &lt;&lt; EOF
-{
-  "url": "http://${SERVER_URL:-localhost}:${SERVER_PORT:-2368}",
-  "server": {
-    "port": ${SERVER_PORT:-2368},
-    "host": "0.0.0.0"
-  },
-  "database": {
-    "client": "sqlite3",
-    "connection": {
-      "filename": "/var/lib/ghost/content/data/ghost.db"
-    }
-  },
-  "mail": {
-    "transport": "Direct"
-  },
-  "logging": {
-    "transports": [
-      "file",
-      "stdout"
-    ]
-  },
-  "process": "systemd",
-  "paths": {
-    "contentPath": "/var/lib/ghost/content"
-  }
-}
-EOF
-}
-
-test(){
-cat &gt; /var/lib/ghost/config.development.json &lt;&lt; EOF
-{
-  "url": "http://localhost:2368",
-  "server": {
-    "port": 2368,
-    "host": "0.0.0.0"
-  },
-  "database": {
-    "client": "sqlite3",
-    "connection": {
-      "filename": "/var/lib/ghost/content/data/ghost.db"
-    }
-  },
-  "mail": {
-    "transport": "Direct"
-  },
-  "logging": {
-    "transports": [
-      "file",
-      "stdout"
-    ]
-  },
-  "process": "systemd",
-  "paths": {
-    "contentPath": "/var/lib/ghost/content"
-  }
-}
-EOF
-}
-
-if  [ "${ENV_TYPE}" = "PROD" ]
-  then prod
-
-elif [ "${ENV_TYPE}" = "DEV" ]
-  then dev
-  else test
-
-fi
-
-exec "$@"
-</code></pre>
-
-<p>The entrypoint script takes a couple of environment variables, as you can see if they are not defined, defaults will be inherited.</p>
-
-<p>Configurable Environment Variables:</p>
-
-<pre><code>      - ENV_TYPE=PROD
-      - SERVER_PORT=2368
-      - SERVER_URL=myblog.pistack.co.za
-      - FROM_NAME=MyName
-      - SMTP_HOST=mail.mydomain.co.za
-      - SMTP_PORT=587
-      - SMTP_AUTH_USERNAME=me@mydomain.co.za
-      - SMTP_AUTH_PASSWORD=secret
-</code></pre>
-
-<h2>Building our Ghost Image</h2>
-
-<p>I have a public image available if you dont want to build/push, but for building:</p>
-
-<pre><code>$ docker build -t your-name/repo:tag
-</code></pre>
-
-<h2>Deploy Ghost with Traefik</h2>
-
-<p>Our <code>ghost-compose.yml</code> with traefik will look like the following, note that I mounted the source path to the container&rsquo;s path, the source path is running on a replicated glusterfs volume, which can be setup following <a href="https://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">this post</a></p>
-
-<p>Also for this demonstration I was using the domain pistack.co.za, where you need to utilize the domain of your choice.</p>
-
-<pre><code>version: "3.4"
-
-services:
-  ghost:
-    image: rbekker87/armhf-ghost:2.0.3
-    networks:
-      - appnet
-    volumes:
-      - type: bind
-        source: /mnt/volumes/myblog/content/data
-        target: /var/www/ghost/content/data
-    environment:
-      - ENV_TYPE=PROD
-      - SERVER_PORT=2368
-      - SERVER_URL=myblog.pistack.co.za
-      - FROM_NAME=MyName
-      - SMTP_HOST=mail.mydomain.co.za
-      - SMTP_PORT=587
-      - SMTP_AUTH_USERNAME=me@mydomain.co.za
-      - SMTP_AUTH_PASSWORD=secret
-    deploy:
-      replicas: 1
-      labels:
-        - "traefik.enable=true"
-        - "traefik.backend=ghost"
-        - "traefik.backend.loadbalancer.swarm=true"
-        - "traefik.docker.network=appnet"
-        - "traefik.port=2368"
-        - "traefik.frontend.passHostHeader=true"
-        - "traefik.frontend.rule=Host:myblog.pistack.co.za"
-      replicas: 3
-      update_config:
-        parallelism: 2
-        delay: 10s
-      restart_policy:
-        condition: on-failure
-      placement:
-        constraints: [node.role == worker]
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<p>Deploy the stack:</p>
-
-<pre><code>$ docker stack deploy -c ghost-compose.yml web
-</code></pre>
-
-<p>Once the service is up, you will be able to reach your blog on the provided <code>traefik.frontend.rule</code>. If you don&rsquo;t have traefik running, you can follow <a href="https://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/">this post</a> to get traefik up and running.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://hub.docker.com/r/rbekker87/armhf-ghost/">https://hub.docker.com/r/rbekker87/armhf-ghost/</a></li>
-<li><a href="https://github.com/ruanbekker/ghost-armhf">https://github.com/ruanbekker/ghost-armhf</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

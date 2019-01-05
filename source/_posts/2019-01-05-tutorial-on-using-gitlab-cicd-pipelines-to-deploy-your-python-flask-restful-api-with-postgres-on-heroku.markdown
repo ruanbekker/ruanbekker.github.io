@@ -282,7 +282,7 @@ Once the code has been pushed to master, gitlab will pick it up and trigger the 
 
 Head over to Gitlab, select CI/CD -> Pipelines, you should see a running pipeline, select it, then you should see the overview of all your jobs:
 
-![](https://user-images.githubusercontent.com/567298/50728712-1e419a00-1137-11e9-94b3-fa1c85d530b6.png)
+![](https://user-images.githubusercontent.com/567298/50728734-83958b00-1137-11e9-8c6f-4f7d9aaab46d.png)
 
 If everything has passed you should see the `Passed` status as shown above. 
 

@@ -272,7 +272,7 @@ Once everything is populated, stage your changes, commit your work and push to m
 
 ```bash
 $ git add .
-$ git commit -m "initial commit"
+$ git commit -m "blogpost demo commit"
 $ git push origin master
 ```
 
@@ -282,7 +282,7 @@ Once the code has been pushed to master, gitlab will pick it up and trigger the 
 
 Head over to Gitlab, select CI/CD -> Pipelines, you should see a running pipeline, select it, then you should see the overview of all your jobs:
 
-![](https://user-images.githubusercontent.com/567298/50719350-85157380-10a3-11e9-9180-cc7c991feb6d.png)
+![](https://user-images.githubusercontent.com/567298/50728712-1e419a00-1137-11e9-94b3-fa1c85d530b6.png)
 
 If everything has passed you should see the `Passed` status as shown above. 
 

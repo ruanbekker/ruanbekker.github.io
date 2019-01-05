@@ -20,23 +20,39 @@ Our `lamp.yml` playbook:
 - hosts: newhost
   tasks:
     - name: install lamp stack
-      sudo: yes
-      apt: name={{ item }} state=present update_cache=yes
-      with_items:
-        - apache2
-        - mysql-server
-        - php7.0
-        - php7.0-mysql
+      become: yes
+      become_user: root
+      apt:
+        pkg:
+          - apache2
+          - mysql-server
+          - php7.0
+          - php7.0-mysql
+        state: present
+        update_cache: yes
 
-    - name: start services
-      service: name={{ item }} state=started enabled=yes
-      sudo: yes
-      with_items:
-        - apache2
-        - mysql
+    - name: start apache service
+      become: yes
+      become_user: root
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: start mysql service
+      become: yes
+      become_user: root
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: create target directory
+      file: path=/var/www/html state=directory mode=0755
 
     - name: deploy index.html
-      sudo: yes
+      become: yes
+      become_user: root
       copy:
         src: /tmp/index.html
         dest: /var/www/html/index.html

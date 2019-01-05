@@ -413,6 +413,8 @@ Please feel free to show support by, **sharing** this post, making a **donation*
 
 <br>
 
+Ad space:
+
 <script type="text/javascript">
   ( function() {
     if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
@@ -423,5 +425,7 @@ Please feel free to show support by, **sharing** this post, making a **donation*
 }());
 </script>
 <script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+<p>
 
 Thanks for reading!

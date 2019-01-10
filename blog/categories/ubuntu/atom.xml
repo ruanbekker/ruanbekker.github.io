@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Ubuntu | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/ubuntu/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-01-07T07:15:26-05:00</updated>
+  <updated>2019-01-10T10:02:38-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,275 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 3 Node Docker Swarm Cluster on Ubuntu 16.04]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/01/10/setup-a-3-node-docker-swarm-cluster-on-ubuntu-16-dot-04/"/>
+    <updated>2019-01-10T09:52:07-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/01/10/setup-a-3-node-docker-swarm-cluster-on-ubuntu-16-dot-04</id>
+    <content type="html"><![CDATA[<p><img src="http://obj-cache.cloud.ruanbekker.com/docker-logo.png" alt="" /></p>
+
+<p>Docker Swarm is a Clustering and Orchestration Framework for the Docker ecosystem. Have a look at their <a href="https://docs.docker.com/engine/swarm/">official documentation</a> for detailed information.</p>
+
+<p>In this Tutorial we will Setup a 3 Node Docker Swarm Cluster and to Demonstrate How Easy it is to Deploy a Web Application with 2 Replicas from a Docker Image.</p>
+
+<h2>Overview of What we will be Doing</h2>
+
+<ul>
+<li>Install Docker on 3 Servers with Ubuntu 16.04</li>
+<li>Initialize the Swarm and Join the Worker Nodes</li>
+<li>Create a Nginx Service with 2 Replicas</li>
+<li>Do some Inspection: View some info on the Service</li>
+</ul>
+
+
+<h2>Prerequisites</h2>
+
+<p>3 Fresh Deployed Ubuntu 16.04 Servers. ( 1GB Memory Servers will be good for development )</p>
+
+<h2>What is Docker</h2>
+
+<p>Docker is a Open Source Technology that allows you to create lightweight, isolated, reproducible application instances which is called Containers. Docker is built on top of the LXC technology, so it uses Linux Containers and as mentioned, it&rsquo;s lightweight compared to a traditional VM.</p>
+
+<p>A Container is isolated and uses the Kernel of the Docker host, it also utilizes Kernel features such as cgroups and namespaces in order to make them isolated.</p>
+
+<h2>Installing Docker Community Edition</h2>
+
+<p>Remove any older versions of Docker that might be present and install the dependencies:</p>
+
+<pre><code class="bash">$ sudo apt remove docker docker-engine -y
+$ sudo apt install linux-image-extra-$(uname -r) linux-image-extra-virtual python-setuptools -y
+$ sudo apt install apt-transport-https ca-certificates curl software-properties-common -y
+</code></pre>
+
+<p>Get the needed repository to setup Docker Community Edition:</p>
+
+<pre><code class="bash">$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+$ sudo apt-key fingerprint 0EBFCD88
+$ sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+</code></pre>
+
+<p>Update the repository index and Install Docker Community Edition:</p>
+
+<pre><code class="bash">$ sudo apt update
+$ sudo apt install docker-ce -y
+$ sudo easy_install pip
+$ sudo pip install docker-compose
+</code></pre>
+
+<p>Enable Docker on Startup and Start the Docker Engine:</p>
+
+<pre><code class="bash">$ sudo systemctl enable docker
+$ sudo systemctl restart docker
+</code></pre>
+
+<p>If you would like to execute your docker commands without sudo, add your user to the docker group:</p>
+
+<pre><code class="bash">$ sudo usermod -aG docker $(whoami)
+</code></pre>
+
+<p>Test your Setup by Running a Hello World Container. You will see that if the image is not in the local docker image cache, it will pull the image from docker hub (or the respective docker registry), then once the image is saved locally, docker will then instantiate the container from that image:</p>
+
+<pre><code class="bash">$ docker run hello-world
+Unable to find image 'hello-world:latest' locally
+latest: Pulling from library/hello-world
+78445dd45222: Pull complete
+Digest: sha256:c5515758d4c5e1e838e9cd307f6c6a0d620b5e07e6f927b07d05f6d12a1ac8d7
+Status: Downloaded newer image for hello-world:latest
+
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+</code></pre>
+
+<h2>DNS Configuration</h2>
+
+<p>If you have a DNS Server you can configure the A Records for these hosts on DNS, but for simplicity, I will add the noted IP Addresses from the previous step into my <code>/etc/hosts</code> file so we can resolve names to IP&rsquo;s</p>
+
+<p>Open up the the hosts file:</p>
+
+<pre><code class="bash">$ sudo vim /etc/hosts
+</code></pre>
+
+<p>In my example, my IP Addresses:</p>
+
+<pre><code>192.0.2.41  manager
+192.0.2.42  worker-1
+192.0.2.43  worker-2
+</code></pre>
+
+<p>Repeat the above steps on the other 2 Servers and make note of the IP Addresses of each node. You should be able to ping and reach the nodes that was configured. Make sure to allow all traffic between these nodes.</p>
+
+<h2>Initialize the Swarm:</h2>
+
+<p>Now we will initialize the swarm on the manager node and as we have more than one network interface, we will specify the &ndash;advertise-addr option:</p>
+
+<pre><code class="bash">$ docker swarm init --advertise-addr 192.0.2.41
+Swarm initialized: current node (siqyf3yricsvjkzvej00a9b8h) is now a manager.
+
+    To add a worker to this swarm, run the following command:
+
+    docker swarm join \
+    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 \
+    192.0.2.41:2377
+
+    To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+</code></pre>
+
+<p>From the response above, we received the join token that allows the workers to register with the manager node. If its a scenario where you want to have more than one manager node, you can run <code>docker swarm join-token manager</code> to receive the join token for additional manager.</p>
+
+<p>Let&rsquo;s add the two worker nodes to the manager:</p>
+
+<pre><code class="bash">$ [worker-1] docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.0.2.41:2377
+This node joined a swarm as a worker.
+</code></pre>
+
+<pre><code class="bash">$ [worker-2] docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.0.2.41:2377
+This node joined a swarm as a worker.
+</code></pre>
+
+<p>To see the node status, so that we can determine if the nodes are active/available etc, from the manager node, list all the nodes in the swarm:</p>
+
+<pre><code class="bash">[manager] $ docker node ls
+ID                           HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS
+j14mte3v1jhtbm3pb2qrpgwp6    worker-1  Ready   Active 
+siqyf3yricsvjkzvej00a9b8h *  master    Ready   Active        Leader
+srl5yzme5hxnzxal2t1efmwje    worker-2  Ready   Active
+</code></pre>
+
+<h2>Reobtaining the Join Tokens</h2>
+
+<p>If at any time, you lost your join token, it can be retrieved by running the following for the manager token:</p>
+
+<pre><code class="bash">$ docker swarm join-token manager -q SWMTKN-1-67chzvi4epx28ii18gizcia8idfar5hokojz660igeavnrltf0-09ijujbnnh4v960b8xel58pmj
+</code></pre>
+
+<p>And the following to retrieve the worker token:</p>
+
+<pre><code class="bash">$ docker swarm join-token worker -q SWMTKN-1-67chzvi4epx28ii18gizcia8idfar5hokojz660igeavnrltf0-acs21nn28v17uwhw0oqg5ibwx
+</code></pre>
+
+<p>Swarm Services in Docker uses a declarative model which means that you define the desired state of the service, and rely on Docker to maintain this state. More information on this can be found on their <a href="https://docs.docker.com/engine/swarm/how-swarm-mode-works/services/">Documentation</a></p>
+
+<p>At this moment, we will see that we have no services running in our swarm:</p>
+
+<pre><code class="bash">[manager] $ docker service ls
+ID  NAME  MODE  REPLICAS  IMAGE
+</code></pre>
+
+<h2>Deploying our First Service</h2>
+
+<p>Now onto the creation of a standard nginx service with 2 replicas, which means that there will be 2 containers of nginx running in our swarm.</p>
+
+<p>But first, we need to create a overlay network, which is a network driver that creates a distributed network among multiple Docker daemon hosts. Swarm takes care of the routing automatically, which is routed via the port mappings. So you can have that your container sits on worker-2, when you hit your manager node on the published port, it will route the request to the desired application that resides on the respective container.</p>
+
+<p>To create a overlay network called mynet:</p>
+
+<pre><code class="bash">[manager] $ docker network create --driver overlay mynet
+</code></pre>
+
+<p>Now onto creating the Service. If any of these containers fail, they will handled by the manager node and will be spawned again to have the desired number that we set on the replica option:</p>
+
+<pre><code class="bash">[manager] $ docker service create --name my-web --publish 8080:80 --replicas 2 --network mynet nginx
+</code></pre>
+
+<p>Let&rsquo;s have a look at our nginx service:</p>
+
+<pre><code class="bash">[manager] $ docker service ls
+ID            NAME    MODE        REPLICAS  IMAGE
+1okycpshfusq  my-web  replicated  2/2       nginx:latest
+</code></pre>
+
+<p>After we see that the replica count is 2/2 our service is ready.</p>
+
+<p>To see on which nodes our containers are running that makes up our service:</p>
+
+<pre><code class="bash">[manager] $ docker service ps my-web
+ID            NAME      IMAGE         NODE      DESIRED STATE  CURRENT STATE           ERROR  PORTS
+k0qqrh8s0c2d  my-web.1  nginx:latest  worker-1  Running        Running 30 seconds ago
+nku9wer6tmll  my-web.2  nginx:latest  worker-2  Running        Running 30 seconds ago
+</code></pre>
+
+<p>From the above output, we can see that worker-1 and worker-2 are serving our containers for our service. We can also retrieve more information of our service by using the inspect option, which will give you a detailed response in json format of the service:</p>
+
+<pre><code class="bash">[manager] $ docker service inspect my-web
+</code></pre>
+
+<p>We can get the Endpoint Port info by using inspect and using the &ndash;format parameter to filter the output:</p>
+
+<pre><code class="bash">[manager] $ docker service inspect --format="" my-web  | python -m json.tool
+</code></pre>
+
+<p>From the output we will find the PublishedPort is the Port that we Expose, which will be the listener. Our TargetPort will be the port that is listening on the container:</p>
+
+<pre><code class="json">[
+    {
+        "Protocol": "tcp",
+        "PublishMode": "ingress",
+        "PublishedPort": 8080,
+        "TargetPort": 80
+    }
+]
+</code></pre>
+
+<p>Now that we went through the inspection of our service, its time to test our base nginx service.</p>
+
+<h2>Testing Nginx in our Swarm</h2>
+
+<p>Make a request against your docker node manager address on the port that was exposed, in this case 8080:</p>
+
+<pre><code class="bash">$ curl -I http://docker-node-manager-ip:8080
+
+HTTP/1.1 200 OK
+Server: nginx/1.15.5
+Date: Thu, 10 Jan 2019 14:48:40 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 02 Oct 2018 14:49:27 GMT
+Connection: keep-alive
+ETag: "5bb38577-264"
+Accept-Ranges: bytes
+</code></pre>
+
+<p>Now we have successfull setup a 3 node docker swarm cluster and deployed a basic nginx service to our swarm. Please have a look at my other <a href="https://blog.ruanbekker.com/blog/categories/docker/">Docker Swarm Tutorials</a> for other content.</p>
+
+<h2>Thank You</h2>
+
+<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
+
+<center>
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick" />
+<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
+<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+</form>
+</center>
+
+
+<p><br></p>
+
+<p>Ad space:</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+
+
+<p><p></p>
+
+<p>Thanks for reading!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Golang Environment on Ubuntu]]></title>
@@ -426,214 +695,6 @@ web-1                      : ok=4    changed=1    unreachable=0    failed=0
 
 Deployed with Ansible
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Getting Started With Ansible on Ubuntu]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/07/08/getting-started-with-ansible-on-ubuntu/"/>
-    <updated>2018-07-08T15:56:06-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/07/08/getting-started-with-ansible-on-ubuntu</id>
-    <content type="html"><![CDATA[<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1531083331/ansible_tojf8l.png" alt="" /></p>
-
-<p><a href="">Part 1</a> - This is a getting started series on Ansible.</p>
-
-<p>The first post will be on how to setup ansible and how to reach your nodes in order to deploy software to your nodes.</p>
-
-<h2>Install Ansible:</h2>
-
-<p>Ansible relies on python, so we will first install the dependencies:</p>
-
-<pre><code class="bash">$ apt update &amp;&amp; apt install python python-setuptools -y
-$ easy_install pip
-$ pip install ansible
-</code></pre>
-
-<h2>Populate the invetory configuration:</h2>
-
-<p>Your invetory file will hold your host and variable information. Lets say we have 3 nodes that we want to deploy software to; <code>node-1</code>, <code>node-2</code> and <code>node-3</code>. We will group them under <code>nodes</code>. This will be saved under the a new file <code>inventory.init</code>:</p>
-
-<pre><code class="bash inventory.ini">[nodes]
-node-1
-node-2
-node-3
-</code></pre>
-
-<p>Next we will populate information about our node names, this will be done under our <code>~/.ssh/config</code> configuration:</p>
-
-<p>```bash ~/.ssh/config
-Host node-1
-  Hostname 10.0.0.2
-  User root
-  IdentityFile ~/.ssh/id_rsa
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null</p>
-
-<p>Host node-2
-  Hostname 10.0.0.3
-  User root
-  IdentityFile ~/.ssh/id_rsa
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null</p>
-
-<p>Host node-3
-  Hostname 10.0.0.4
-  User root
-  IdentityFile ~/.ssh/id_rsa
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-```</p>
-
-<p>Now we need to generate a ssh key for our node where we will run our ansible commands from:</p>
-
-<pre><code class="bash">$ ssh-keygen -b 2048 -f ~/.ssh/id_rsa -t rsa -q -N ""
-</code></pre>
-
-<p>Now we will copy the contents of <code>~/.ssh/id_rsa.pub</code> into our destination nodes <code>~/.ssh/authorized_keys</code> or if you have password authentication enabled, we can do <code>$ ssh-copy-id root@10.0.0.x</code> etc. Now we should be able to ssh to our nodes to <code>node-1, node-2</code> and <code>node-3</code>.</p>
-
-<h2>Deploy Python:</h2>
-
-<p>As Ansible requires Python, we need to bootstrap our nodes with Python. Since we are able to ssh to our nodes, we will use ansible to deploy Python to our nodes:</p>
-
-<pre><code class="bash">$ ansible -m raw -s -a "apt update &amp;&amp; apt install python -y" -i inventory.ini nodes
-</code></pre>
-
-<p>This should succeed, then we can test our connection by running the ping module:</p>
-
-<pre><code class="bash">$ ansible -i inventory.ini nodes -m ping
-node-2 | SUCCESS =&gt; {
-    "changed": false,
-    "ping": "pong"
-}
-node-3 | SUCCESS =&gt; {
-    "changed": false,
-    "ping": "pong"
-}
-node-1 | SUCCESS =&gt; {
-    "changed": false,
-    "ping": "pong"
-}
-</code></pre>
-
-<h2>Run a command on your nodes:</h2>
-
-<p>Let&rsquo;s run a cat command on all the nodes:</p>
-
-<pre><code class="bash">$ ansible -i inventory.ini nodes -a "/bin/cat /etc/hostname"
-node-3 | SUCCESS | rc=0 &gt;&gt;
-node-3
-
-node-1 | SUCCESS | rc=0 &gt;&gt;
-node-1
-
-node-2 | SUCCESS | rc=0 &gt;&gt;
-node-2
-</code></pre>
-
-<h2>Ansible Playbooks:</h2>
-
-<p>Let&rsquo;s run shell commands, the traditional hello world, using the ansible-playbook command. First we need a task definition, which I will name <code>shell_command-1.yml</code>:</p>
-
-<pre><code class="bash shell_command.yml">---
-# Echo Static String
-- hosts: nodes
-  tasks:
-  - name: echo static value
-    shell: /bin/echo "hello world"
-    register: echo_static
-  - debug: msg=""
-</code></pre>
-
-<p>Now we have defined that our commands will be executed against the host group defined in our inventory.ini. Let&rsquo;s run our ansible playbook command:</p>
-
-<pre><code class="bash">$ ansible-playbook -i inventory.ini shell_command.yml
-
-PLAY [nodes] *************************************************************************************
-
-TASK [Gathering Facts] **********************************************************************************
-ok: [node-1]
-ok: [node-2]
-ok: [node-3]
-
-TASK [echo static value] ********************************************************************************
-changed: [node-1]
-changed: [node-2]
-changed: [node-3]
-
-TASK [debug] ********************************************************************************************
-ok: [node-1] =&gt; {
-    "msg": "hello world"
-}
-ok: [node-2] =&gt; {
-    "msg": "hello world"
-}
-ok: [node-3] =&gt; {
-    "msg": "hello world"
-}
-
-PLAY RECAP **********************************************************************************************
-node-1              : ok=3    changed=1    unreachable=0    failed=0
-node-2              : ok=3    changed=1    unreachable=0    failed=0
-node-3              : ok=3    changed=1    unreachable=0    failed=0
-</code></pre>
-
-<p>Let&rsquo;s define a variable <code>location_city = Cape Town</code> in our <code>inventory.ini</code> configuration, then we will call the variable key in our task definition:</p>
-
-<pre><code class="bash inventory.ini">[nodes]
-node-1
-node-2
-node-3
-
-[nodes:vars]
-location_city="Cape Town"
-</code></pre>
-
-<p>Now our task definition with our variable:</p>
-
-<pre><code class="yml shell_command-2.yml">---
-# Echo Variable
-- hosts: nodes
-  tasks:
-  - name: echo variable value
-    shell: /bin/echo ""
-    register: echo
-  - debug: msg=""
-</code></pre>
-
-<p>Running our ansible-playbook:</p>
-
-<pre><code class="bash">$ ansible-playbook -i inventory.ini shell_command.yml
-
-PLAY [nodes] **************************************************************************************************************************************************************************************
-
-TASK [Gathering Facts] ***********************************************************************************************************************************************************************************
-ok: [node-1]
-ok: [node-2]
-ok: [node-3]
-
-TASK [echo variable value] *******************************************************************************************************************************************************************************
-changed: [node-1]
-changed: [node-2]
-changed: [node-3]
-
-TASK [debug] *********************************************************************************************************************************************************************************************
-ok: [node-1] =&gt; {
-    "msg": "Cape Town"
-}
-ok: [node-2] =&gt; {
-    "msg": "Cape Town"
-}
-ok: [node-3] =&gt; {
-    "msg": "Cape Town"
-}
-
-PLAY RECAP ***********************************************************************************************************************************************************************************************
-node-1              : ok=3    changed=1    unreachable=0    failed=0
-node-2              : ok=3    changed=1    unreachable=0    failed=0
-node-3              : ok=3    changed=1    unreachable=0    failed=0
-</code></pre>
-
-<p>This is it for this post, all posts for this tutorial will be posted under <a href="http://blog.ruanbekker.com/blog/categories/ansible-tutorial">#ansible-tutorials</a></p>
 ]]></content>
   </entry>
   

@@ -12,6 +12,19 @@ Docker Swarm is a Clustering and Orchestration Framework for the Docker ecosyste
 
 In this Tutorial we will Setup a 3 Node Docker Swarm Cluster and to Demonstrate How Easy it is to Deploy a Web Application with 2 Replicas from a Docker Image.
 
+<br>
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+<br>
+
 ## Overview of What we will be Doing
 
 - Install Docker on 3 Servers with Ubuntu 16.04
@@ -263,21 +276,6 @@ Please feel free to show support by, **sharing** this post, making a **donation*
 <input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
 </form>
 </center>
-
-<br>
-
-Ad space:
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
 
 <p>
 

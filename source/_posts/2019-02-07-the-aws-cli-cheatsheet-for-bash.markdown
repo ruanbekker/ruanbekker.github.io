@@ -6,6 +6,8 @@ comments: true
 categories: ["aws", "bash", "cli"] 
 ---
 
+![](https://user-images.githubusercontent.com/30043398/52399083-cdb9b580-2ac3-11e9-8c8a-79fcb811de18.png)
+
 This is a post for all the AWS CLI oneliners that I stumble upon. Note that they will be updated over time.
 
 ## SSM Parameter Store:

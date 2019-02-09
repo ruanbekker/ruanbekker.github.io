@@ -45,8 +45,8 @@ $ sudo -u postgres createdb --owner=concourse atc
 Download the Concourse and Fly Cli Binaries:
 
 ```bash
-$ wget https://github.com/concourse/concourse/releases/download/v3.6.0/concourse_linux_amd64
-$ wget https://github.com/concourse/concourse/releases/download/v3.6.0/fly_linux_amd64
+$ wget https://github.com/concourse/concourse/releases/download/v4.2.2/concourse_linux_amd64
+$ wget https://github.com/concourse/concourse/releases/download/v4.2.2/fly_linux_amd64
 $ chmod +x concourse_linux_amd64 fly_linux_amd64
 $ mv concourse_linux_amd64 /usr/bin/concourse
 $ mv fly_linux_amd64 /usr/bin/fly
@@ -67,13 +67,15 @@ Concourse Web Process Configuration:
 ```bash
 $ cat /etc/concourse/web_environment
 
+CONCOURSE_ADD_LOCAL_USER=ruan:pass
 CONCOURSE_SESSION_SIGNING_KEY=/etc/concourse/session_signing_key
 CONCOURSE_TSA_HOST_KEY=/etc/concourse/tsa_host_key
 CONCOURSE_TSA_AUTHORIZED_KEYS=/etc/concourse/authorized_worker_keys
-CONCOURSE_POSTGRES_SOCKET=/var/run/postgresql
-
-CONCOURSE_BASIC_AUTH_USERNAME=admin
-CONCOURSE_BASIC_AUTH_PASSWORD=secret
+CONCOURSE_POSTGRES_HOST=127.0.0.1
+CONCOURSE_POSTGRES_USER=concourse
+CONCOURSE_POSTGRES_PASSWORD=concourse
+CONCOURSE_POSTGRES_DATABASE=atc
+CONCOURSE_MAIN_TEAM_LOCAL_USER=ruan
 CONCOURSE_EXTERNAL_URL=http://10.20.30.40:8080
 ```
 
@@ -83,16 +85,16 @@ Concourse Worker Process Configuration:
 $ cat /etc/concourse/worker_environment
 
 CONCOURSE_WORK_DIR=/var/lib/concourse
-CONCOURSE_TSA_WORKER_PRIVATE_KEY=/etc/concourse/worker_key
+CONCOURSE_TSA_HOST=127.0.0.1:2222
 CONCOURSE_TSA_PUBLIC_KEY=/etc/concourse/tsa_host_key.pub
-CONCOURSE_TSA_HOST=127.0.0.1
+CONCOURSE_TSA_WORKER_PRIVATE_KEY=/etc/concourse/worker_key
 ```
 
 Create a Concourse user:
 
 ```bash
 $ sudo adduser --system --group concourse
-$ sudo chown -R concourse:concourse /etc/concourse
+$ sudo chown -R concourse:concourse /etc/concourse /var/lib/concourse
 $ sudo chmod 600 /etc/concourse/*_environment
 ```
 
@@ -134,11 +136,20 @@ ExecStart=/usr/bin/concourse worker
 WantedBy=multi-user.target
 ```
 
+Create a postgres password for the concourse user:
+
+```bash
+$ cd /home/concourse/
+$ sudo -u concourse psql atc
+atc=> ALTER USER concourse WITH PASSWORD 'concourse';
+atc=> \q
+```
+
 Start and Enable the Services:
 
 ```bash
 $ systemctl start concourse-web concourse-worker
-$ systemctl enable concourse-web concourse-worker
+$ systemctl enable concourse-web concourse-worker postgresql
 $ systemctl status concourse-web concourse-worker
 
 $ systemctl is-active concourse-worker concourse-web
@@ -172,7 +183,7 @@ udp        0      0 0.0.0.0:42165           0.0.0.0:*                           
 I will be using a the Fly cli from a Mac, so first we need to download the fly-cli for Mac:
 
 ```bash
-$ wget https://github.com/concourse/concourse/releases/download/v3.6.0/fly_darwin_amd64
+$ wget https://github.com/concourse/concourse/releases/download/v4.2.2/fly_darwin_amd64
 $ chmod +x fly_darwin_amd64
 $ alias fly='./fly_darwin_amd64'
 ```

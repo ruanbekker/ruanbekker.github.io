@@ -184,4 +184,6 @@ Hostname is: 3ccb3c28-d452-4068-5ea1-101153803d93
 succeeded
 ```
 
+The source code for this example can be found at [https://github.com/ruanbekker/concourse-tutorial/tree/master/03-task-scripts](https://github.com/ruanbekker/concourse-tutorial/tree/master/03-task-scripts)
+
 That's it for Task Inputs and Task Scripts on Concourse, please feel free to have a look at my other content about [Concourse](http://blog.ruanbekker.com/blog/categories/concourse/)

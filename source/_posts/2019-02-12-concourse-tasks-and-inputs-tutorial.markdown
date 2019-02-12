@@ -140,9 +140,9 @@ The source code for this can be found at [https://github.com/ruanbekker/concours
 
 In conjunction with inputs, we can let our task configuration reference a script that we want to execute, and using inputs, we can upload the current working directory to concourse, so then the container has context about the data that it needs.
 
-Our task configuration:
+Our task configuration `task_show_hostname.yml`
 
-```bash task_show_hostname.yml
+```bash
 platform: linux
 
 image_resource:
@@ -156,9 +156,9 @@ run:
   path: ./03-task-scripts/task_show_hostname.sh
 ```
 
-Our executable script:
+Our executable script `03-task-scripts/task_show_hostname.sh`
 
-``` 03-task-scripts/task_show_hostname.sh
+```bash
 #!/bin/sh
 
 get_hostname=$(hostname)

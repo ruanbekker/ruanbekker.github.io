@@ -151,8 +151,9 @@ The bash script will get the authentication token which will be used as the pass
 ```bash
 #!/bin/bash
 db_endpoint="rbtest.abcdefgh.eu-west-1.rds.amazonaws.com"
-auth_token="$(aws --profile dbuser rds generate-db-auth-token --hostname $RDSHOST --port 3306 --username mydbaccount )"
-mysql --host=$db_endpoint --port=3306 --enable-cleartext-plugin --user=mydbaccount --password=$auth_token
+local_mysql_user="mydbaccount"
+auth_token="$(aws --profile dbuser rds generate-db-auth-token --hostname ${RDSHOST} --port 3306 --username ${local_mysql_user} )"
+mysql --host=${db_endpoint} --port=3306 --enable-cleartext-plugin --user=${local_mysql_user} --password=${auth_token}
 ```
 
 ## Testing it out:
@@ -238,7 +239,7 @@ get_auth_token() {
 
 connect_to_rds() {
   mysql_bin=$(which mysql | head -1)
-  $mysql_bin --host=$rds_hostname --port=3306 --enable-cleartext-plugin --user=$rds_username --password=$auth_token
+  ${mysql_bin} --host=${rds_hostname} --port=3306 --enable-cleartext-plugin --user=${rds_username} --password=${auth_token}
 }
 
 if [ "$1" == "help" ] 

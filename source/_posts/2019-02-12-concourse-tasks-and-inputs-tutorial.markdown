@@ -72,7 +72,7 @@ run:
   args: ['-alR']
 ```
 
-As you can see our input name is called `my-input` and we will use the cli to map the local folder `my-data-folder`` to the parameter name:
+As you can see our input name is called `my-input` and we will use the cli to map the local folder `my-data-folder` to the parameter name:
 
 ```bash
 $ fly -t ci e -c inputs_required.yml -i my-input=./my-data-folder/

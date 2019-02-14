@@ -6,6 +6,8 @@ comments: true
 categories: ["python", "flask", "caching"]
 ---
 
+![](https://user-images.githubusercontent.com/567298/52816968-216f6480-30ab-11e9-9d19-6418ba51563b.png)
+
 If you depending on a external source to return static data you can implement `cachetools` to cache data from preventing the overhead to make the request everytime you make a request to Flask.
 
 This is useful when your upstream data does not change often. This is configurable with `maxsize` and `ttl` so whenever the first one's threshold is met, the application will fetch new data whenever the request has been made to your application.

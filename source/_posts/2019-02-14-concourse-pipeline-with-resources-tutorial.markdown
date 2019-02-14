@@ -6,6 +6,8 @@ comments: true
 categories: ["concourse", "pipelines", "ci", "devops", "automation"]
 ---
 
+![](https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495)
+
 In Concourse, Resources refer to external resource types such as `s3`, `github` etc. 
 
 So for example, we can run a pipeline which pulls data from github, such as cloning a repository, so in other words the data that was cloned from the github repository is within the container where your tasks will be executed.

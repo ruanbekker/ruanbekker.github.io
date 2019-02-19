@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-02-19T09:31:11-05:00</updated>
+  <updated>2019-02-19T10:32:19-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,151 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Parallel Processing on AWS Lambda With Python Using Multiprocessing]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/02/19/parallel-processing-on-aws-lambda-with-python-using-multiprocessing/"/>
+    <updated>2019-02-19T09:39:47-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/02/19/parallel-processing-on-aws-lambda-with-python-using-multiprocessing</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/53020033-c51b9480-345e-11e9-9625-b73062e2464a.png" alt="" /></p>
+
+<p>If you are trying to use <code>multiprocessing.Queue</code> or <code>multiprocessing.Pool</code> on AWS Lambda, you are probably getting the exception:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>[Errno 38] Function not implemented: OSError
+</span><span class='line'>
+</span><span class='line'>    sl = self._semlock = _multiprocessing.SemLock(kind, value, maxvalue)
+</span><span class='line'>OSError: [Errno 38] Function not implemented</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The reason for that is due to the Lambda execution environment not having support on shared memory for processes, therefore you can’t use <code>multiprocessing.Queue</code> or <code>multiprocessing.Pool</code>.</p>
+
+<p>As a workaround, Lambda does support the usage of <code>multiprocessing.Pipe</code> instead of Queue.</p>
+
+<h2>Parallel Processing on Lambda Example</h2>
+
+<p>Below is a very basic example on how you would achieve the task of executing parallel processing on AWS Lambda for Python:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">time</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">multiprocessing</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">region_maps</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&quot;eu-west-1&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="s">&quot;dynamodb&quot;</span><span class="p">:</span><span class="s">&quot;dynamodb.eu-west-1.amazonaws.com&quot;</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;us-east-1&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="s">&quot;dynamodb&quot;</span><span class="p">:</span><span class="s">&quot;dynamodb.us-east-1.amazonaws.com&quot;</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;us-east-2&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="s">&quot;dynamodb&quot;</span><span class="p">:</span> <span class="s">&quot;dynamodb.us-east-2.amazonaws.com&quot;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">multiprocessing_func</span><span class="p">(</span><span class="n">region</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">endpoint</span> <span class="o">=</span> <span class="n">region_maps</span><span class="p">[</span><span class="n">region</span><span class="p">][</span><span class="s">&#39;dynamodb&#39;</span><span class="p">]</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&#39;endpoint for {} is {}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">region</span><span class="p">,</span> <span class="n">endpoint</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">starttime</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">processes</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'>    <span class="n">regions</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;us-east-1&#39;</span><span class="p">,</span> <span class="s">&#39;us-east-2&#39;</span><span class="p">,</span> <span class="s">&#39;eu-west-1&#39;</span><span class="p">]</span>
+</span><span class='line'>    <span class="k">for</span> <span class="n">region</span> <span class="ow">in</span> <span class="n">regions</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">p</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">multiprocessing_func</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">region</span><span class="p">,))</span>
+</span><span class='line'>        <span class="n">processes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+</span><span class='line'>        <span class="n">p</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">for</span> <span class="n">process</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">process</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">output</span> <span class="o">=</span> <span class="s">&#39;That took {} seconds&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">starttime</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">output</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The output when the function gets invoked:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">pid</span><span class="p">:</span> <span class="mi">30913</span> <span class="o">-</span> <span class="n">endpoint</span> <span class="k">for</span> <span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mi">1</span> <span class="ow">is</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mf">1.</span><span class="n">amazonaws</span><span class="o">.</span><span class="n">com</span>
+</span><span class='line'><span class="n">pid</span><span class="p">:</span> <span class="mi">30914</span> <span class="o">-</span> <span class="n">endpoint</span> <span class="k">for</span> <span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mi">2</span> <span class="ow">is</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mf">2.</span><span class="n">amazonaws</span><span class="o">.</span><span class="n">com</span>
+</span><span class='line'><span class="n">pid</span><span class="p">:</span> <span class="mi">30915</span> <span class="o">-</span> <span class="n">endpoint</span> <span class="k">for</span> <span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mi">1</span> <span class="ow">is</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mf">1.</span><span class="n">amazonaws</span><span class="o">.</span><span class="n">com</span>
+</span><span class='line'><span class="n">That</span> <span class="n">took</span> <span class="mf">1.014902114868164</span> <span class="n">seconds</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
+
+<center>
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick" />
+<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
+<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
+</form>
+</center>
+
+
+<p><br></p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Sharing Global Variables in Python Using Multiprocessing]]></title>
@@ -4222,212 +4367,6 @@
 <p><p></p>
 
 <p>Thanks for reading!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Creating a UI in Python Flask and Bootstrap for Our Serverless URL Shortener]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/12/18/creating-a-ui-in-python-flask-and-bootstrap-for-our-serverless-url-shortener/"/>
-    <updated>2018-12-18T09:35:53-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/12/18/creating-a-ui-in-python-flask-and-bootstrap-for-our-serverless-url-shortener</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/python-flask.png" alt="" /></p>
-
-<p>From a <a href="https://blog.ruanbekker.com/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws/">previous</a> post, we went through the setup of building a <a href="https://blog.ruanbekker.com/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws/">Serverless URL Shortener with API Gateway, Lambda, and DynamoDB on AWS</a>. Today we will build a Web User Interface using Python Flask, Bootstrap and JavaScript that will communicate to our API to shorten URL&rsquo;s.</p>
-
-<p>Note: Although using Python Flask is a Hosted option, you could also use <a href="https://s3-us-west-2.amazonaws.com/sha-public-us-west-2/URLShortener/index.html">this example</a> to host it as a web page on Amazon S3, for the complete serverless route.</p>
-
-<h2>Dependencies:</h2>
-
-<p>We need Flask, Gunicorn (optional) and Requests:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install flask gunicorn requests
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Application Code:</h2>
-
-<p>It&rsquo;s good practice to use a API Key for some level of security, but if not, you can just remove the headers section of <code>x-api-key</code>.</p>
-
-<p>The application relies on 3 environment variables: <code>APP_TITLE</code> - which is the banner name (defaults to &ldquo;My URL Shortener&rdquo; if none is set), <code>TINY_API_URL</code> - which is the URL to create the shortened url and <code>X_API_KEY</code> which is the api key for your API.</p>
-
-<p>The content of <code>app.py</code> :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">render_template</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">url_for</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">os</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">sys</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">socket</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">logging</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">tiny_api_url</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;TINY_API_URL&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
-</span><span class='line'><span class="n">tiny_api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;X_API_KEY&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
-</span><span class='line'><span class="n">app_title</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;APP_TITLE&#39;</span><span class="p">,</span> <span class="s">&#39;My URL Shortener&#39;</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">tiny_api_url</span> <span class="o">==</span> <span class="bp">None</span> <span class="ow">or</span> <span class="n">tiny_api_key</span> <span class="o">==</span> <span class="bp">None</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">logging</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&quot;Failed to load configuration&quot;</span><span class="p">)</span>
-</span><span class='line'>    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">headers</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;Content-Type&#39;</span><span class="p">:</span> <span class="s">&#39;application/json&#39;</span><span class="p">,</span> <span class="s">&#39;X-Api-Key&#39;</span><span class="p">:</span> <span class="n">tiny_api_key</span><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s">&#39;index.html&#39;</span><span class="p">,</span> <span class="n">app_title</span><span class="o">=</span><span class="n">app_title</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/shortened&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;GET&#39;</span><span class="p">,</span> <span class="s">&#39;POST&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">search_request</span><span class="p">():</span>
-</span><span class='line'>    <span class="n">user_url</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s">&quot;input&quot;</span><span class="p">]</span>
-</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
-</span><span class='line'>        <span class="n">tiny_api_url</span><span class="p">,</span>
-</span><span class='line'>        <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span>
-</span><span class='line'>        <span class="n">data</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
-</span><span class='line'>            <span class="s">&quot;long_url&quot;</span><span class="p">:</span> <span class="n">user_url</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>        <span class="p">)</span>
-</span><span class='line'>    <span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s">&#39;results.html&#39;</span><span class="p">,</span> <span class="n">app_title</span><span class="o">=</span><span class="n">app_title</span><span class="p">,</span> <span class="n">res</span><span class="o">=</span><span class="n">response</span><span class="o">.</span><span class="n">content</span> <span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">passthrough_errors</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>JavaScript</h2>
-
-<p>We want to copy the value of the shortened url response to clipboard when clicking on a button. For that functionality, we need some javascript.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p static/js
-</span><span class='line'><span class="nv">$ </span>touch static/js/clipboard.js
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>the content for our javascript function - <code>static/js/clipboard.js</code> :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='javascript'><span class='line'><span class="kd">function</span> <span class="nx">copyToClipboard</span><span class="p">()</span> <span class="p">{</span>
-</span><span class='line'>  <span class="kd">var</span> <span class="nx">copyText</span> <span class="o">=</span> <span class="nb">document</span><span class="p">.</span><span class="nx">getElementById</span><span class="p">(</span><span class="s2">&quot;input&quot;</span><span class="p">);</span>
-</span><span class='line'>  <span class="nx">copyText</span><span class="p">.</span><span class="nx">select</span><span class="p">();</span>
-</span><span class='line'>  <span class="nb">document</span><span class="p">.</span><span class="nx">execCommand</span><span class="p">(</span><span class="s2">&quot;Copy&quot;</span><span class="p">);</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>HTML</h2>
-
-<p>The content for <code>templates/index.html</code> :</p>
-
-<script src="https://gist.github.com/ruanbekker/0c12fd81c94dc9019641dd536d704519.js"></script>
-
-
-<p>The content for <code>templates/results.html</code> :</p>
-
-<script src="https://gist.github.com/ruanbekker/01e27db70d4a2f60393b927697b2ca57.js"></script>
-
-
-<h2>Run the Server</h2>
-
-<p>Before we run the server, we need to set the environment variables as mentioned earlier:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">TINY_API_URL</span><span class="o">=</span>https://tiny-api.mydomain.com/create
-</span><span class='line'><span class="nv">X_API_KEY</span><span class="o">=</span>someRandomSecretKey09876543210
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Run the Server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gunicorn -w <span class="m">2</span> -b 0.0.0.0:8080 --access-logfile<span class="o">=</span>/dev/stdout --error-log<span class="o">=</span>/dev/stderr app:app
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After booting the server, access the server on <code>http://localhost:8080/</code> and the response should look like:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50162763-c5c16e80-02e7-11e9-8744-a4c3c3c51f8e.png" alt="" /></p>
-
-<h2>Dockerizing this Application</h2>
-
-<p>The source code for this project is available on my <a href="https://github.com/ruanbekker/flask-url-shortener-ui">github repository</a></p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-
 ]]></content>
   </entry>
   

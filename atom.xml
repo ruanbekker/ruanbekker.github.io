@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-02-19T10:32:19-05:00</updated>
+  <updated>2019-02-21T17:44:24-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,382 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Building Python Serverless Slack Apps on OpenFaas]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/02/21/building-python-serverless-slack-apps-on-openfaas/"/>
+    <updated>2019-02-21T16:29:15-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/02/21/building-python-serverless-slack-apps-on-openfaas</id>
+    <content type="html"><![CDATA[<p><img src="https://camo.githubusercontent.com/cf01eefb5b6905f3774376d6d1ed55b8f052d211/68747470733a2f2f626c6f672e616c6578656c6c69732e696f2f636f6e74656e742f696d616765732f323031372f30382f666161735f736964652e706e67" alt="" /></p>
+
+<p>If you are not familliar with OpenFaas, it&rsquo;s definitely time that you should have a look at it, plus, they are doing some pretty awesome work!</p>
+
+<p>From their documentation: &ldquo;OpenFaaS (Functions as a Service) is a framework for building serverless functions with Docker and Kubernetes which has first class support for metrics. Any process can be packaged as a function enabling you to consume a range of web events without repetitive boiler-plate coding.&rdquo;</p>
+
+<p>Make sure to give them a visit at <a href="https://docs.openfaas.com">openfaas.com</a> and while you are there, in the world of serverless, have a look at how Alex outlines architecture and patterns he applies in a real-world example, <a href="https://www.openfaas.com/blog/serverless-single-page-app/">absolutely great read!</a></p>
+
+<h2>What are we doing today?</h2>
+
+<p>Today we will build a slack app using python which we will deploy as a function on OpenFaas!</p>
+
+<p>Our slash command will make a request to our <code>slack-request</code> function, which will respond with a json string, which will then be parsed in a slack attachment message, then based on your button decision, it will then invoke our <code>slack-interaction</code> function, which will then respond with another message that will allow you to follow the embedded link.</p>
+
+<p>The slack messages are really basic, but you can create a awesome workflow using slack apps. And the best of all, its running on OpenFaas!</p>
+
+<h2>Deploying OpenFaas</h2>
+
+<p>Docker Swarm and Kubernetes are supported, but since I am using Docker Swarm at the moment of writing, this tutorial will show how to deploy OpenFaas to your cluster. Have a look at <a href="https://docs.openfaas.com/deployment/docker-swarm/">OpenFaas Documentation</a> for more detailed information.</p>
+
+<p>Installing OpenFaas CLI for Mac:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew install faas-cli
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the OpenFaas Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>git clone https://github.com/openfaas/faas
+</span><span class='line'><span class="nv">$ </span><span class="nb">cd </span>faas
+</span><span class='line'><span class="nv">$ </span>./deploy_stack.sh
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Credentials: The default configuration will create credentials for you and returns instructions on how to authorize faas-cli, for demonstration it will look more or less like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> -n &lt;some_hash_secret&gt; <span class="p">|</span> faas-cli login --username<span class="o">=</span>admin --password-stdin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The UI will be available at: <a href="http://127.0.0.1:8080.">http://127.0.0.1:8080.</a> For this demonstration we will only use the cli.</p>
+
+<h2>Create the Functions</h2>
+
+<p>I will create 2 python functions:</p>
+
+<ul>
+<li>The <code>slack-request</code> function, which will be associated to the slash command</li>
+<li>The <code>slack-interactive</code> function, which will be used for interactivity</li>
+</ul>
+
+
+<p>Create a home directory for your functions and create 2 functions:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p ~/functions <span class="o">&amp;&amp;</span> <span class="nb">cd</span> ~/functions
+</span><span class='line'><span class="nv">$ </span>faas-cli new --lang python slack-request
+</span><span class='line'><span class="nv">$ </span>faas-cli new --lang python slack-interactive
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the <a href="https://docs.openfaas.com/tutorials/first-python-function/">documentation</a> if you&rsquo;d like to learn more.</p>
+
+<p>Configure the first function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim slack-request/handler.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And our function code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Serverless Message&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&quot;attachments&quot;</span><span class="p">:</span> <span class="p">[{</span>
+</span><span class='line'>            <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;The Awesome world of Serverless introduces: OpenFaas!&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;fields&quot;</span><span class="p">:</span> <span class="p">[{</span>
+</span><span class='line'>                <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;Amazing Level&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;10&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;short&quot;</span><span class="p">:</span> <span class="bp">True</span>
+</span><span class='line'>            <span class="p">},</span>
+</span><span class='line'>      <span class="p">{</span>
+</span><span class='line'>                <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;Github Stars&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;15k +&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;short&quot;</span><span class="p">:</span> <span class="bp">True</span>
+</span><span class='line'>            <span class="p">}],</span>
+</span><span class='line'>            <span class="s">&quot;author_name&quot;</span><span class="p">:</span> <span class="s">&quot;OpenFaas&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;author_icon&quot;</span><span class="p">:</span> <span class="s">&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;image_url&quot;</span><span class="p">:</span> <span class="s">&quot;https://blog.alexellis.io/content/images/2017/08/small.png&quot;</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;About OpenFaas&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;OpenFaaS is a framework for packaging code, binaries or containers as Serverless functions on any platform.&quot;</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="s">&quot;fallback&quot;</span><span class="p">:</span> <span class="s">&quot;Would you recommend OpenFaas to your friends?&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;Would you recommend OpenFaas to your friends?&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;callback_id&quot;</span><span class="p">:</span> <span class="s">&quot;response123&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;color&quot;</span><span class="p">:</span> <span class="s">&quot;#3AA3E3&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;attachment_type&quot;</span><span class="p">:</span> <span class="s">&quot;default&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;actions&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>                <span class="p">{</span>
+</span><span class='line'>                    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;recommend&quot;</span><span class="p">,</span>
+</span><span class='line'>                    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Ofcourse!&quot;</span><span class="p">,</span>
+</span><span class='line'>                    <span class="s">&quot;type&quot;</span><span class="p">:</span> <span class="s">&quot;button&quot;</span><span class="p">,</span>
+</span><span class='line'>                    <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;recommend&quot;</span>
+</span><span class='line'>                <span class="p">},</span>
+</span><span class='line'>                <span class="p">{</span>
+</span><span class='line'>                    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;definitely&quot;</span><span class="p">,</span>
+</span><span class='line'>                    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Most Definitely!&quot;</span><span class="p">,</span>
+</span><span class='line'>                    <span class="s">&quot;type&quot;</span><span class="p">:</span> <span class="s">&quot;button&quot;</span><span class="p">,</span>
+</span><span class='line'>                    <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;definitely&quot;</span>
+</span><span class='line'>                <span class="p">}</span>
+</span><span class='line'>            <span class="p">]</span>
+</span><span class='line'>        <span class="p">}]</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since our response needs to be parsed as json, we need to set the content type for our environment in our yaml configuration. Read more on it <a href="https://docs.openfaas.com/reference/yaml/">here</a>. Edit the <code>slack-request.yml</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">provider</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">faas</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">gateway</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://&lt;your.gw.address&gt;:8080</span>
+</span><span class='line'><span class="l-Scalar-Plain">functions</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">slack-request</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">lang</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">python</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">handler</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">./slack-request</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">&lt;your-repo&gt;/slack-request:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">content_type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">application/json</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we need to build our image, push it to our repository like dockerhub, then deploy to openfaas:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli build -f ./slack-request.yml
+</span><span class='line'><span class="nv">$ </span>faas-cli push -f ./slack-request.yml
+</span><span class='line'><span class="nv">$ </span>faas-cli deploy -f ./slack-request.yml
+</span><span class='line'>Deploying: slack-request.
+</span><span class='line'>
+</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
+</span><span class='line'>URL: http://your.gw.address:8080/function/slack-interactive
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure the <code>slack-interactive</code> function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim slack-interactive/handler.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note that whenever your interact with the first message, a post request will be made against the interactivity request url, you will notice that I decoded the payload (but not doing anything with it), where you will find the callback_id, request_url etc. But for simplicity, I am just using a static json message to respond. Our function code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">urllib</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">urlstring</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">unquote</span><span class="p">(</span><span class="n">req</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s">&#39;payload=&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">urlstring</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&quot;attachments&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>            <span class="p">{</span>
+</span><span class='line'>                <span class="s">&quot;replace_original&quot;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;response_type&quot;</span><span class="p">:</span> <span class="s">&quot;ephemeral&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;fallback&quot;</span><span class="p">:</span> <span class="s">&quot;Required plain-text summary of the attachment.&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;color&quot;</span><span class="p">:</span> <span class="s">&quot;#36a64f&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;pretext&quot;</span><span class="p">:</span> <span class="s">&quot;Ahh yeah! Great choice, OpenFaas is absolutely brilliant!&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;author_name&quot;</span><span class="p">:</span> <span class="s">&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;author_link&quot;</span><span class="p">:</span> <span class="s">&quot;https://github.com/openfaas/faas&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;author_icon&quot;</span><span class="p">:</span> <span class="s">&quot;http://flickr.com/icons/bobby.jpg&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;OpenFaas&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;title_link&quot;</span><span class="p">:</span> <span class="s">&quot;https://github.com/openfaas/faas&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Head over to OpenFaas&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;image_url&quot;</span><span class="p">:</span> <span class="s">&quot;https://avatars2.githubusercontent.com/u/27013154?s=400&amp;v=4&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;thumb_url&quot;</span><span class="p">:</span> <span class="s">&quot;https://github.com/openfaas/faas&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;footer&quot;</span><span class="p">:</span> <span class="s">&quot;Slack Apps built on OpenFaas&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;footer_icon&quot;</span><span class="p">:</span> <span class="s">&quot;https://a.slack-edge.com/45901/marketing/img/_rebrand/meta/slack_hash_256.png&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;ts&quot;</span><span class="p">:</span> <span class="mi">123456789</span>
+</span><span class='line'>            <span class="p">}</span>
+</span><span class='line'>        <span class="p">]</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We also need to set the content type to json:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>provider:
+</span><span class='line'>  name: faas
+</span><span class='line'>  gateway: http://&lt;your.gw.address&gt;:8080
+</span><span class='line'>functions:
+</span><span class='line'>  slack-interactive:
+</span><span class='line'>    lang: python
+</span><span class='line'>    handler: ./slack-interactive
+</span><span class='line'>    image: &lt;repo&gt;/slack-interactive:latest
+</span><span class='line'>    environment:
+</span><span class='line'>      content_type: application/json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Build, deploy and ship:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli build -f ./slack-interactive.yml
+</span><span class='line'><span class="nv">$ </span>faas-cli push -f ./slack-interactive.yml
+</span><span class='line'><span class="nv">$ </span>faas-cli deploy -f ./slack-interactive.yml
+</span><span class='line'>
+</span><span class='line'>Deploying: slack-interactive.
+</span><span class='line'>
+</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
+</span><span class='line'>URL: http://&lt;your.gw.address&gt;:8080/function/slack-interactive
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When your functions are deployed, go ahead and create the slack app.</p>
+
+<h2>Create the Slack App</h2>
+
+<ul>
+<li>Head over to <a href="https://api.slack.com/apps">https://api.slack.com/apps</a> and create a new app</li>
+<li>Create a incoming webhook</li>
+<li>Head over to slash commands and create a new command, in my case it was <code>/supersam</code>, set the request url to the public endpoint of your function: <code>http://pub-ip:8080/function/slack-request</code></li>
+<li>Head over to interactive components, set the request url for the interactivity: <code>http://pub-ip:8080/function/slack-interactive</code></li>
+<li>If you dont have a public routable address, have a look at <a href="https://ngrok.com">ngrok</a></li>
+</ul>
+
+
+<p>Once you are set, you should be able to see the slash command integration in your slack workspace, head over to slacks <a href="https://api.slack.com/docs">documentation</a> if you run into any trouble.</p>
+
+<h2>Test your Slack App</h2>
+
+<p>Now that everything is good to go, its time to test your slack app running on OpenFaas!</p>
+
+<p>Head over to slack and run your command <code>/&lt;your-slack-slash-command&gt;</code>. You should see this output:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/53206700-56932e00-363a-11e9-8d44-dfd27f005ab0.png" alt="" /></p>
+
+<p>When you select one of the buttons, you will get a new message:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/53206764-74f92980-363a-11e9-91cb-6cfc30c74457.png" alt="" /></p>
+
+<p>This is a real basic example of slack apps, but slack apps are really powerful. You can for example create a slack app that deploys ephemeral environments on swarm, or create change management approval workflows etc.</p>
+
+<p>I hope this was informative, I am really enjoying OpenFaas at the moment and if your have not tested it, I encourage you to try it out, its really, really amazing!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Parallel Processing on AWS Lambda With Python Using Multiprocessing]]></title>
@@ -4048,286 +4424,6 @@
 <ul>
 <li><a href="https://docs.gitlab.com/ee/ci/">Gitlab CI/CD Docs</a></li>
 <li><a href="https://hackernoon.com/setting-up-ci-cd-on-gitlab-step-by-step-guide-part-1-826385728223">Full CI/CD Example with Gitlab and Heroku</a></li>
-</ul>
-
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<p>Ad space:</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-
-
-<p><p></p>
-
-<p>Thanks for reading!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Resizing Hetzner Cloud Block Storage Volumes on the Fly]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/12/19/resizing-hetzner-cloud-block-storage-volumes-on-the-fly/"/>
-    <updated>2018-12-19T00:59:11-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/12/19/resizing-hetzner-cloud-block-storage-volumes-on-the-fly</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50203557-96a01100-036a-11e9-8fd5-2953497f92d8.png" alt="" /></p>
-
-<p>Today we will be looking into Hetzner&rsquo;s Cloud Storage Volumes and how you can resize volumes on the fly!</p>
-
-<h2>What is Hetzner&rsquo;s Cloud Storage Volumes</h2>
-
-<p><a href="https://www.hetzner.com/cloud">Hetzner Cloud</a> offers a fast, flexible, and cost-effective SSD based Block Storage which can be attach to your Hetzner Cloud Server. At this point in time its available in the Nuremberg and Helsinki regions.</p>
-
-<h2>Resizing of Volumes</h2>
-
-<p>Volumes can be resized up to 10TB and the console allows you to resize in 1GB increments. You are allowed to increase, but cannot decrease.</p>
-
-<h2>Demo through Cloud Volumes</h2>
-
-<p>Let&rsquo;s run through a demo, where we will do the following:</p>
-
-<ul>
-<li>Provision a Server</li>
-<li>Provision a Volume (XFS Filesystem / EXT4 is also optional)</li>
-<li>Inspect the Volume, do some performance testing</li>
-<li>Resize the Volume via Hetzner Cloud Console</li>
-<li>Grow the XFS Filesystem</li>
-</ul>
-
-
-<p>After provisioning a server, which takes less than a minute, you should see that the server is created:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50202325-6f474500-0366-11e9-8e7d-e96f0c78beba.png" alt="" /></p>
-
-<p>SSH into your server. At this moment, we have not provisioned any volumes, so only the root partition should be mounted. Look at the block allocation:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
-</span><span class='line'>NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
-</span><span class='line'>sda      8:0    <span class="m">0</span> 19.1G  <span class="m">0</span> disk
-</span><span class='line'>--sda1   8:1    <span class="m">0</span> 19.1G  <span class="m">0</span> part /
-</span><span class='line'>sr0     11:0    <span class="m">1</span> 1024M  <span class="m">0</span> rom
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Have a look at the fstab:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/fstab
-</span><span class='line'><span class="c"># &lt;file system&gt; &lt;mount point&gt;   &lt;type&gt;  &lt;options&gt;       &lt;dump&gt;  &lt;pass&gt;</span>
-</span><span class='line'><span class="nv">UUID</span><span class="o">=</span>2f54e8e6-ff9c-497a-88ea-ce159f6cd283 /               ext4    discard,errors<span class="o">=</span>remount-ro <span class="m">0</span>       1
-</span><span class='line'>/dev/fd0        /media/floppy0  auto    rw,user,noauto,exec,utf8 <span class="m">0</span>       0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And have a look at the mounted disks layout:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
-</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
-</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
-</span><span class='line'>tmpfs           195M  652K  194M   1% /run
-</span><span class='line'>/dev/sda1        19G  1.6G   17G   9% /
-</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
-</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
-</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
-</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now, time to provision a Volume. Head over to the Volumes section:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50202468-dfee6180-0366-11e9-8e48-aaadeb707938.png" alt="" /></p>
-
-<p>I&rsquo;m going ahead with creating a volume with 10GB of space and assign it to my server, and yeah that&rsquo;s right, 10GB of storage is 0,40 EUR per month, epic value for money!</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50202502-fd233000-0366-11e9-9c71-475966488ca1.png" alt="" /></p>
-
-<p>After you volume is created, you should see similar output below:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50202614-5a1ee600-0367-11e9-97ab-8352d5b6f064.png" alt="" /></p>
-
-<p>Head back to your server, and have a look at the output when running the similar commands from earlier:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
-</span><span class='line'>NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
-</span><span class='line'>sda      8:0    <span class="m">0</span> 19.1G  <span class="m">0</span> disk
-</span><span class='line'>--sda1   8:1    <span class="m">0</span> 19.1G  <span class="m">0</span> part /
-</span><span class='line'>sdb      8:16   <span class="m">0</span>   10G  <span class="m">0</span> disk /mnt/HC_Volume_1497823
-</span><span class='line'>sr0     11:0    <span class="m">1</span> 1024M  <span class="m">0</span> rom
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The fstab config:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/fstab
-</span><span class='line'><span class="c"># &lt;file system&gt; &lt;mount point&gt;   &lt;type&gt;  &lt;options&gt;       &lt;dump&gt;  &lt;pass&gt;</span>
-</span><span class='line'><span class="nv">UUID</span><span class="o">=</span>2f54e8e6-ff9c-497a-88ea-ce159f6cd283 /               ext4    discard,errors<span class="o">=</span>remount-ro <span class="m">0</span>       1
-</span><span class='line'>/dev/fd0        /media/floppy0  auto    rw,user,noauto,exec,utf8 <span class="m">0</span>       0
-</span><span class='line'>/dev/disk/by-id/scsi-0HC_Volume_1497823 /mnt/HC_Volume_1497823 xfs discard,nofail,defaults <span class="m">0</span> 0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The disk layout:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
-</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
-</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
-</span><span class='line'>tmpfs           195M  660K  194M   1% /run
-</span><span class='line'>/dev/sda1        19G  1.6G   17G   9% /
-</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
-</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
-</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
-</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
-</span><span class='line'>/dev/sdb         10G   43M   10G   1% /mnt/HC_Volume_1497823
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can see from the output above how easy it is to provision a volume to your Hetzner Cloud Server. And everything gets done for you, the disk is mounted and the <code>/etc/fstab</code> configuration is populated for you.</p>
-
-<p>Time for some performance testing on the volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>dd <span class="nv">bs</span><span class="o">=</span>2M <span class="nv">count</span><span class="o">=</span><span class="m">256</span> <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>/mnt/HC_Volume_1497823/test.dd
-</span><span class='line'>256+0 records in
-</span><span class='line'>256+0 records out
-</span><span class='line'><span class="m">536870912</span> bytes <span class="o">(</span><span class="m">537</span> MB, <span class="m">512</span> MiB<span class="o">)</span> copied, 0.911306 s, <span class="m">589</span> MB/s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Pretty neat right? :D</p>
-
-<p>Let&rsquo;s resize the volume via the Hetzner Cloud Console to 20GB and resize the filesystem. From the Console, head over to the volumes section, select the more options and select resize:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50203010-bcc4b180-0368-11e9-86e8-653490ad6870.png" alt="" /></p>
-
-<p>After the volume has been resized, head back to your server and resize the filesystem. As we are using XFS Filesystem, we will use <code>xfs_growfs</code> :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>xfs_growfs /dev/sdb
-</span><span class='line'>meta-data<span class="o">=</span>/dev/sdb               <span class="nv">isize</span><span class="o">=</span><span class="m">512</span>    <span class="nv">agcount</span><span class="o">=</span>4, <span class="nv">agsize</span><span class="o">=</span><span class="m">655360</span> <span class="nv">blks</span>
-</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sectsz</span><span class="o">=</span><span class="m">512</span>   <span class="nv">attr</span><span class="o">=</span>2, <span class="nv">projid32bit</span><span class="o">=</span><span class="nv">1</span>
-</span><span class='line'>         <span class="o">=</span>                       <span class="nv">crc</span><span class="o">=</span><span class="m">1</span>        <span class="nv">finobt</span><span class="o">=</span><span class="m">1</span> <span class="nv">spinodes</span><span class="o">=</span><span class="m">0</span> <span class="nv">rmapbt</span><span class="o">=</span><span class="nv">0</span>
-</span><span class='line'>         <span class="o">=</span>                       <span class="nv">reflink</span><span class="o">=</span>0
-</span><span class='line'><span class="nv">data</span>     <span class="o">=</span>                       <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>2621440, <span class="nv">imaxpct</span><span class="o">=</span><span class="nv">25</span>
-</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sunit</span><span class="o">=</span><span class="m">0</span>      <span class="nv">swidth</span><span class="o">=</span><span class="m">0</span> blks
-</span><span class='line'><span class="nv">naming</span>   <span class="o">=</span>version <span class="m">2</span>              <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   ascii-ci<span class="o">=</span><span class="m">0</span> <span class="nv">ftype</span><span class="o">=</span>1
-</span><span class='line'><span class="nv">log</span>      <span class="o">=</span>internal               <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>2560, <span class="nv">version</span><span class="o">=</span><span class="nv">2</span>
-</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sectsz</span><span class="o">=</span><span class="m">512</span>   <span class="nv">sunit</span><span class="o">=</span><span class="m">0</span> blks, lazy-count<span class="o">=</span>1
-</span><span class='line'><span class="nv">realtime</span> <span class="o">=</span>none                   <span class="nv">extsz</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>0, <span class="nv">rtextents</span><span class="o">=</span>0
-</span><span class='line'>data blocks changed from <span class="m">2621440</span> to 5242880
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Have a look at the disk layout and see that the filesystem was resized on the fly. If you have applications writing/reading to and from that volume, its better to unmount it first.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
-</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
-</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
-</span><span class='line'>tmpfs           195M  660K  194M   1% /run
-</span><span class='line'>/dev/sda1        19G  2.1G   16G  12% /
-</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
-</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
-</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
-</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
-</span><span class='line'>/dev/sdb         20G  565M   20G   3% /mnt/HC_Volume_1497823
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I must admit, I am really stoked with Hetzner&rsquo;s offerings and their performance. I&rsquo;ve been hosting servers with them for the past 5 months and so far they really impressed me.</p>
-
-<p>Have a look at <a href="https://www.hetzner.com/cloud">Hetzner Cloud&rsquo;s</a> offerings, they have great prices as you can start off with a server from as little as 2.49 EUR per month, which gives you 1vCPU, 2GB of RAM, 20GB disk Space and 20TB of traffic. I mean, thats awesome value for money. They also offer Floating IP&rsquo;s, Backups, etc.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.hetzner.com/cloud">Hetzner Cloud&rsquo;s</a></li>
-<li><a href="https://wiki.hetzner.de/index.php/CloudServer/en#What_are_the_Hetzner_Cloud_Volumes.3F">More info on Hetzner Volumes</a></li>
 </ul>
 
 

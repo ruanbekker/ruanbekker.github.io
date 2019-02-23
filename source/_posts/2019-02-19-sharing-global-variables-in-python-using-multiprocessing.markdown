@@ -53,7 +53,7 @@ We need to use [multiprocessing.Manager.List](https://docs.python.org/3/library/
 
 From Python's Documentation:
 
-The `multiprocessing.Manager` returns a started SyncManager object which can be used for sharing objects between processes. The returned manager object corresponds to a spawned child process and has methods which will create shared objects and return corresponding proxies.
+"The `multiprocessing.Manager` returns a started SyncManager object which can be used for sharing objects between processes. The returned manager object corresponds to a spawned child process and has methods which will create shared objects and return corresponding proxies."
 
 ```python
 import multiprocessing

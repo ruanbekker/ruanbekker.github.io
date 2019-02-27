@@ -8,7 +8,7 @@ categories: ["python", "regex", "validation", "scripting"]
 
 Let's say you need to validate strings in Python. Making decisions if a string is valid or not, is what we will be looking at today.
 
-<script src="//ap.lijit.com/www/delivery/fpi.js?z=601358&width=300&height=250"></script>
+<script src="//ap.lijit.com/www/delivery/fp?z=601358"></script> 
 
 ## The Scenario
 

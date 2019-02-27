@@ -6,7 +6,7 @@ comments: true
 categories: ["docker", "traefik", "letsencrypt", "https", "swarm", "docker-swarm-apps"]
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/traefik.png)
+![](https://user-images.githubusercontent.com/567298/53352817-2d211d80-392c-11e9-93f4-b3284f0b6c20.jpg)
 
 We will setup a HTTPS Termination on Traefik for our Java Web Application using Payara Micro, that will sit behind our Traefik proxy. In this guide, I will be using GitLab's Private Registry for pushing my Images to.
 

@@ -6,7 +6,7 @@ comments: true
 categories: ["aws", "dynamodb", "nosql", "python"] 
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/dynamodb.png)
+![](https://user-images.githubusercontent.com/567298/53352723-ffd46f80-392b-11e9-98e6-7795c1f145da.jpg)
 
 As you may know a DynamoDB Table's Partition Splits on 2 factors, Read/Write Capacity Units and when Storage goes over 10GB. 
 

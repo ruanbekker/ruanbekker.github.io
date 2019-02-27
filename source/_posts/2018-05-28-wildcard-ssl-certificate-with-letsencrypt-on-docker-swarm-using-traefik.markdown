@@ -6,7 +6,7 @@ comments: true
 categories: ["docker", "swarm", "letsencrypt", "ssl", "traefik", "certificates"] 
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/traefik.png)
+![](https://user-images.githubusercontent.com/567298/53352817-2d211d80-392c-11e9-93f4-b3284f0b6c20.jpg)
 
 With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is doing HTTPS Termination to our Applications thats running in our Swarm.
 

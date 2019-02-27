@@ -6,7 +6,7 @@ comments: true
 categories: ["docker", "swarm", "ubuntu", "clustering", "cluster"]
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+![](https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg)
 
 Docker Swarm is a Clustering and Orchestration Framework for the Docker ecosystem. Have a look at their [official documentation](https://docs.docker.com/engine/swarm/) for detailed information.
 

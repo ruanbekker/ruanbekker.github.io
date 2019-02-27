@@ -6,7 +6,7 @@ comments: true
 categories: ["docker", "swarm", "prune", "sysadmin"] 
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+![](https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg)
 
 After some time, your system can run out of disk space when running a lot of containers / volumes etc. You will find that at times, you will have a lot of unused containers, stopped containers, unused images, unused networks that is just sitting there, which consumes data on your nodes.
 

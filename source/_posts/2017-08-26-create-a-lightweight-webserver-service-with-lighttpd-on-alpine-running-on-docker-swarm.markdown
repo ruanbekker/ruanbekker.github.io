@@ -60,7 +60,7 @@ Then our `htdocs/index.html` which is based off bootstrap:
     <title>Bare - Start Bootstrap Template</title>
 
     <!-- Bootstrap core CSS -->
-    <link href="http://obj-cache.cloud.ruanbekker.com/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://objects.ruanbekker.com/assets/css/bootstrap/start-bootstrap-template/bootstrap.min.css" rel="stylesheet">
 
     <!-- Custom styles for this template -->
     <style>
@@ -123,9 +123,9 @@ Then our `htdocs/index.html` which is based off bootstrap:
     </div>
 
     <!-- Bootstrap core JavaScript -->
-    <script src="http://obj-cache.cloud.ruanbekker.com/static/js/jquery.min.js"></script>
-    <script src="http://obj-cache.cloud.ruanbekker.com/static/js/popper.min.js"></script>
-    <script src="http://obj-cache.cloud.ruanbekker.com/static/js/bootstrap.min.js"></script>
+    <script src="https://objects.ruanbekker.com/assets/js/bootstrap/start-bootstrap-template/jquery.min.js"></script>
+    <script src="https://objects.ruanbekker.com/assets/js/bootstrap/start-bootstrap-template/popper.min.js"></script>
+    <script src="https://objects.ruanbekker.com/assets/js/bootstrap/start-bootstrap-template/bootstrap.min.js"></script>
 
   </body>
 
@@ -156,4 +156,4 @@ $ docker service create \
 
 As this service will serve as our website, it should look more or less like the following:
 
-![](http://obj-cache.cloud.ruanbekker.com/lighttpd-bootstrap.jpg)
+![](https://user-images.githubusercontent.com/567298/53353187-dd8f2180-392c-11e9-93fe-fce614068866.jpg)

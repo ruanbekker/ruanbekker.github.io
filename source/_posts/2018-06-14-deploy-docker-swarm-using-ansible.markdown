@@ -6,7 +6,7 @@ comments: true
 categories: ["docker", "swarm", "ansible", "devops"]
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+![](https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg)
 
 In this setup we will use Ansible to Deploy Docker Swarm.
 

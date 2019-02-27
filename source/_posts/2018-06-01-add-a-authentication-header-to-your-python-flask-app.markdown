@@ -6,7 +6,7 @@ comments: true
 categories: ["python", "flask", "web-development", "security", "authentication", "api"] 
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/flask.png)
+![](https://user-images.githubusercontent.com/567298/53351527-18dc2100-392a-11e9-9e50-48f738046a68.jpg)
 
 We will write a simple Python Flask application that requires authentication in order to respond with a 200 HTTP Status code.
 

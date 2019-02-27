@@ -6,7 +6,7 @@ comments: true
 categories: ["python", "flask", "forms", "wtforms", "bootstrap"] 
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/flask.png)
+![](https://user-images.githubusercontent.com/567298/53351527-18dc2100-392a-11e9-9e50-48f738046a68.jpg)
 
 Quick demo with Web Forms using the WTForms module in Python Flask.
 

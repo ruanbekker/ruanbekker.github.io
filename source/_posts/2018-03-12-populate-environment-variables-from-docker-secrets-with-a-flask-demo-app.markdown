@@ -6,7 +6,7 @@ comments: true
 categories: ["docker", "swarm", "secrets", "environment-variables"]
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/docker-logo.png)
+![](https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg)
 
 
 In this post we will create a basic Python Flask WebApp on Docker Swarm, but we will read our Flask Host, and Flask Port from Environment Variables, which will be populated from Docker Secrets, which we will read in from a python script.

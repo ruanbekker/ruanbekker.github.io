@@ -6,7 +6,7 @@ comments: true
 categories: ["python", "flask", "api", "restful-api"] 
 ---
 
-![](http://obj-cache.cloud.ruanbekker.com/flask.png)
+![](https://user-images.githubusercontent.com/567298/53351527-18dc2100-392a-11e9-9e50-48f738046a68.jpg)
 
 A Basic RESTFul API Service with Python Flask. We will be using the Flask, jsonify and request classes to build our API service.
 

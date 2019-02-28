@@ -9,8 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Quick demo with Web Forms using the WTForms module in Python Flask. Requirements: Install the required dependencies: 1
-$ pip install flask wtforms &hellip;">
+  <meta name="description" content="With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -89,6 +88,337 @@ $ pip install flask wtforms &hellip;">
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/05/28/wildcard-ssl-certificate-with-letsencrypt-on-docker-swarm-using-traefik/">Wildcard SSL Certificate With Letsencrypt on Docker Swarm Using Traefik</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-05-28T17:36:17-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>28</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>5:36 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53352817-2d211d80-392c-11e9-93f4-b3284f0b6c20.jpg" alt="" /></p>
+
+<p>With Letsencrypt supporting Wildcard certificates is really awesome. Now, we can setup traefik to listen on 443, acting as a reverse proxy and is doing HTTPS Termination to our Applications thats running in our Swarm.</p>
+
+<h2>Architectural Design:</h2>
+
+<p>At the moment we have 3 Manager Nodes, and 5 Worker Nodes:</p>
+
+<ul>
+<li>Using a Dummy Domain example.com which is set to the 3 Public IP&rsquo;s of our Manager Nodes</li>
+<li>DNS is set for: <code>example.com</code> A Record to: <code>52.10.1.10</code>, <code>52.10.1.11</code>, <code>52.10.1.12</code></li>
+<li>DNS is set for: <code>*.example.com</code> CNAME to <code>example.com</code></li>
+<li>Any application that is spawned into our Swarm, will be labeled with a <code>traefik.frontend.rule</code> which will be routed to the service and redirected from HTTP to HTTPS</li>
+</ul>
+
+
+<h2>Create the Overlay Network:</h2>
+
+<p>Create the overlay network that will be used for our stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker network create --driver overlay appnet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Compose Files for our Stacks:</h2>
+
+<p>Create the Traefik Service Compose file, we will deploy it in Global Mode, constraint to our Manager Nodes, so that every manager node has a copy of traefik running.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; traefik-compose.yml <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">version: &quot;3.4&quot;</span>
+</span><span class='line'><span class="s">services:</span>
+</span><span class='line'><span class="s">  proxy:</span>
+</span><span class='line'><span class="s">    image: traefik:latest</span>
+</span><span class='line'><span class="s">    command:</span>
+</span><span class='line'><span class="s">      - &quot;--api&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--entrypoints=Name:http Address::80 Redirect.EntryPoint:https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--entrypoints=Name:https Address::443 TLS&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--defaultentrypoints=http,https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.storage=/etc/traefik/acme/acme.json&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.entryPoint=https&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.httpChallenge.entryPoint=http&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.onHostRule=true&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.onDemand=false&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--acme.email=me@example.com&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.swarmMode&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.domain=example.com&quot;</span>
+</span><span class='line'><span class="s">      - &quot;--docker.watch&quot;</span>
+</span><span class='line'><span class="s">    volumes:</span>
+</span><span class='line'><span class="s">      - /var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'><span class="s">      - /mnt/traefik/acme.json:/etc/traefik/acme/acme.json</span>
+</span><span class='line'><span class="s">    networks:</span>
+</span><span class='line'><span class="s">      - appnet</span>
+</span><span class='line'><span class="s">    ports:</span>
+</span><span class='line'><span class="s">      - target: 80</span>
+</span><span class='line'><span class="s">        published: 80</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">      - target: 443</span>
+</span><span class='line'><span class="s">        published: 443</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">      - target: 8080</span>
+</span><span class='line'><span class="s">        published: 8080</span>
+</span><span class='line'><span class="s">        mode: host</span>
+</span><span class='line'><span class="s">    deploy:</span>
+</span><span class='line'><span class="s">      mode: global</span>
+</span><span class='line'><span class="s">      placement:</span>
+</span><span class='line'><span class="s">        constraints:</span>
+</span><span class='line'><span class="s">          - node.role == manager</span>
+</span><span class='line'><span class="s">      update_config:</span>
+</span><span class='line'><span class="s">        parallelism: 1</span>
+</span><span class='line'><span class="s">        delay: 10s</span>
+</span><span class='line'><span class="s">      restart_policy:</span>
+</span><span class='line'><span class="s">        condition: on-failure</span>
+</span><span class='line'><span class="s">networks:</span>
+</span><span class='line'><span class="s">  appnet:</span>
+</span><span class='line'><span class="s">    external: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Application Compose file, in this example we will be deploying a Ghost Blog:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; ghost-compose.yml <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">version: &#39;3.4&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">services:</span>
+</span><span class='line'><span class="s">  blog:</span>
+</span><span class='line'><span class="s">    image: ghost:1.22.7-alpine</span>
+</span><span class='line'><span class="s">    networks:</span>
+</span><span class='line'><span class="s">      - appnet</span>
+</span><span class='line'><span class="s">    deploy:</span>
+</span><span class='line'><span class="s">      mode: replicated</span>
+</span><span class='line'><span class="s">      replicas: 1</span>
+</span><span class='line'><span class="s">      placement:</span>
+</span><span class='line'><span class="s">        constraints: </span>
+</span><span class='line'><span class="s">          - node.role == worker</span>
+</span><span class='line'><span class="s">      labels:</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend.loadbalancer.sticky=false&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend.loadbalancer.swarm=true&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.backend=blog-1&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.docker.network=appnet&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.entrypoints=https&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.frontend.passHostHeader=true&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.frontend.rule=Host:blog.example.com&quot;</span>
+</span><span class='line'><span class="s">        - &quot;traefik.port=2368&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">networks:</span>
+</span><span class='line'><span class="s">  appnet:</span>
+</span><span class='line'><span class="s">    external: true</span>
+</span><span class='line'>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Prepare the Path for Traefik:</h2>
+
+<p>We have a <a href="https://sysadmins.co.za/tag/glusterfs/">replicated volume</a> under our <code>/mnt</code> partition, so that all our managers can read from that path, create the file and provide the sufficient permissions:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p /mnt/traefik
+</span><span class='line'><span class="nv">$ </span>touch /mnt/traefik/acme.json
+</span><span class='line'><span class="nv">$ </span>chmod <span class="m">600</span> /mnt/traefik/acme.json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the Stacks:</h2>
+
+<p>Deploy the Traefik Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c traefik-compose.yml traefik
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Wait until the services are deployed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services traefik
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+</span><span class='line'>f8ru5gbcgd2v        traefik_proxy       global              3/3                 traefik:latest
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the Application Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c ghost-compose.yml apps
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that the Application Stack has been deployed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services apps
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                          PORTS
+</span><span class='line'>516zlfs2cfdv        apps_blog           replicated          1/1                 ghost:1.22.7-alpine
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At the moment we will have 2 stacks in our Swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack ls
+</span><span class='line'>NAME                SERVICES
+</span><span class='line'>apps                1
+</span><span class='line'>traefik             1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the Application:</h2>
+
+<p>Let&rsquo;s test our blog to see if we get redirected to <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -iL http://blog.example.com
+</span><span class='line'>HTTP/1.1 <span class="m">302</span> Found
+</span><span class='line'>Location: https://blog.example.com:443/
+</span><span class='line'>Date: Mon, <span class="m">28</span> May <span class="m">2018</span> 22:02:41 GMT
+</span><span class='line'>Content-Length: 5
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Cache-Control: public, max-age<span class="o">=</span>0
+</span><span class='line'>Content-Type: text/html<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>Date: Mon, <span class="m">28</span> May <span class="m">2018</span> 22:02:42 GMT
+</span><span class='line'>Etag: W/<span class="s2">&quot;4166-J2ooSIa8gtTkYjbnr7vnPUFlRJI&quot;</span>
+</span><span class='line'>Vary: Accept-Encoding
+</span><span class='line'>X-Powered-By: Express
+</span><span class='line'>Transfer-Encoding: chunked
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Works like a charm! Traefik FTW!</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2407,387 +2737,6 @@ $ pip install flask wtforms &hellip;">
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/04/29/using-the-bulk-api-with-elasticsearch/">Using the Bulk API With Elasticsearch</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-04-29T13:32:21-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>29</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>1:32 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>This tutorial will guide you how to use the Bulk API with Elasticsearch, this is great for when having a dataset that contains a lot of documents, where you want to insert them into elasticsearch in bulk uploads.</p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>The Dataset</h2>
-
-<p>We will be using a dataset from elastic that contains 1000 documents that holds account data.</p>
-
-<p>Getting the Dataset:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget -O accounts.json https://github.com/elastic/elasticsearch/blob/master/docs/src/test/resources/accounts.json?raw<span class="o">=</span><span class="nb">true</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Preview the data:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>head -10  accounts.json
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;1&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:1,<span class="s2">&quot;balance&quot;</span>:39225,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Amber&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Duke&quot;</span>,<span class="s2">&quot;age&quot;</span>:32,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;880 Holmes Lane&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Pyrami&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;amberduke@pyrami.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Brogan&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;IL&quot;</span><span class="o">}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;6&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:6,<span class="s2">&quot;balance&quot;</span>:5686,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Hattie&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Bond&quot;</span>,<span class="s2">&quot;age&quot;</span>:36,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;671 Bristol Street&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Netagy&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;hattiebond@netagy.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Dante&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;TN&quot;</span><span class="o">}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;13&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:13,<span class="s2">&quot;balance&quot;</span>:32838,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Nanette&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Bates&quot;</span>,<span class="s2">&quot;age&quot;</span>:28,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;F&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;789 Madison Street&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Quility&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;nanettebates@quility.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Nogal&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;VA&quot;</span><span class="o">}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;18&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:18,<span class="s2">&quot;balance&quot;</span>:4180,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Dale&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Adams&quot;</span>,<span class="s2">&quot;age&quot;</span>:33,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;467 Hutchinson Court&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Boink&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;daleadams@boink.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Orick&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;MD&quot;</span><span class="o">}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;20&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:20,<span class="s2">&quot;balance&quot;</span>:16418,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Elinor&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Ratliff&quot;</span>,<span class="s2">&quot;age&quot;</span>:36,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;282 Kings Place&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Scentric&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;elinorratliff@scentric.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Ribera&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;WA&quot;</span><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Using the Bulk API:</h2>
-
-<p>We will ingest the data to our <code>bank_accounts</code> index, and to the <code>account</code> type:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -s -H <span class="s2">&quot;Content-Type: application/json&quot;</span> -XPOST localhost:9200/accounts/docs/_bulk --data-binary <span class="s2">&quot;@accounts.json&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When it&rsquo;s done, have a look at the indices:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://127.0.0.1:9200/_cat/indices/bank_accounts?v
-</span><span class='line'>health status index         uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-</span><span class='line'>green  open   bank_accounts BK_OJYOFTD67tqsQBUWSuQ   <span class="m">5</span>   <span class="m">1</span>       <span class="m">1000</span>            <span class="m">0</span>    950.3kb        475.1kb
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Doing a search and display one document:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XGET <span class="s1">&#39;http://127.0.0.1:9200/bank_accounts/_search?pretty&amp;size=1&#39;</span>
-</span><span class='line'><span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;took&quot;</span> : 3,
-</span><span class='line'>  <span class="s2">&quot;timed_out&quot;</span> : <span class="nb">false</span>,
-</span><span class='line'>  <span class="s2">&quot;_shards&quot;</span> : <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;total&quot;</span> : 5,
-</span><span class='line'>    <span class="s2">&quot;successful&quot;</span> : 5,
-</span><span class='line'>    <span class="s2">&quot;skipped&quot;</span> : 0,
-</span><span class='line'>    <span class="s2">&quot;failed&quot;</span> : 0
-</span><span class='line'>  <span class="o">}</span>,
-</span><span class='line'>  <span class="s2">&quot;hits&quot;</span> : <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;total&quot;</span> : 1000,
-</span><span class='line'>    <span class="s2">&quot;max_score&quot;</span> : 1.0,
-</span><span class='line'>    <span class="s2">&quot;hits&quot;</span> : <span class="o">[</span>
-</span><span class='line'>      <span class="o">{</span>
-</span><span class='line'>        <span class="s2">&quot;_index&quot;</span> : <span class="s2">&quot;bank_accounts&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;_type&quot;</span> : <span class="s2">&quot;account&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;_id&quot;</span> : <span class="s2">&quot;25&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;_score&quot;</span> : 1.0,
-</span><span class='line'>        <span class="s2">&quot;_source&quot;</span> : <span class="o">{</span>
-</span><span class='line'>          <span class="s2">&quot;account_number&quot;</span> : 25,
-</span><span class='line'>          <span class="s2">&quot;balance&quot;</span> : 40540,
-</span><span class='line'>          <span class="s2">&quot;firstname&quot;</span> : <span class="s2">&quot;Virginia&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;lastname&quot;</span> : <span class="s2">&quot;Ayala&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;age&quot;</span> : 39,
-</span><span class='line'>          <span class="s2">&quot;gender&quot;</span> : <span class="s2">&quot;F&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;address&quot;</span> : <span class="s2">&quot;171 Putnam Avenue&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;employer&quot;</span> : <span class="s2">&quot;Filodyne&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;email&quot;</span> : <span class="s2">&quot;virginiaayala@filodyne.com&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;city&quot;</span> : <span class="s2">&quot;Nicholson&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;state&quot;</span> : <span class="s2">&quot;PA&quot;</span>
-</span><span class='line'>        <span class="o">}</span>
-</span><span class='line'>      <span class="o">}</span>
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Demo Recording:</h2>
-
-<p>This has also been reccored, which can be viewed here:</p>
-
-<ul>
-<li><a href="https://asciinema.org/a/BYmZQ0pBiyI8ogVF9t0smczRu">https://asciinema.org/a/BYmZQ0pBiyI8ogVF9t0smczRu</a></li>
-</ul>
-
-
-<h2>Using Bulk with Auto Generated ID&rsquo;s</h2>
-
-<p>As you might know when you do a POST request to the type, the <code>_id</code> field gets auto populated. Timo, one of my friends had the requirement to use the Bulk API to post auto generated Id&rsquo;s and not the static id&rsquo;s that is given in the example dataset.</p>
-
-<p>I have answered this on Elastic&rsquo;s discuss page: <a href="https://discuss.elastic.co/t/looking-for-working-example-data-set-to-bulk-index-into-es6/128678/3">https://discuss.elastic.co/t/looking-for-working-example-data-set-to-bulk-index-into-es6/128678/3</a></p>
-
-<p>I will provide the steps below as well:</p>
-
-<figure class='code'><figcaption><span>convert.py </span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="c">#!/usr/bin/env python</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">src_file</span> <span class="o">=</span> <span class="s">&#39;src_file.json&#39;</span>
-</span><span class='line'><span class="n">dest_file</span> <span class="o">=</span> <span class="s">&#39;dest_file.json&#39;</span>
-</span><span class='line'><span class="n">metadata</span> <span class="o">=</span> <span class="s">&#39;{&quot;index&quot;: {&quot;_index&quot;: &quot;bank_accounts&quot;, &quot;_type&quot;: &quot;account&quot;}}&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">src_file</span><span class="p">)</span> <span class="k">as</span> <span class="n">open_file</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">lines</span> <span class="o">=</span> <span class="n">open_file</span><span class="o">.</span><span class="n">readlines</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">line</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s">&#39; &#39;</span><span class="p">,</span> <span class="s">&#39;&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">]</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">dest_file</span><span class="p">,</span> <span class="s">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span class='line'>    <span class="k">for</span> <span class="n">each_line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
-</span><span class='line'>        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">metadata</span> <span class="o">+</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">)</span>
-</span><span class='line'>        <span class="n">f</span><span class="o">.</span><span class="n">writelines</span><span class="p">(</span><span class="n">each_line</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p></p>
-
-<p>The original file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>head -4 file.json
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;1&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:1,<span class="s2">&quot;balance&quot;</span>:39225,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Amber&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Duke&quot;</span>,<span class="s2">&quot;age&quot;</span>:32,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;880 Holmes Lane&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Pyrami&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;amberduke@pyrami.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Brogan&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;IL&quot;</span><span class="o">}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>:<span class="o">{</span><span class="s2">&quot;_id&quot;</span>:<span class="s2">&quot;6&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:6,<span class="s2">&quot;balance&quot;</span>:5686,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Hattie&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Bond&quot;</span>,<span class="s2">&quot;age&quot;</span>:36,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;671 Bristol Street&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Netagy&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;hattiebond@netagy.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Dante&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;TN&quot;</span><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Removing the initial metadata:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat file.json <span class="p">|</span> grep account_number &gt;&gt; src_file.json
-</span><span class='line'><span class="nv">$ </span>./convert.py
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Previewing the destination file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>head -4 dest_file.json
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>: <span class="o">{</span><span class="s2">&quot;_index&quot;</span>: <span class="s2">&quot;bank_accounts&quot;</span>, <span class="s2">&quot;_type&quot;</span>: <span class="s2">&quot;account&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:1,<span class="s2">&quot;balance&quot;</span>:39225,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Amber&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Duke&quot;</span>,<span class="s2">&quot;age&quot;</span>:32,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;880HolmesLane&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Pyrami&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;amberduke@pyrami.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Brogan&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;IL&quot;</span><span class="o">}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;index&quot;</span>: <span class="o">{</span><span class="s2">&quot;_index&quot;</span>: <span class="s2">&quot;bank_accounts&quot;</span>, <span class="s2">&quot;_type&quot;</span>: <span class="s2">&quot;account&quot;</span><span class="o">}}</span>
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;account_number&quot;</span>:6,<span class="s2">&quot;balance&quot;</span>:5686,<span class="s2">&quot;firstname&quot;</span>:<span class="s2">&quot;Hattie&quot;</span>,<span class="s2">&quot;lastname&quot;</span>:<span class="s2">&quot;Bond&quot;</span>,<span class="s2">&quot;age&quot;</span>:36,<span class="s2">&quot;gender&quot;</span>:<span class="s2">&quot;M&quot;</span>,<span class="s2">&quot;address&quot;</span>:<span class="s2">&quot;671BristolStreet&quot;</span>,<span class="s2">&quot;employer&quot;</span>:<span class="s2">&quot;Netagy&quot;</span>,<span class="s2">&quot;email&quot;</span>:<span class="s2">&quot;hattiebond@netagy.com&quot;</span>,<span class="s2">&quot;city&quot;</span>:<span class="s2">&quot;Dante&quot;</span>,<span class="s2">&quot;state&quot;</span>:<span class="s2">&quot;TN&quot;</span><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Looking at my current indices:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://localhost:9200/_cat/indices?v
-</span><span class='line'>health status index                       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-</span><span class='line'>green  open   .monitoring-es-6-2018.05.06 3OgdIbDWQWCR8WJlQTXr9Q   <span class="m">1</span>   <span class="m">1</span>     <span class="m">114715</span>            <span class="m">6</span>      104mb           50mb
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ingesting the data via Bulk API:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -s -H <span class="s1">&#39;Content-Type: application/json&#39;</span> -XPOST localhost:9200/_bulk --data-binary @dest_file.json
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Looking at my indices to verify that the index exist:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://localhost:9200/_cat/indices?v
-</span><span class='line'>health status index                       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-</span><span class='line'>green  open   bank_accounts               u37MQvzhSPe97BJzp1u49Q   <span class="m">5</span>   <span class="m">1</span>       <span class="m">1000</span>            <span class="m">0</span>    296.4kb           690b
-</span><span class='line'>green  open   .monitoring-es-6-2018.05.06 3OgdIbDWQWCR8WJlQTXr9Q   <span class="m">1</span>   <span class="m">1</span>     <span class="m">114750</span>            <span class="m">6</span>    103.9mb         49.9mb
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Looking at one document: :smiley:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl <span class="s1">&#39;http://localhost:9200/bank_accounts/_search?pretty&amp;size=1&#39;</span>
-</span><span class='line'><span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;took&quot;</span> : 641,
-</span><span class='line'>  <span class="s2">&quot;timed_out&quot;</span> : <span class="nb">false</span>,
-</span><span class='line'>  <span class="s2">&quot;_shards&quot;</span> : <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;total&quot;</span> : 5,
-</span><span class='line'>    <span class="s2">&quot;successful&quot;</span> : 5,
-</span><span class='line'>    <span class="s2">&quot;skipped&quot;</span> : 0,
-</span><span class='line'>    <span class="s2">&quot;failed&quot;</span> : 0
-</span><span class='line'>  <span class="o">}</span>,
-</span><span class='line'>  <span class="s2">&quot;hits&quot;</span> : <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;total&quot;</span> : 1000,
-</span><span class='line'>    <span class="s2">&quot;max_score&quot;</span> : 1.0,
-</span><span class='line'>    <span class="s2">&quot;hits&quot;</span> : <span class="o">[</span>
-</span><span class='line'>      <span class="o">{</span>
-</span><span class='line'>        <span class="s2">&quot;_index&quot;</span> : <span class="s2">&quot;bank_accounts&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;_type&quot;</span> : <span class="s2">&quot;account&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;_id&quot;</span> : <span class="s2">&quot;cohJN2MBCa89A-FEmiJs&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;_score&quot;</span> : 1.0,
-</span><span class='line'>        <span class="s2">&quot;_source&quot;</span> : <span class="o">{</span>
-</span><span class='line'>          <span class="s2">&quot;account_number&quot;</span> : 6,
-</span><span class='line'>          <span class="s2">&quot;balance&quot;</span> : 5686,
-</span><span class='line'>          <span class="s2">&quot;firstname&quot;</span> : <span class="s2">&quot;Hattie&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;lastname&quot;</span> : <span class="s2">&quot;Bond&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;age&quot;</span> : 36,
-</span><span class='line'>          <span class="s2">&quot;gender&quot;</span> : <span class="s2">&quot;M&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;address&quot;</span> : <span class="s2">&quot;671BristolStreet&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;employer&quot;</span> : <span class="s2">&quot;Netagy&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;email&quot;</span> : <span class="s2">&quot;hattiebond@netagy.com&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;city&quot;</span> : <span class="s2">&quot;Dante&quot;</span>,
-</span><span class='line'>          <span class="s2">&quot;state&quot;</span> : <span class="s2">&quot;TN&quot;</span>
-</span><span class='line'>        <span class="o">}</span>
-</span><span class='line'>      <span class="o">}</span>
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-bulk.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-bulk.html</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/10">&larr; Older</a>
@@ -2828,6 +2777,10 @@ $ pip install flask wtforms &hellip;">
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2019/02/28/use-swarm-managed-configs-in-docker-swarm-to-store-your-application-configs/">Use Swarm Managed Configs in Docker Swarm to Store Your Application Configs</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2019/02/27/how-to-validate-strings-in-python-with-regex/">How to Validate Strings in Python With Regex</a>
       </li>
     
@@ -2841,10 +2794,6 @@ $ pip install flask wtforms &hellip;">
     
       <li class="post">
         <a href="/blog/2019/02/19/parallel-processing-on-aws-lambda-with-python-using-multiprocessing/">Parallel Processing on AWS Lambda With Python Using Multiprocessing</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/02/19/sharing-global-variables-in-python-using-multiprocessing/">Sharing Global Variables in Python Using Multiprocessing</a>
       </li>
     
   </ul>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Storage | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/storage/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-02-28T10:14:23-05:00</updated>
+  <updated>2019-03-04T15:49:12-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,233 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Distributed Storage Volume With GlusterFS]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/03/04/setup-a-distributed-storage-volume-with-glusterfs/"/>
+    <updated>2019-03-04T15:32:53-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/03/04/setup-a-distributed-storage-volume-with-glusterfs</id>
+    <content type="html"><![CDATA[<p><img src="https://glusterdocs-beta.readthedocs.io/en/latest/_images/dist-volume.png" alt="" /></p>
+
+<p>GlusterFS is a Awesome Scalable Networked Filesystem, which makes it Easy to Create Large and Scalable Storage Solutions on Commodity Hardware.</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+<p><p></p>
+
+<p><strong>Basic Concepts of GlusterFS:</strong></p>
+
+<p>Brick:
+* In GlusterFS, a brick is the basic unit of storage, represented by a directory on the server in the trusted storage pool.</p>
+
+<p>Gluster Volume:
+* A Gluster volume is a Logical Collection of Bricks.</p>
+
+<p>Distributed Filesystem:
+* The concept is to enable multiple clients to concurrently access data which is spread across multple servers in a trusted storage pool. This is also a great solution to prevent data corruption, enable highly available storage systems, etc.</p>
+
+<p><a href="http://gluster.readthedocs.io/en/latest/Administrator%20Guide/glossary/">More concepts</a> can be retrieved from their documentation.</p>
+
+<h2>Different GlusterFS Volume Types:</h2>
+
+<p>With GlusterFS you can create the following types of Gluster Volumes:</p>
+
+<ul>
+<li>Distributed Volumes: (Ideal for Scalable Storage, No Data Redundancy)</li>
+<li>Replicated Volumes: (Better reliability and data redundancy)</li>
+<li>Distributed-Replicated Volumes: (HA of Data due to Redundancy and Scaling Storage)</li>
+<li><a href="http://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Architecture/">More detail</a> on GlusterFS Architecture</li>
+</ul>
+
+
+<h2>Setup a Distributed Gluster Volume:</h2>
+
+<p>In this guide we will setup a 3 Node Distributed GlusterFS Volume on Ubuntu 16.04.</p>
+
+<p>For this use case we would like to achieve a storage solution to scale the size of our storage, and not really worried about redundancy as, with a Distributed Setup we can increase the size of our volume, the more bricks we add to our GlusterFS Volume.</p>
+
+<h2>Setup: Our Environment</h2>
+
+<p>Each node has 2 disks, <code>/dev/xvda</code> for the Operating System wich is 20GB and <code>/dev/xvdb</code> which has 100GB. After we have created our GlusterFS Volume, we will have a Gluster Volume of 300GB.</p>
+
+<p>Having a look at our disks:</p>
+
+<pre><code class="bash">$ lsblk
+NAME    MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+xvda    202:0    0   20G  0 disk
+└─xvda1 202:1    0   20G  0 part /
+xvdb    202:16   0  100G  0 disk 
+</code></pre>
+
+<p>If you don&rsquo;t have DNS setup for your nodes, you can use your /etc/hosts file for all 3 nodes, which I will be using in this demonstration:</p>
+
+<pre><code class="bash">$ cat /etc/hosts
+172.31.13.226   gluster-node-1
+172.31.9.7      gluster-node-2
+172.31.15.34    gluster-node-3
+127.0.0.1       localhost
+</code></pre>
+
+<h2>Install GlusterFS from the Package Manager:</h2>
+
+<p>Note that all the steps below needs to be performed on all 3 nodes, unless specified otherwise:</p>
+
+<pre><code class="bash">$ apt update &amp;&amp; apt upgrade -y
+$ apt install xfsprogs attr glusterfs-server glusterfs-client glusterfs-common -y
+</code></pre>
+
+<h2>Format and Prepare the Gluster Disks:</h2>
+
+<p>We will create a XFS Filesystem for our 100GB disk, create the directory path where we will mount our disk onto, and also load it into <code>/etc/fstab</code>:</p>
+
+<pre><code class="bash">$ mkfs.xfs /dev/xvdb
+$ mkdir /gluster
+$ echo '/dev/xvdb /gluster xfs defaults 0 0' &gt;&gt; /etc/fstab
+$ mount -a
+</code></pre>
+
+<p>After we mounted the disk, we should see that our disk is mounted to <code>/gluster</code>:</p>
+
+<pre><code class="bash">$ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/xvda1       20G  1.2G   19G   7% /
+/dev/xvdb       100G   33M  100G   1% /gluster
+</code></pre>
+
+<p>After our disk is mounted, we can proceed by creating the brick directory on our disk that we mounted, from the step above:</p>
+
+<pre><code class="bash">$ mkdir /gluster/brick
+</code></pre>
+
+<h2>Start GlusterFS Service:</h2>
+
+<p>Enable GlusterFS on startup, start the service and make sure that the service is running:</p>
+
+<pre><code class="bash">$ systemctl enable glusterfs-server
+$ systemctl restart glusterfs-server
+$ systemctl is-active glusterfs-server
+active
+</code></pre>
+
+<h2>Discover All the Nodes for our Cluster:</h2>
+
+<p>The following will only be done on one of the nodes. First we need to discover our other nodes.</p>
+
+<p>The node that you are currently on, will be discovered by default and only needs the other 2 nodes to be discovered:</p>
+
+<pre><code class="bash">$ gluster peer probe gluster-node-2
+$ gluster peer probe gluster-node-3
+</code></pre>
+
+<p>Let&rsquo;s verify this by listing all the nodes in our cluster:</p>
+
+<pre><code class="bash">$ gluster pool list
+UUID                                    Hostname        State
+6e02731c-6472-4ea4-bd48-d5dd87150e8b    gluster-node-2  Connected
+9d4c2605-57ba-49e2-b5da-a970448dc886    gluster-node-3  Connected
+608f027e-e953-413b-b370-ce84050a83c9    localhost       Connected
+</code></pre>
+
+<h2>Create the Distributed GlusterFS Volume:</h2>
+
+<p>We will create a Distributed GlusterFS Volume across 3 nodes, and we will name the volume <code>gfs</code>:</p>
+
+<pre><code class="bash">$ gluster volume create gfs \
+  gluster-node-1:/gluster/brick \
+  gluster-node-2:/gluster/brick \
+  gluster-node-3:/gluster/brick
+
+volume create: gfs: success: please start the volume to access data
+</code></pre>
+
+<h2>Start the GlusterFS Volume:</h2>
+
+<p>Now start the <code>gfs</code> GlusterFS Volume:</p>
+
+<pre><code class="bash">$ gluster volume start gfs
+volume start: gfs: success
+</code></pre>
+
+<p>To get information about the volume:</p>
+
+<pre><code class="bash">$ gluster volume info gfs
+
+Volume Name: gfs
+Type: Distribute
+Volume ID: c08bc2e8-59b3-49e7-bc17-d4bc8d99a92f
+Status: Started
+Number of Bricks: 3
+Transport-type: tcp
+Bricks:
+Brick1: gluster-node-1:/gluster/brick
+Brick2: gluster-node-2:/gluster/brick
+Brick3: gluster-node-3:/gluster/brick
+Options Reconfigured:
+performance.readdir-ahead: on
+</code></pre>
+
+<p>Status information about our Volume:</p>
+
+<pre><code class="bash">$ gluster volume status
+
+Status of volume: gfs
+Gluster process                             TCP Port  RDMA Port  Online  Pid
+------------------------------------------------------------------------------
+Brick gluster-node-1:/gluster/brick         49152     0          Y       7139
+Brick gluster-node-2:/gluster/brick         49152     0          Y       7027
+Brick gluster-node-3:/gluster/brick         49152     0          Y       7099
+NFS Server on localhost                     2049      0          Y       7158
+NFS Server on gluster-node-2                2049      0          Y       7046
+NFS Server on gluster-node-3                2049      0          Y       7118
+
+Task Status of Volume gfs
+------------------------------------------------------------------------------
+There are no active volume tasks
+</code></pre>
+
+<h2>Mounting our GlusterFS Volume:</h2>
+
+<p>On all the clients, in this case our 3 nodes, load the mount information into <code>/etc/fstab</code> and then mount the GlusterFS Volume:</p>
+
+<pre><code class="bash">$ echo 'localhost:/gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=gluster-node-1 0 0' &gt;&gt; /etc/fstab
+$ mount -a
+</code></pre>
+
+<p>Now that the volume is mounted, have a look at your disk info, and you will find that you have a <code>300GB</code> GlusterFS Volume mounted:</p>
+
+<pre><code class="bash">$ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/xvda1       20G  1.3G   19G   7% /
+/dev/xvdb       100G   33M  100G   1% /gluster
+localhost:/gfs  300G   98M  300G   1% /mnt
+</code></pre>
+
+<p>As mentioned before, this is most probably for a scenario where you would like to achieve a high storage size and not really concerned about data availability.</p>
+
+<p>In the next couple of weeks I will also go through the Replicated, Distributed-Replicated and <a href="https://gluster.readthedocs.io/en/latest/Administrator%20Guide/Gluster%20On%20ZFS/">GlusterFS with ZFS</a> setups.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="http://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Terminologies/">GlusterFS Terminologies</a></li>
+<li><a href="http://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Architecture/">GlusterFS Architecture</a></li>
+<li><a href="http://gluster.readthedocs.io/en/latest/Administrator%20Guide/Gluster%20On%20ZFS/">GlusterFS with ZFS</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Resizing Hetzner Cloud Block Storage Volumes on the Fly]]></title>
@@ -1041,73 +1268,6 @@ vol1 vg1  -wi-ao---- 139.70g
 
 <ul>
 <li><a href="https://www.thegeekdiary.com/redhat-centos-a-beginners-guide-to-lvm-logical-volume-manager/">1</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Expanding the Size of Your EBS Volume on AWS EC2 for Linux]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/03/28/expanding-the-size-of-your-ebs-volume-on-aws-ec2-for-linux/"/>
-    <updated>2018-03-28T01:45:07-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/03/28/expanding-the-size-of-your-ebs-volume-on-aws-ec2-for-linux</id>
-    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/BJLbwQ.jpg" alt="" /></p>
-
-<p>Resizing your EBS Volume on the fly, that is attached to your EC2 Linux instance, on Amazon Web Services.</p>
-
-<p>We want to resize our EBS Volume from 100GB to 1000GB and at the moment my EBS Volume is 100GB, as you can see:</p>
-
-<pre><code class="bash">$ df -h
-Filesystem      Size  Used Avail Use% Mounted on
-devtmpfs        7.9G   60K  7.9G   1% /dev
-tmpfs           7.9G     0  7.9G   0% /dev/shm
-/dev/xvda1       99G   32G   67G  32% /
-</code></pre>
-
-<p>Now we want to resize the volume to 1000GB, without shutting down our EC2 instance.</p>
-
-<p>Go to your EC2 Management Console, Select your EC2 Instance, scroll down to the EBS Volume, click on it and click the EBS Volume ID, from there select Actions, modify and resize the disk to the needed size. As you can see the disk is now 1000GB:</p>
-
-<pre><code class="bash">$ lsblk
-NAME    MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
-xvda    202:0    0 1000G  0 disk
-xvda1 202:1    0 1000G  0 part /
-</code></pre>
-
-<p>But our partition is still 100GB:</p>
-
-<pre><code class="bash">$ df -h
-Filesystem      Size  Used Avail Use% Mounted on
-devtmpfs        7.9G   60K  7.9G   1% /dev
-tmpfs           7.9G     0  7.9G   0% /dev/shm
-/dev/xvda1       99G   32G   67G  32% /
-</code></pre>
-
-<p>We need to use <code>growpart</code> and <code>resize2fs</code> to resize our partition:</p>
-
-<pre><code class="bash">$ sudo growpart /dev/xvda 1
-CHANGED: disk=/dev/xvda partition=1: start=4096 old: size=209711070,end=209715166 new: size=2097147870,end=2097151966
-
-$ sudo resize2fs /dev/xvda1
-resize2fs 1.42.12 (29-Aug-2014)
-Filesystem at /dev/xvda1 is mounted on /; on-line resizing required
-old_desc_blocks = 7, new_desc_blocks = 63
-The filesystem on /dev/xvda1 is now 262143483 (4k) blocks long.
-</code></pre>
-
-<p>Now we will have a resized partition to 100GB:</p>
-
-<pre><code class="bash">$ df -h
-Filesystem      Size  Used Avail Use% Mounted on
-devtmpfs        7.9G   60K  7.9G   1% /dev
-tmpfs           7.9G     0  7.9G   0% /dev/shm
-/dev/xvda1      985G   33G  952G   4% /
-</code></pre>
-
-<p>Resources:</p>
-
-<ul>
-<li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/recognize-expanded-volume-linux.html">https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/recognize-expanded-volume-linux.html</a></li>
 </ul>
 
 ]]></content>

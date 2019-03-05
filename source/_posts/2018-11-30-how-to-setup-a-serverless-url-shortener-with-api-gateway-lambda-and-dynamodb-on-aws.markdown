@@ -19,6 +19,8 @@ Update: URL Shortener UI [available in this post](https://blog.ruanbekker.com/bl
 
 ## The Setup
 
+Code has been published to my **[Github Repository](https://github.com/ruanbekker/aws-serverless-url-shortener)**
+
 The following services will be used to create a URL Shortener:
 
 - AWS API Gateway: ( `/create`: to create a shortened url and `/t/{id}` to redirect to long url)

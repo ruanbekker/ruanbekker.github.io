@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-03-05T13:59:09-05:00</updated>
+  <updated>2019-03-05T14:10:17-05:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,302 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 3 Node Replicated Storage Volume With GlusterFS]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/03/05/setup-a-3-node-replicated-storage-volume-with-glusterfs/"/>
+    <updated>2019-03-05T14:01:37-05:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/03/05/setup-a-3-node-replicated-storage-volume-with-glusterfs</id>
+    <content type="html"><![CDATA[<p><img src="https://access.redhat.com/documentation/en-US/Red_Hat_Storage/2.1/html/Administration_Guide/images/Replicated_Volume.png" alt="" /></p>
+
+<p>In one of my earlier posts on <a href="https://sysadmins.co.za/tag/glusterfs">GlusterFS</a>, we went through the steps on how to setup a <a href="https://sysadmins.co.za/setup-a-distributed-storage-volume-with-glusterfs/">Distributed Storage Volume</a>, where the end result was to have scalable storage, where size was the requirement.</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+<p><p></p>
+
+<h2>What will we be doing today with GlusterFS?</h2>
+
+<p>Today, we will be going through the steps on how to setup a Replicated Storage Volume with GlusterFS, where we will have 3 GlusterFS Nodes, and using the replication factor of 3.</p>
+
+<p><strong>Replication Factor of 3:</strong></p>
+
+<p>In other words, having 3 copies of our data and in our case, since we will have 3 nodes in our cluster, a copy of our data will reside on each node.</p>
+
+<p><strong>What about Split-Brain:</strong></p>
+
+<p>In Clustering, we get the term Split-Brain, where a node dies or leaves the cluster, the cluster reforms itself with the available nodes and then during this reformation, instead of the remaining nodes staying with the same cluster, 2 subset of cluster are created, and they are not aware of each other, which causes data corruption, here&rsquo;s a great resource on <a href="http://techthoughts.typepad.com/managing_computers/2007/10/split-brain-quo.html">Split-Brain</a></p>
+
+<p>To prevent Split-Brain in GlusterFS, we can setup a <a href="https://gluster.readthedocs.io/en/latest/Administrator%20Guide/arbiter-volumes-and-quorum/">Arbiter Volume</a>. In a Replica Count of 3 and Arbiter count of 1: 2 Nodes will hold the replicated data, and the 1 Node which will be the Arbiter node, will only host the file/directory names and metadata but not any data. I will write up an <a href="">article</a> on this in the future.</p>
+
+<h2>Getting Started:</h2>
+
+<p>Let&rsquo;s get started on setting up a 3 Node Replicated GlusterFS. Each node will have an additional drive that is 50GB in size, which will be part of our GlusterFS Replicated Volume. I will also be using Ubuntu 16.04 as my linux distro.</p>
+
+<p><strong>Preparing DNS Resolution:</strong></p>
+
+<p>I will install GlusterFS on each node, and in my setup I have the following DNS entries:</p>
+
+<ul>
+<li>gfs01 (10.0.0.2)</li>
+<li>gfs02 (10.0.0.3)</li>
+<li>gfs03 (10.0.0.4)</li>
+</ul>
+
+
+<p><strong>Preparing our Secondary Drives:</strong></p>
+
+<p>I will be formatting my drives with <code>XFS</code>. Listing our block volumes:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>vdb  253:16   <span class="m">0</span> 46.6G  <span class="m">0</span> disk
+</span><span class='line'>vda  253:0    <span class="m">0</span> 18.6G  <span class="m">0</span> disk /
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Creating the FileSystem with XFS, which we will be running on each node:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkfs.xfs /dev/vdb
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Then creating the directories where our bricks will reside, and also add an entry to our <code>/etc/fstab</code> so that our disk gets mounted when the operating system boots:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c"># node: gfs01</span>
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster/bricks/1 -p
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;/dev/vdb /gluster/bricks/1 xfs defaults 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'><span class="nv">$ </span>mount -a
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster/bricks/1/brick
+</span><span class='line'>
+</span><span class='line'><span class="c"># node: gfs02</span>
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster/bricks/2 -p
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;/dev/vdb /gluster/bricks/2 xfs defaults 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'><span class="nv">$ </span>mount -a
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster/bricks/2/brick
+</span><span class='line'>
+</span><span class='line'><span class="c"># node: gfs03</span>
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster/bricks/3 -p
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;/dev/vdb /gluster/bricks/3 xfs defaults 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'><span class="nv">$ </span>mount -a
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster/bricks/3/brick
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>After this has been done, we should see that the disks are mounted, for example on node: <code>gfs01</code>:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/vda         18G  909M   17G   3% /
+</span><span class='line'>/dev/vdb         47G   80M   47G   1% /gluster/bricks/1
+</span></code></pre></td></tr></table></div></figure></p>
+
+<h2>Installing GlusterFS on Each Node:</h2>
+
+<p>Installing GlusterFS, repeat this on all 3 Nodes:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install xfsprogs attr glusterfs-server glusterfs-common glusterfs-client -y
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>glusterfs-server
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>In order to add the nodes to the trusted storage pool, we will have to add them by using <code>gluster peer probe</code>. Make sure that you can resolve the hostnames to the designated IP Addresses, and that traffic is allowed.</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster peer probe gfs01
+</span><span class='line'><span class="nv">$ </span>gluster peer probe gfs02
+</span><span class='line'><span class="nv">$ </span>gluster peer probe gfs03
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Now that we have added our nodes to our trusted storage pool, lets verify that by listing our pool:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster pool list
+</span><span class='line'>UUID                                    Hostname                State
+</span><span class='line'>f63d0e77-9602-4024-8945-5a7f7332bf89    gfs02                   Connected
+</span><span class='line'>2d4ac6c1-0611-4e2e-b4af-9e4aa8c1556d    gfs03                   Connected
+</span><span class='line'>6a604cd9-9a9c-406d-b1b7-69caf166a20e    localhost               Connected
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Great! All looks good.</p>
+
+<h2>Create the Replicated GlusterFS Volume:</h2>
+
+<p>Let&rsquo;s create our Replicated GlusterFS Volume, named <code>gfs</code>:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume create gfs <span class="se">\</span>
+</span><span class='line'>  replica <span class="m">3</span> <span class="se">\</span>
+</span><span class='line'>  gfs01:/gluster/bricks/1/brick <span class="se">\</span>
+</span><span class='line'>  gfs02:/gluster/bricks/2/brick <span class="se">\</span>
+</span><span class='line'>  gfs03:/gluster/bricks/2/brick
+</span><span class='line'>
+</span><span class='line'>volume create: gfs: success: please start the volume to access data
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Now that our volume is created, lets list it to verify that it is created:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume list
+</span><span class='line'>gfs
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Now, start the volume:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume start gfs
+</span><span class='line'>volume start: gfs: success
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>View the status of our volume:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume status gfs
+</span><span class='line'>Status of volume: gfs
+</span><span class='line'>Gluster process                             TCP Port  RDMA Port  Online  Pid
+</span><span class='line'>&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;
+</span><span class='line'>Brick gfs01:/gluster/bricks/1/brick         <span class="m">49152</span>     <span class="m">0</span>          Y       6450
+</span><span class='line'>Brick gfs02:/gluster/bricks/2/brick         <span class="m">49152</span>     <span class="m">0</span>          Y       3460
+</span><span class='line'>Brick gfs03:/gluster/bricks/3/brick         <span class="m">49152</span>     <span class="m">0</span>          Y       3309
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Next, view the volume inforation:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume info gfs
+</span><span class='line'>
+</span><span class='line'>Volume Name: gfs
+</span><span class='line'>Type: Replicate
+</span><span class='line'>Volume ID: 6f827df4-6df5-4c25-99ee-8d1a055d30f0
+</span><span class='line'>Status: Started
+</span><span class='line'>Number of Bricks: <span class="m">1</span> x <span class="nv">3</span> <span class="o">=</span> 3
+</span><span class='line'>Transport-type: tcp
+</span><span class='line'>Bricks:
+</span><span class='line'>Brick1: gfs01:/gluster/bricks/1/brick
+</span><span class='line'>Brick2: gfs02:/gluster/bricks/2/brick
+</span><span class='line'>Brick3: gfs03:/gluster/bricks/3/brick
+</span></code></pre></td></tr></table></div></figure></p>
+
+<h2>Security:</h2>
+
+<p>From a GlusterFS level, it will allow clients to connect by default. To authorize these 3 nodes to connect to the GlusterFS Volume:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume <span class="nb">set </span>gfs auth.allow 10.0.0.2,10.0.0.3,10.0.0.4
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>Then if you would like to remove this rule:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume <span class="nb">set </span>gfs auth.allow *
+</span></code></pre></td></tr></table></div></figure></p>
+
+<h2>Mount the GlusterFS Volume to the Host:</h2>
+
+<p>Mount the GlusterFS Volume to each node, so we will have to mount it to each node, and also append it to our <code>/etc/fstab</code> file so that it mounts on boot:</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;localhost:/gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'><span class="nv">$ </span>mount.glusterfs localhost:/gfs /mnt
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p><strong>Verify the Mounted Volume:</strong></p>
+
+<p>Check the mounted disks, and you will find that the Replicated GlusterFS Volume is mounted on our <code>/mnt</code> partition.</p>
+
+<p><figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/vda         18G  909M   17G   3% /
+</span><span class='line'>/dev/vdb         47G   80M   47G   1% /gluster/bricks/1
+</span><span class='line'>localhost:/gfs   47G   80M   47G   1% /mnt
+</span></code></pre></td></tr></table></div></figure></p>
+
+<p>You will note that GlusterFS Volume has a total size of 47GB usable space, which is the same size as one of our disks, but that is because we have a replicated volume with a replication factor of 3:  <code>(47 * 3 / 3)</code></p>
+
+<p>Now we have a Storage Volume which has 3 Replicas, one copy on each node, which allows us Data Durability on our Storage.</p>
+
+<p><p></p>
+
+<p><center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init(&lsquo;Buy Me a Coffee&rsquo;, &lsquo;#46b798&rsquo;, &lsquo;A6423ZIQ&rsquo;);kofiwidget2.draw();</script></center></p>
+
+<p><p></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Container Persistent Storage for Docker Swarm Using a GlusterFS Volume PLugin]]></title>
@@ -4009,97 +4305,6 @@
 <input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
 </form>
 </center>
-
-
-
-
-<p><p></p>
-
-<p>Thanks for reading!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Fix Mac High Sierra Opendlrectoryd Too Many Corpses Being Created Issue]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/01/07/fix-mac-high-sierra-opendlrectoryd-too-many-corpses-being-created-issue/"/>
-    <updated>2019-01-07T06:57:56-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/01/07/fix-mac-high-sierra-opendlrectoryd-too-many-corpses-being-created-issue</id>
-    <content type="html"><![CDATA[<p>This morning my brother&rsquo;s iMac gave some boot issues. The resolution to the issue was to drop into a terminal, rename the mrb_cache directory and reboot.</p>
-
-<h2>Steps to Resolution</h2>
-
-<p>When booting, the loading bar got stuck as seen below:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50767470-9f0eac00-1285-11e9-80a6-0475bb3b97cb.png" alt="" /></p>
-
-<p>Starting to investigate, he ran <code>cmd+s</code> to logon to single user mode, and he noticed the error: <strong>crashed: opendlrectoryd. Toomay corpses being crashed</strong>, as seen from the screenshot below:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50767477-a635ba00-1285-11e9-9086-605e06864d39.png" alt="" /></p>
-
-<p>After some troubleshooting he had to hard reboot his mac, hit <code>cmd+r</code> repeatedly until he loaded his mac into recovery mode:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50767613-2fe58780-1286-11e9-9d5b-02b73c052d6f.png" alt="" /></p>
-
-<p>From thereon, from the top dropdown select Utilities -> Terminal, change into the directory where the cache folder needs to be moved:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cd /Volumes/Macintosh\ HD/var/db/caches/opendirectory</span></code></pre></td></tr></table></div></figure>
-
-
-<p>List to see if the cache directory is present:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ls -la <span class="p">|</span> grep cache
-</span><span class='line'>-rw-------- root wheel <span class="m">28655</span>   Jan <span class="m">3</span>    22:22 mbr_cache
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Rename the cache directory:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>mv ./mbr_cache ./mbr_cache_old
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once that is done, reboot:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>reboot
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you experienced the similar issue, you should be able to see the login screen after successful boot.</p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<p>Ad space:</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
 
 
 

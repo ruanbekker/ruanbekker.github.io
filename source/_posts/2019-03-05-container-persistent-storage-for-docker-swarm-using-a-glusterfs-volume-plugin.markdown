@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "Container Persistent Storage for Docker Swarm using a GlusterFS Volume PLugin"
+title: "Container Persistent Storage for Docker Swarm using a GlusterFS Volume Plugin"
 date: 2019-03-05 13:18:30 -0500
 comments: true
 categories: ["docker", "swarm", "glusterfs", "storage", "containers"]
@@ -26,7 +26,7 @@ Our servers that we will be using will have the private ip's as shown below:
 
 ## Setup GlusterFS
 
-Have a look at [this](https://sysadmins.co.za/setup-a-3-node-replicated-storage-volume-with-glusterfs/) post to setup the glusterfs volume.
+Have a look at [this](https://blog.ruanbekker.com/blog/2019/03/05/setup-a-3-node-replicated-storage-volume-with-glusterfs/?referral=github.com) post to setup the glusterfs volume.
 
 ## Install the GlusterFS Volume Plugin
 

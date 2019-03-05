@@ -1,0 +1,565 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Container Persistent Storage for Docker Swarm Using a GlusterFS Volume PLugin - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="From one of my previous posts I demonstrated how to provide persistent storage for your containers by using a Convoy NFS Plugin. I&rsquo;ve stumbled &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2019/03/05/container-persistent-storage-for-docker-swarm-using-a-glusterfs-volume-plugin/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="https://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My Sysadmins Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Container Persistent Storage for Docker Swarm Using a GlusterFS Volume PLugin</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-03-05T13:18:30-05:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>5</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>1:18 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg" alt="" /></p>
+
+<p>From one of my previous posts I demonstrated how to provide persistent storage for your containers by using a <a href="https://blog.ruanbekker.com/blog/2018/02/16/guide-to-setup-docker-convoy-volume-driver-for-docker-swarm-with-nfs/">Convoy NFS Plugin</a>.</p>
+
+<p>I&rsquo;ve stumbled upon one AWESOME GlusterFS Volume Plugin for Docker by <a href="https://github.com/trajano/docker-volume-plugins/tree/master/glusterfs-volume-plugin">@trajano</a>, please have a look at his repository. I&rsquo;ve been waiting for some time for one solid glusterfs volume plugin, and it works great.</p>
+
+<h2>What we will be doing today</h2>
+
+<p>We will setup a 3 node replicated glusterfs volume and show how easy it is to install the volume plugin and then demonstrate how storage from our swarms containers are persisted.</p>
+
+<p>Our servers that we will be using will have the private ip&rsquo;s as shown below:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>10.22.125.101
+</span><span class='line'>10.22.125.102
+</span><span class='line'>10.22.125.103</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup GlusterFS</h2>
+
+<p>Have a look at <a href="https://sysadmins.co.za/setup-a-3-node-replicated-storage-volume-with-glusterfs/">this</a> post to setup the glusterfs volume.</p>
+
+<h2>Install the GlusterFS Volume Plugin</h2>
+
+<p>Below I&rsquo;m installing the plugin and setting the alias name as <code>glusterfs</code>, granting all permissions and keeping the plugin in a disabled state.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker plugin install --alias glusterfs trajano/glusterfs-volume-plugin --grant-all-permissions --disable
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the glusterfs servers:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker plugin <span class="nb">set </span>glusterfs <span class="nv">SERVERS</span><span class="o">=</span>10.22.125.101,10.22.125.102,10.22.125.103
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable the glusterfs plugin:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker plugin <span class="nb">enable </span>glusterfs
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create a Service in Docker Swarm</h2>
+
+<p>Deploy a sample service on docker swarm with a volume backed by glusterfs. Note that my glusterfs volume is called <code>gfs</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&quot;3.4&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">foo</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">alpine</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ping localhost</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">net</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">vol1:/tmp</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">net</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">overlay</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">vol1</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">glusterfs</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="s">&quot;gfs/vol1&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c docker-compose.yml <span class="nb">test</span>
+</span><span class='line'>Creating service test_foo
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look on which node is your container running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ps test_foo
+</span><span class='line'>ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+</span><span class='line'>jfwzb7yxnrxx        test_foo.1          alpine:latest       swarm-worker-1      Running             Running <span class="m">37</span> seconds ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now jump to the <code>swarm-worker-1</code> node and verify that the container is running on that node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker ps
+</span><span class='line'>CONTAINER ID        IMAGE                                          COMMAND                  CREATED             STATUS                  PORTS               NAMES
+</span><span class='line'>d469f341d836        alpine:latest                                  <span class="s2">&quot;ping localhost&quot;</span>           <span class="m">59</span> seconds ago      Up <span class="m">57</span> seconds                               test_foo.1.jfwzb7yxnrxxnd0qxtcjex8lu
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now since the container is running on this node, we will also see that the volume defined in our task configuration will also be present:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker volume ls
+</span><span class='line'>DRIVER                       VOLUME NAME
+</span><span class='line'>glusterfs:latest             gfs/vol1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Exec into the container and look at the disk layout:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it d469f341d836 sh
+</span><span class='line'>/ <span class="c"># df -h</span>
+</span><span class='line'>Filesystem                Size      Used Available Use% Mounted on
+</span><span class='line'>overlay                  45.6G      3.2G     40.0G   7% /
+</span><span class='line'>10.22.125.101:gfs/vol1   45.6G      3.3G     40.0G   8% /tmp
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>While you are in the container, write the hostname&rsquo;s value into a file which is mapped to the glusterfs volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="nv">$HOSTNAME</span> &gt; /tmp/data.txt
+</span><span class='line'><span class="nv">$ </span>cat /tmp/data.txt
+</span><span class='line'>d469f341d836
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Testing Data Persistence</h2>
+
+<p>Time to test the data persistence. Scale the service to 3 replicas, then hop onto a new node where a replica resides and check if the data was persisted.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service scale <span class="nv">test_foo</span><span class="o">=</span>3
+</span><span class='line'>test_foo scaled to 3
+</span><span class='line'>overall progress: <span class="m">3</span> out of <span class="m">3</span> tasks
+</span><span class='line'>1/3: running   <span class="o">[==================================================</span>&gt;<span class="o">]</span>
+</span><span class='line'>2/3: running   <span class="o">[==================================================</span>&gt;<span class="o">]</span>
+</span><span class='line'>3/3: running   <span class="o">[==================================================</span>&gt;<span class="o">]</span>
+</span><span class='line'>verify: Service converged
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check where the containers are running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ps test_foo
+</span><span class='line'>ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+</span><span class='line'>jfwzb7yxnrxx        test_foo.1          alpine:latest       swarm-worker-1      Running             Running <span class="m">2</span> minutes ago
+</span><span class='line'>mdsg6c5b2nqb        test_foo.2          alpine:latest       swarm-worker-3      Running             Running <span class="m">15</span> seconds ago
+</span><span class='line'>iybat57t4lha        test_foo.3          alpine:latest       swarm-worker-2      Running             Running <span class="m">15</span> seconds ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Hop onto the <code>swarm-worker-2</code> node and check if the data is persisted from our previous write:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it 4228529aba29 sh
+</span><span class='line'><span class="nv">$ </span>cat /tmp/data.txt
+</span><span class='line'>d469f341d836
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let&rsquo;s append data to that file, then delete the stack and recreate to test if the data is still persisted:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="nv">$HOSTNAME</span> &gt;&gt; /tmp/data.txt
+</span><span class='line'><span class="nv">$ </span>cat /tmp/data.txt
+</span><span class='line'>d469f341d836
+</span><span class='line'>4228529aba29
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>On the manager delete the stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack rm <span class="nb">test</span>
+</span><span class='line'>Removing service test_foo
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The deploy the stack again:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c docker-compose.yml <span class="nb">test</span>
+</span><span class='line'>Creating service test_foo
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check where the container is running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ps test_foo
+</span><span class='line'>ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
+</span><span class='line'>9d6z02m123jk        test_foo.1          alpine:latest       swarm-worker-1      Running             Running <span class="m">2</span> seconds ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Exec into the container and read the data:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it 3008b1e1bba1 cat /tmp/data.txt
+</span><span class='line'>d469f341d836
+</span><span class='line'>4228529aba29
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And as you can see the data is persisted.</p>
+
+<h2>Resources</h2>
+
+<p>Please have a look and star <a href="https://github.com/trajano/docker-volume-plugins">@trajano&rsquo;s</a> repository:</p>
+
+<ul>
+<li><a href="https://github.com/trajano/docker-volume-plugins">https://github.com/trajano/docker-volume-plugins</a></li>
+</ul>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2019-03-05T13:18:30-05:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>5</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>1:18 pm</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/containers/'>containers</a>, <a class='category' href='/blog/categories/docker/'>docker</a>, <a class='category' href='/blog/categories/glusterfs/'>glusterfs</a>, <a class='category' href='/blog/categories/storage/'>storage</a>, <a class='category' href='/blog/categories/swarm/'>swarm</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2019/03/05/container-persistent-storage-for-docker-swarm-using-a-glusterfs-volume-plugin/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2019/03/05/container-persistent-storage-for-docker-swarm-using-a-glusterfs-volume-plugin/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2019/03/04/setup-a-distributed-storage-volume-with-glusterfs/" title="Previous Post: Setup a Distributed Storage Volume with GlusterFS">&laquo; Setup a Distributed Storage Volume with GlusterFS</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Subscribe</h1>
+  <!-- Begin MailChimp Signup Form -->
+  <div id="mc_embed_signup">
+  <form action="https://sysadmins.us15.list-manage.com/subscribe/post?u=3dfcff447b6ee598231eeb658&amp;id=3542f323a9" method="post" id="mc-embedded-subscribe-form" name="mc-embedded-subscribe-form" class="validate" target="_blank" novalidate>
+    <div id="mc_embed_signup_scroll">
+      <div class="indicates-required"><span class="asterisk"></span></div>
+      <div class="mc-field-group">
+	<label for="mce-EMAIL">Email Address:  <span class="asterisk"></span>
+        </label>
+	<input type="email" value="" name="EMAIL" class="required email" id="mce-EMAIL">
+        </div>
+	<div id="mce-responses" class="clear">
+	  <div class="response" id="mce-error-response" style="display:none"></div>
+	  <div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+      <div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_3dfcff447b6ee598231eeb658_3542f323a9" tabindex="-1" value=""></div>
+    <div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+    </div>
+  </form>
+</div>
+<!--End mc_embed_signup-->
+</section>
+<section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2019/03/05/container-persistent-storage-for-docker-swarm-using-a-glusterfs-volume-plugin/">Container Persistent Storage for Docker Swarm Using a GlusterFS Volume PLugin</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/03/04/setup-a-distributed-storage-volume-with-glusterfs/">Setup a Distributed Storage Volume With GlusterFS</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/02/28/use-swarm-managed-configs-in-docker-swarm-to-store-your-application-configs/">Use Swarm Managed Configs in Docker Swarm to Store Your Application Configs</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/02/27/how-to-validate-strings-in-python-with-regex/">How to Validate Strings in Python With Regex</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/02/25/how-to-tag-all-your-aws-iam-users-with-python/">How to Tag All Your AWS IAM Users With Python</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2019 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2019/03/05/container-persistent-storage-for-docker-swarm-using-a-glusterfs-volume-plugin/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2019/03/05/container-persistent-storage-for-docker-swarm-using-a-glusterfs-volume-plugin/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>

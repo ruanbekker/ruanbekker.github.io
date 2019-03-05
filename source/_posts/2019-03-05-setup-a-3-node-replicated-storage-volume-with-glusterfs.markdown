@@ -43,9 +43,9 @@ Let's get started on setting up a 3 Node Replicated GlusterFS. Each node will ha
 
 I will install GlusterFS on each node, and in my setup I have the following DNS entries:
 
-- gfs01 (10.0.0.2)
-- gfs02 (10.0.0.3)
-- gfs03 (10.0.0.4)
+* gfs01 (10.0.0.2)
+* gfs02 (10.0.0.3)
+* gfs03 (10.0.0.4)
 
 **Preparing our Secondary Drives:**
 

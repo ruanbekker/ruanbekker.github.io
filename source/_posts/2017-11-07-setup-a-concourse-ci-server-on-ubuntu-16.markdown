@@ -93,6 +93,7 @@ CONCOURSE_TSA_WORKER_PRIVATE_KEY=/etc/concourse/worker_key
 Create a Concourse user:
 
 ```bash
+$ mkdir /var/lib/concourse
 $ sudo adduser --system --group concourse
 $ sudo chown -R concourse:concourse /etc/concourse /var/lib/concourse
 $ sudo chmod 600 /etc/concourse/*_environment

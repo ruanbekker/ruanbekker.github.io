@@ -6,6 +6,8 @@ comments: true
 categories: ["nagios", "monitoring", "graphs"]
 ---
 
+![](https://user-images.githubusercontent.com/567298/54547916-65f26680-49af-11e9-8d42-e27c57ef8e2e.png)
+
 If you have not setup the [Nagios Server](https://blog.ruanbekker.com/blog/2019/03/13/how-to-setup-a-nagios-monitoring-server/) have a look at that link to setup the Nagios server.
 
 ## NagiosGraph
@@ -154,4 +156,6 @@ Access your nagios server at http://nagios-ip/nagios and you will find that the 
 
 ![](https://user-images.githubusercontent.com/567298/54546912-5d992c00-49ad-11e9-8a7a-331578d20f5b.png)
 
+## Up Next
 
+Next, [Monitor your first Server with Nagios](https://blog.ruanbekker.com/blog/2019/03/18/monitor-your-first-host-and-services-with-nagios/)

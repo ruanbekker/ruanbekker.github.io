@@ -13,6 +13,8 @@ Good old nagios! Nagios is a great Open Source Monitoring Server that monitors y
 
 I've been using Nagios for the last 7 years and worked for 3 business that chose Nagios as their preferred server monitoring solution.
 
+All [Nagios](https://blog.ruanbekker.com/blog/categories/nagios/) related posts are grouped under the [#nagios](https://blog.ruanbekker.com/blog/categories/nagios/) category.
+
 ## What we are doing today
 
 Today we will setup a Nagios server and its plugins. The plugins helps to check different endpoints, such as custom tcp checks, ssh, snmp etc. 

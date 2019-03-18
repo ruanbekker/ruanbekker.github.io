@@ -107,3 +107,8 @@ $ systemctl restart apache2
 ```
 
 Head over to nagios user interface at http://nagios-ip/nagios and you should see that the services are scheduled to be checked and should be reflecting in a minute or two.
+
+## Up Next
+
+Next up, [Setup the NRPE Server and Client](https://blog.ruanbekker.com/blog/2019/03/18/setup-nrpe-client-and-server-for-monitoring-remote-services-in-nagios/) to monitor remote systems using the nrpe plugin.
+

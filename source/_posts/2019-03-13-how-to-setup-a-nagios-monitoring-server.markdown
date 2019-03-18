@@ -140,6 +140,64 @@ Check [this]() out how to create a python nrpe nagios plugin to check disk space
 
 ## Access Nagios
 
+Enable apache modules:
+
+```
+$ a2enmod rewrite
+$ a2enmod cgi
+```
+
+Setup basic auth for logging onto nagios:
+
+```
+$ htpasswd -c /usr/local/nagios/etc/htpasswd.users nagiosadmin
+```
+
+Setup a symlink for apache's nagios configuration
+
+The configuration for the above will look more or less like the following:
+
+```
+$ cat /etc/apache2/sites-enabled/nagios.conf
+
+...
+         Require all granted
+         AuthName "Nagios Access"
+         AuthType Basic
+         AuthUserFile /usr/local/nagios/etc/htpasswd.users
+         Require valid-user
+...
+``` 
+
+Create the systemd unit file for nagios `/etc/systemd/system/nagios.service`
+
+```
+[Unit]
+Description=Nagios
+BindTo=network.target
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Type=simple
+User=nagios
+Group=nagcmd
+ExecStart=/usr/local/nagios/bin/nagios /usr/local/nagios/etc/nagios.cfg
+```
+
+Reload the daemon:
+
+```
+$ systemctl daemon-reload
+```
+
+Enable the service:
+
+```
+$ systemctl enable /etc/systemd/system/nagios.service
+```
+
 Ensure nagios is started:
 
 ```bash
@@ -147,7 +205,8 @@ $ systemctl restart nagios
 $ systemctl restart apache2
 ```
 
-Access nagios on http://nagios-ip/nagios . The default user is `nagiosadmin` and password `nagiosadmin`
+Access nagios on http://nagios-ip/nagios with the credentials that you configured earlier.
+
 
 ## Configure Nagios to Monitor our first Host
 
@@ -163,6 +222,12 @@ Now, create the directory:
 
 ```
 $ mkdir /usr/local/nagios/etc/servers
+```
+
+Configure your email address for notifications in `/usr/local/nagios/etc/objects/contacts.cfg` and configure:
+
+```
+email     youremail@yourdomain.com;
 ```
 
 Let's say we want to configure a web server named web01 that sits at the location 10.10.10.10:

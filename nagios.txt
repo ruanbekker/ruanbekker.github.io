@@ -1,0 +1,271 @@
+---
+layout: post
+title: "How to Setup a Nagios Monitoring Server"
+date: 2019-03-13 17:53:42 -0400
+comments: true
+categories: ["nagios", "monitoring"]
+---
+
+![](http://static1.tothenew.com/blog/wp-content/uploads/2016/05/Nagios-logo.jpg)
+
+Good old nagios! Nagios is a great Open Source Monitoring Server that monitors your servers and services/applications that is hosted on top of them, and has the ability to notify in the event when they go down.
+
+I've been using Nagios for the last 7 years and worked for 3 business that chose Nagios as their preferred server monitoring solution.
+
+## What we are doing today
+
+Today we will setup a Nagios server and its plugins. The plugins helps to check different endpoints, such as custom tcp checks, ssh, snmp etc. 
+
+In this nagios tutorial series, I will publish a couple of post which will include:
+
+* Setup the Nagios Server and its Plugins - this post
+* Setup the NRPE Server and NRPE Client Server (this is nice for local ports or custom checks)
+* Setup Nagiosgraph (Graph performance data and add it as extra host configuration)
+* Setup a custom Bash and Python Nagios Plugin for Custom Checks
+* Setup a Telegram / Slack Plugin
+
+## Installing Dependencies:
+
+Go ahead and install all the dependencies needed by nagios and add the nagios user and group:
+
+```bash
+$ apt update
+$ apt install build-essential libgd-dev openssl libssl-dev unzip apache2 -y
+$ apt install autoconf gcc libc6 make wget unzip apache2 php libapache2-mod-php7.2 libgd-dev
+$ apt install libmcrypt-dev libssl-dev bc gawk dc build-essential libnet-snmp-perl gettext
+$ apt install libcarp-clan-perl rrdtool php-rrd libssl1.0-dev
+$ useradd nagios
+$ groupadd nagcmd
+$ usermod -a -G nagcmd nagios
+```
+
+## Install Nagios
+
+Download the nagios tarball from their website, have a look at [https://www.nagios.org/downloads/](https://www.nagios.org/downloads/) for the latest version.
+
+```bash
+$ wget -O nagios.tar.gz 'https://assets.nagios.com/downloads/nagioscore/releases/nagios-4.4.3.tar.gz?__hstc=118811158.7bdae752f04b6d927ddf150ae1ce5c71.1552389135285.1552394646569.1552410974898.3&__hssc=118811158.1.1552410974898&__hsfp=2323916385#_ga=2.246938692.1332751653.1552389134-913645931.1552389134'
+```
+
+Extract the archive:
+
+```
+$ tar xpf nagios*.tar.gz
+$ cd nagios-4.4.3/
+```
+
+Configure with nagios user and nagcmd group, install and change the ownership of the generated data:
+
+```
+$ ./configure --with-nagios-group=nagios --with-command-group=nagcmd
+$ make -j4 all
+$ make install
+$ make install-commandmode
+$ make install-init
+$ make install-config
+$ /usr/bin/install -c -m 644 sample-config/httpd.conf /etc/apache2/sites-available/nagios.conf
+$ usermod -a -G nagcmd www-data
+```
+
+## Install Nagios Plugins
+
+Get the nagios plugins tarball, extract and install:
+
+```
+$ wget nagios-plugins.tar.gz 'https://nagios-plugins.org/download/nagios-plugins-2.2.1.tar.gz#_ga=2.250909126.1332751653.1552389134-913645931.1552389134'
+$ tar xpf nagios-plugins*.tar.gz
+$ cd nagios-plugins-2.2.1
+$ ./configure --with-nagios-user=nagios --with-nagios-group=nagcmd --with-openssl
+$ make -j4
+$ make install
+```
+
+## Install Nagios NRPE
+
+Nagios Remote Plugin Executor (NRPE) allows you to remotely execute Nagios plugins on other linux systems. This allows you to monitor remote machine metrics (disk usage, CPU, local listening services, etc.).
+
+NRPE has 2 sections:
+
+1. The nagios server side.
+2. The client side.
+
+For nagios to execute remote plugins, the client configuration needs to allow the nrpe server which will be nagios.
+
+Download, extract, configure and install NRPE server:
+
+```
+$ wget 'https://github.com/NagiosEnterprises/nrpe/releases/download/nrpe-3.2.1/nrpe-3.2.1.tar.gz'
+$ tar -xvf nrpe-3.2.1.tar.gz
+$ cd nrpe-3.2.1
+$ ./configure --enable-command-args --with-nagios-user=nagios --with-nagios-group=nagcmd --with-ssl=/usr/bin/openssl --with-ssl-lib=/usr/lib/x86_64-linux-gnu
+$ make all
+$ make install
+$ make install-init
+$ make install-config
+$ systemctl enable nrpe.service
+```
+
+Installing NRPE on the client side:
+
+```
+$ apt update && apt install nagios-nrpe-server -y
+$ systemctl enable nagios-nrpe-server
+$ systemctl start nagios-nrpe-server
+```
+
+Allow your nagios server ip in `/etc/nagios/nrpe.cfg`:
+
+```
+allowed_hosts=nagios.ip.in.here
+```
+
+Restart NRPE on the client:
+
+```
+$ systemctl restart nagios-nrpe-server
+```
+
+Ensure that the `check_nrpe` plugin is configured and available in the commands.cfg configuration for the nagios server:
+
+```
+$ vi /usr/local/nagios/etc/objects/commands.cfg
+
+define command {
+    command_name check_nrpe
+    command_line $USER1$/check_nrpe -H $HOSTADDRESS$ -c $ARG1$
+}
+```
+
+Check [this]() out how to create a python nrpe nagios plugin to check disk space on the client host
+
+```
+wget 'https://downloads.sourceforge.net/project/nagiosgraph/nagiosgraph/1.5.2/nagiosgraph-1.5.2.tar.gz' -O nagiosgraph-1.5.2.tar.gz
+tar -xvf nagiosgraph-1.5.2.tar.gz
+```
+
+```
+apt install libnet-snmp-perl libsensors4 libsnmp-base libtalloc2 libtdb1 libwbclient0  snmp whois mrtg  libcgi-pm-perl librrds-perl libgd-perl libnagios-object-perl nagios-plugins-contrib
+./install.pl --check-prereq
+./install.pl --layout standalone --prefix /usr/local/nagiosgraph
+
+
+Destination directory (prefix)? [/usr/local/nagiosgraph]
+Location of configuration files (etc-dir)? [/usr/local/nagiosgraph/etc]
+Location of executables? [/usr/local/nagiosgraph/bin]
+Location of CGI scripts? [/usr/local/nagiosgraph/cgi]
+Location of documentation (doc-dir)? [/usr/local/nagiosgraph/doc]
+Location of examples? [/usr/local/nagiosgraph/examples]
+Location of CSS and JavaScript files? [/usr/local/nagiosgraph/share]
+Location of utilities? [/usr/local/nagiosgraph/util]
+Location of state files (var-dir)? [/usr/local/nagiosgraph/var]
+Location of RRD files? [/usr/local/nagiosgraph/var/rrd]
+Location of log files (log-dir)? [/usr/local/nagiosgraph/var/log]
+Path of log file? [/usr/local/nagiosgraph/var/log/nagiosgraph.log]
+Path of CGI log file? [/usr/local/nagiosgraph/var/log/nagiosgraph-cgi.log]
+Base URL? [/nagiosgraph]
+URL of CGI scripts? [/nagiosgraph/cgi-bin]
+URL of CSS file? [/nagiosgraph/nagiosgraph.css]
+URL of JavaScript file? [/nagiosgraph/nagiosgraph.js]
+URL of Nagios CGI scripts? [/nagios/cgi-bin]
+Path of Nagios performance data file? [/tmp/perfdata.log]
+username or userid of Nagios user? [nagios]
+username or userid of web server user? [www-data]
+Modify the Nagios configuration? [n] y
+Path of Nagios configuration file? [/usr/local/nagios/etc/nagios.cfg]
+Path of Nagios commands file? [/usr/local/nagios/etc/objects/commands.cfg]
+Modify the Apache configuration? [n] y
+Path of Apache configuration directory? /etc/apache2/sites-enabled
+
+```
+
+```
+/etc/apache2/sites-enabled/nagiosgraph.conf
+ScriptAlias /nagiosgraph/cgi-bin "/usr/local/nagiosgraph/cgi"
+<Directory "/usr/local/nagiosgraph/cgi">
+   Options ExecCGI
+   AllowOverride None
+   #Order allow,deny
+   #Allow from all
+   Require all granted
+#   AuthName "Nagios Access"
+#   AuthType Basic
+#   AuthUserFile NAGIOS_ETC_DIR/htpasswd.users
+#   Require valid-user
+</Directory>
+# enable nagiosgraph CSS and JavaScript
+Alias /nagiosgraph "/usr/local/nagiosgraph/share"
+<Directory "/usr/local/nagiosgraph/share">
+   Options None
+   AllowOverride None
+   #Order allow,deny
+   #Allow from all
+   Require all granted
+</Directory>
+```
+
+```
+vi /usr/local/nagios/etc/nagios.cfg
+process_performance_data=1 service_perfdata_file=/usr/local/nagios/var/service-perfdata.log service_perfdata_file_template=$LASTSERVICECHECK$||$HOSTNAME$||$SERVICEDESC$||$SERVICEOUTPUT$||$SERVICEPERFDATA$ service_perfdata_file_mode=a service_perfdata_file_processing_interval=30 service_perfdata_file_processing_command=process-service-perfdata-for-nagiosgraph
+```
+
+```
+vi /usr/local/nagios/etc/objects/commands.cfg
+define command {
+  command_name process-service-perfdata-for-nagiosgraph
+  command_line /usr/local/nagiosgraph/bin/insert.pl
+}
+
+```
+
+```
+/usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+systemctl restart nagios
+systemctl restart apache2
+```
+
+```
+vi /usr/local/nagios/etc/objects/templates.cfg
+define service {
+      name              graphed-service
+      action_url        /nagiosgraph/cgi-bin/show.cgi?host=$HOSTNAME$&service=$SERVICEDESC$' onMouseOver='showGraphPopup(this)' onMouseOut='hideGraphPopup()' rel='/nagiosgraph/cgi-bin/showgraph.cgi?host=$HOSTNAME$&service=$SERVICEDESC$&period=week&rrdopts=-w+450+-j
+      register        0
+      }
+
+```
+
+```
+vi /usr/local/nagios/etc/servers/vpn.cfg
+define host {
+    use                      linux-server
+    host_name                VPN
+    alias                    VPN
+    address                  fw.ruanbekker.com
+    max_check_attempts       5
+    check_period             24x7
+    notification_interval    30
+    notification_period      24x7
+}
+
+define service {
+    use                    generic-service,graphed-service
+    host_name              VPN
+    service_description    PING
+    check_command          check_ping!100.0,20%!500.0,60%
+}
+
+define service {
+    use                      generic-service,graphed-service
+    host_name                VPN
+    service_description      SSH
+    check_command            check_ssh
+    notifications_enabled    0
+}
+
+```
+
+```
+systemctl restart nagios
+systemctl restart apache2
+```
+
+

@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="I&rsquo;ve been using Scaleway for the past 18 months and I must admit, I love hosting my Applications on their Infrastructure. They have expanded &hellip;">
+  <meta name="description" content="Today we will use Amazon Web Services SSM Service to store secrets in their Parameter Store which we will encyrpt using KMS. Then we will read the &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -88,6 +88,672 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/04/04/using-aws-ssm-parameter-store-to-retrieve-secrets-encrypted-by-kms-using-python/">Using AWS SSM Parameter Store to Retrieve Secrets Encrypted by KMS Using Python</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-04-04T16:47:16-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>4:47 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://i.snag.gy/4ytE3W.jpg" alt="" /></p>
+
+<p>Today we will use Amazon Web Services SSM Service to store secrets in their Parameter Store which we will encyrpt using KMS.</p>
+
+<p>Then we will read the data from SSM and decrypt using our KMS key. We will then end it off by writing a Python Script that reads the AWS credentials, authenticates with SSM and then read the secret values that we stored.</p>
+
+<h2>The Do List:</h2>
+
+<p>We will break up this post in the following topics:</p>
+
+<ul>
+<li>Create a KMS Key which will use to Encrypt/Decrypt the Parameter in SSM</li>
+<li>Create the IAM Policy which will be used to authorize the Encrypt/Decrypt by the KMS ID</li>
+<li>Create the KMS Alias</li>
+<li>Create the Parameter using PutParameter as a SecureString to use Encryption with KMS</li>
+<li>Describe the Parameters</li>
+<li>Read the Parameter with and without Decryption to determine the difference using GetParameter</li>
+<li>Read the Parameters using GetParameters</li>
+<li>Environment Variable Example</li>
+</ul>
+
+
+<h2>Create the KMS Key:</h2>
+
+<p>As the administrator, or root account, create the KMS Key:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">,</span> <span class="n">profile_name</span><span class="o">=</span><span class="s">&#39;personal&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">iam</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;iam&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">kms</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;kms&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">kms</span><span class="o">.</span><span class="n">create_key</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Description</span><span class="o">=</span><span class="s">&#39;Ruan Test Key&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">KeyUsage</span><span class="o">=</span><span class="s">&#39;ENCRYPT_DECRYPT&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Origin</span><span class="o">=</span><span class="s">&#39;AWS_KMS&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">BypassPolicyLockoutSafetyCheck</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Tags</span><span class="o">=</span><span class="p">[{</span><span class="s">&#39;TagKey&#39;</span><span class="p">:</span> <span class="s">&#39;Name&#39;</span><span class="p">,</span> <span class="s">&#39;TagValue&#39;</span><span class="p">:</span> <span class="s">&#39;RuanTestKey&#39;</span><span class="p">}]</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;KeyMetadata&#39;</span><span class="p">][</span><span class="s">&#39;KeyId&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="n">foobar</span><span class="o">-</span><span class="mi">2162</span><span class="o">-</span><span class="mi">4363</span><span class="o">-</span><span class="n">ba02</span><span class="o">-</span><span class="n">a953729e5ce6</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the IAM Policy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">iam</span><span class="o">.</span><span class="n">create_policy</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">PolicyName</span><span class="o">=</span><span class="s">&#39;ruan-kms-test-policy&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">PolicyDocument</span><span class="o">=</span><span class="s">&#39;{</span>
+</span><span class='line'>        <span class="s">&quot;Version&quot;</span><span class="p">:</span> <span class="s">&quot;2012-10-17&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&quot;Statement&quot;</span><span class="p">:</span> <span class="p">[{</span>
+</span><span class='line'>            <span class="s">&quot;Sid&quot;</span><span class="p">:</span> <span class="s">&quot;Stmt1517212478199&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;Action&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>                <span class="s">&quot;kms:Decrypt&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s">&quot;kms:Encrypt&quot;</span>
+</span><span class='line'>            <span class="p">],</span>
+</span><span class='line'>            <span class="s">&quot;Effect&quot;</span><span class="p">:</span> <span class="s">&quot;Allow&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;Resource&quot;</span><span class="p">:</span> <span class="s">&quot;arn:aws:kms:eu-west-1:0123456789012:key/foobar-2162-4363-ba02-a953729e5ce6&quot;</span>
+</span><span class='line'>        <span class="p">}]</span>
+</span><span class='line'>    <span class="p">}</span><span class="s">&#39;, </span>
+</span><span class='line'>    <span class="n">Description</span><span class="o">=</span><span class="s">&#39;Ruan KMS Test Policy&#39;</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;Policy&#39;</span><span class="p">][</span><span class="s">&#39;Arn&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="n">arn</span><span class="p">:</span><span class="n">aws</span><span class="p">:</span><span class="n">iam</span><span class="p">::</span><span class="mo">01234567</span><span class="mi">89012</span><span class="p">:</span><span class="n">policy</span><span class="o">/</span><span class="n">ruan</span><span class="o">-</span><span class="n">kms</span><span class="o">-</span><span class="n">test</span><span class="o">-</span><span class="n">policy</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the KMS Alias:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">kms</span><span class="o">.</span><span class="n">create_alias</span><span class="p">(</span><span class="n">AliasName</span><span class="o">=</span><span class="s">&#39;alias/ruan-test-kms&#39;</span><span class="p">,</span> <span class="n">TargetKeyId</span><span class="o">=</span><span class="s">&#39;foobar-2162-4363-ba02-a953729e5ce6&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Publish the Secrets to SSM:</h2>
+
+<p>As the administrator, write the secret values to the parameter store in SSM. We will publish a secret with the Parameter: <code>/test/ruan/mysql/db01/mysql_hostname</code> and the Value: <code>db01.eu-west-1.mycompany.com</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">getpass</span> <span class="kn">import</span> <span class="n">getpass</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">secretvalue</span> <span class="o">=</span> <span class="n">getpass</span><span class="p">()</span>
+</span><span class='line'><span class="n">Password</span><span class="p">:</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">secretvalue</span><span class="p">)</span>
+</span><span class='line'><span class="n">db01</span><span class="o">.</span><span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mf">1.</span><span class="n">mycompany</span><span class="o">.</span><span class="n">com</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">put_parameter</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Name</span><span class="o">=</span><span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Description</span><span class="o">=</span><span class="s">&#39;RuanTest MySQL Hostname&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Value</span><span class="o">=</span><span class="n">secretvalue</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Type</span><span class="o">=</span><span class="s">&#39;SecureString&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">KeyId</span><span class="o">=</span><span class="s">&#39;foobar-2162-4363-ba02-a953729e5ce6&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Overwrite</span><span class="o">=</span><span class="bp">False</span>
+</span><span class='line'><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Describe Parameters</h2>
+
+<p>Describe the Parameter that we written to SSM:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">describe_parameters</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Filters</span><span class="o">=</span><span class="p">[{</span><span class="s">&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;Name&#39;</span><span class="p">,</span> <span class="s">&#39;Values&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">]}]</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;ResponseMetadata&#39;</span><span class="p">][</span><span class="s">&#39;Parameters&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s">&#39;Name&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Reading from SSM:</h2>
+
+<p>Read the Parameter value from SSM without using decryption via KMS:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">get_parameter</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;Parameter&#39;</span><span class="p">][</span><span class="s">&#39;Value&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="n">AQICAHh7jazUUBgNxMQbYFeve2</span><span class="o">/</span><span class="n">p</span><span class="o">+</span><span class="n">UWTuyAd5F3ZJkZkf9</span><span class="o">+</span><span class="n">hwgF</span><span class="o">+</span><span class="n">H</span><span class="o">+</span><span class="n">kSABfPCTEarjXqYBaJAAAAejB4BgkqhkiG9w0BBwagazBpAgEAMGQGCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMJUEuT8wDGCQ3zRBmAgEQgDc8LhLgFe</span><span class="o">+</span><span class="n">Rutgi0hOKnjTEVQa2lKTy3MmTDZEeLy3Tlr5VUl6AVJNBpd4IWJTbj5YuqrrAAWWJ</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see the value is encrypted, this time read the parameter value with specifying decryption via KMS:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">get_parameter</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">,</span> <span class="n">WithDecryption</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;Parameter&#39;</span><span class="p">][</span><span class="s">&#39;Value&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="n">db01</span><span class="o">.</span><span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mf">1.</span><span class="n">mycompany</span><span class="o">.</span><span class="n">com</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Grant Permissions to Instance Profile:</h2>
+
+<p>Now we will create a policy that can only decrypt and read values from SSM that matches the path: <code>/test/ruan/mysql/db01/mysql_*</code>. This policy will be associated to a instance profile role, which will be used by EC2, where our application will read the values from.</p>
+
+<p>Our policy will look like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
+</span><span class='line'>  <span class="nt">&quot;Version&quot;</span><span class="p">:</span> <span class="s2">&quot;2012-10-17&quot;</span><span class="p">,</span>
+</span><span class='line'>  <span class="nt">&quot;Statement&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>    <span class="p">{</span>
+</span><span class='line'>      <span class="nt">&quot;Sid&quot;</span><span class="p">:</span> <span class="s2">&quot;Stmt1517398919242&quot;</span><span class="p">,</span>
+</span><span class='line'>      <span class="nt">&quot;Action&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>        <span class="s2">&quot;kms:Decrypt&quot;</span>
+</span><span class='line'>      <span class="p">],</span>
+</span><span class='line'>      <span class="nt">&quot;Effect&quot;</span><span class="p">:</span> <span class="s2">&quot;Allow&quot;</span><span class="p">,</span>
+</span><span class='line'>      <span class="nt">&quot;Resource&quot;</span><span class="p">:</span> <span class="s2">&quot;arn:aws:kms:eu-west-1:0123456789012:key/foobar-2162-4363-ba02-a953729e5ce6&quot;</span>
+</span><span class='line'>    <span class="p">},</span>
+</span><span class='line'>    <span class="p">{</span>
+</span><span class='line'>      <span class="nt">&quot;Sid&quot;</span><span class="p">:</span> <span class="s2">&quot;Stmt1517399021096&quot;</span><span class="p">,</span>
+</span><span class='line'>      <span class="nt">&quot;Action&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>        <span class="s2">&quot;ssm:GetParameter&quot;</span>
+</span><span class='line'>      <span class="p">],</span>
+</span><span class='line'>      <span class="nt">&quot;Effect&quot;</span><span class="p">:</span> <span class="s2">&quot;Allow&quot;</span><span class="p">,</span>
+</span><span class='line'>      <span class="nt">&quot;Resource&quot;</span><span class="p">:</span> <span class="s2">&quot;arn:aws:ssm:eu-west-1:0123456789012:parameter/test/ruan/mysql/db01/mysql_*&quot;</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>  <span class="p">]</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Policy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">pol</span> <span class="o">=</span> <span class="s">&#39;{&quot;Version&quot;: &quot;2012-10-17&quot;,&quot;Statement&quot;: [{&quot;Sid&quot;: &quot;Stmt1517398919242&quot;,&quot;Action&quot;: [&quot;kms:Decrypt&quot;],&quot;Effect&quot;: &quot;Allow&quot;,&quot;Resource&quot;: &quot;arn:aws:kms:eu-west-1:0123456789012:key/foobar-2162-4363-ba02-a953729e5ce6&quot;},{&quot;Sid&quot;: &quot;Stmt1517399021096&quot;,&quot;Action&quot;: [&quot;ssm:GetParameter&quot;],&quot;Effect&quot;: &quot;Allow&quot;,&quot;Resource&quot;: &quot;arn:aws:ssm:eu-west-1:0123456789012:parameter/test/ruan/mysql/db01/mysql_*&quot;}]}&#39;</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">iam</span><span class="o">.</span><span class="n">create_policy</span><span class="p">(</span><span class="n">PolicyName</span><span class="o">=</span><span class="s">&#39;RuanGetSSM-Policy&#39;</span><span class="p">,</span> <span class="n">PolicyDocument</span><span class="o">=</span><span class="n">pol</span><span class="p">,</span> <span class="n">Description</span><span class="o">=</span><span class="s">&#39;Test Policy to Get SSM Parameters&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the instance profile:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">iam</span><span class="o">.</span><span class="n">create_instance_profile</span><span class="p">(</span><span class="n">InstanceProfileName</span><span class="o">=</span><span class="s">&#39;RuanTestSSMInstanceProfile&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Role:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">iam</span><span class="o">.</span><span class="n">create_role</span><span class="p">(</span><span class="n">RoleName</span><span class="o">=</span><span class="s">&#39;RuanTestGetSSM-Role&#39;</span><span class="p">,</span> <span class="n">AssumeRolePolicyDocument</span><span class="o">=</span><span class="s">&#39;{&quot;Version&quot;: &quot;2012-10-17&quot;,&quot;Statement&quot;: [{&quot;Sid&quot;: &quot;&quot;,&quot;Effect&quot;: &quot;Allow&quot;,&quot;Principal&quot;: {&quot;Service&quot;: &quot;ec2.amazonaws.com&quot;},&quot;Action&quot;: &quot;sts:AssumeRole&quot;}]}&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Associate the Role and Instance Profile:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">iam</span><span class="o">.</span><span class="n">add_role_to_instance_profile</span><span class="p">(</span><span class="n">InstanceProfileName</span><span class="o">=</span><span class="s">&#39;RuanTestSSMInstanceProfile&#39;</span><span class="p">,</span> <span class="n">RoleName</span><span class="o">=</span><span class="s">&#39;RuanTestGetSSM-Role&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Attach the Policy to the Role:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">iam</span><span class="o">.</span><span class="n">put_role_policy</span><span class="p">(</span><span class="n">RoleName</span><span class="o">=</span><span class="s">&#39;RuanTestGetSSM-Role&#39;</span><span class="p">,</span> <span class="n">PolicyName</span><span class="o">=</span><span class="s">&#39;RuanTestGetSSMPolicy1&#39;</span><span class="p">,</span> <span class="n">PolicyDocument</span><span class="o">=</span><span class="n">pol</span><span class="s">&#39;)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Launch the EC2 instance with the above mentioned Role. Create the <code>get_ssm.py</code> and run it to decrypt and read the value from SSM:</p>
+
+<figure class='code'><figcaption><span>get_ssm.py</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">ssm</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;ssm&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">hostname</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">get_parameter</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">,</span> <span class="n">WithDecryption</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="n">hostname</span><span class="p">[</span><span class="s">&#39;Parameter&#39;</span><span class="p">][</span><span class="s">&#39;Value&#39;</span><span class="p">])</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python get_ssm.py
+</span><span class='line'>db01.eu-west-1.mycompany.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Reading with GetParameters:</h2>
+
+<p>So say that we created more than one parameter in the path that we allowed, lets use <code>GetParameters</code> to read more than one Parameter:</p>
+
+<figure class='code'><figcaption><span>get_parameters.py</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">ssm</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;ssm&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">response</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">get_parameters</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Names</span><span class="o">=</span><span class="p">[</span>
+</span><span class='line'>        <span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&#39;/test/ruan/mysql/db01/mysql_user&#39;</span>
+</span><span class='line'>    <span class="p">],</span>
+</span><span class='line'>    <span class="n">WithDecryption</span><span class="o">=</span><span class="bp">True</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">secrets</span> <span class="ow">in</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Parameters&#39;</span><span class="p">]:</span>
+</span><span class='line'>    <span class="k">if</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;Name&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s">&#39;/test/ruan/mysql/db01/mysql_hostname&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;Hostname: {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">secrets</span><span class="p">[</span><span class="s">&#39;Value&#39;</span><span class="p">]))</span>
+</span><span class='line'>    <span class="k">if</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;Name&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s">&#39;/test/ruan/mysql/db01/mysql_user&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;Username: {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">secrets</span><span class="p">[</span><span class="s">&#39;Value&#39;</span><span class="p">]))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python get_parameters.py
+</span><span class='line'>Hostname: db01.eu-west-1.mycompany.com
+</span><span class='line'>Username: super_dba
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Environment Variable Example from an Application:</h2>
+
+<p>Set the Environment Variable value to the SSM key:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">MYSQL_HOSTNAME</span><span class="o">=</span><span class="s2">&quot;/test/ruan/mysql/db01/mysql_hostname&quot;</span>
+</span><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">MYSQL_USERNAME</span><span class="o">=</span><span class="s2">&quot;/test/ruan/mysql/db01/mysql_user&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The application code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">os</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">ssm</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;ssm&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">MYSQL_HOSTNAME</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;MYSQL_HOSTNAME&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">MYSQL_USERNAME</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;MYSQL_USERNAME&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">hostname</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">get_parameter</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="n">MYSQL_HOSTNAME</span><span class="p">,</span> <span class="n">WithDecryption</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'><span class="n">username</span> <span class="o">=</span> <span class="n">ssm</span><span class="o">.</span><span class="n">get_parameter</span><span class="p">(</span><span class="n">Name</span><span class="o">=</span><span class="n">MYSQL_USERNAME</span><span class="p">,</span> <span class="n">WithDecryption</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;Hostname: {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">hostname</span><span class="p">[</span><span class="s">&#39;Parameter&#39;</span><span class="p">][</span><span class="s">&#39;Value&#39;</span><span class="p">]))</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;Username: {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">username</span><span class="p">[</span><span class="s">&#39;Parameter&#39;</span><span class="p">][</span><span class="s">&#39;Value&#39;</span><span class="p">]))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let the application transform the key to the SSM Value:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span><span class='line'>Hostname: db01.eu-west-1.mycompany.com
+</span><span class='line'>Username: super_dba
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<p>Great thanks to the following resources:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-su-organize.html">https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-su-organize.html</a></li>
+<li><a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-roles.html">https://docs.aws.amazon.com/cli/latest/userguide/cli-roles.html</a></li>
+<li><a href="https://github.com/iMilnb/awstools/blob/master/platforms/roles/mkrole.py">https://github.com/iMilnb/awstools/blob/master/platforms/roles/mkrole.py</a></li>
+<li><a href="https://github.com/ktruckenmiller/ssm-get-parameter-by-path/blob/master/python.py">https://github.com/ktruckenmiller/ssm-get-parameter-by-path/blob/master/python.py</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/04/03/using-python-boto3-and-dreamhosts-dreamobjects-to-interact-with-their-object-storage-offering/">Using Python Boto3 and DreamHosts DreamObjects to Interact With Their Object Storage Offering</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-04-03T07:19:27-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>3</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>7:19 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://i.snag.gy/uxK5qy.jpg" alt="" /></p>
+
+<p>In this post I will demonstrate how to interact with Dreamhost&rsquo;s Object Storage Service Offering called DreamObjects using Python Boto3 library. Dreamhost offers Object Storage at great pricing, for more information have a look at their <a href="https://goo.gl/N7Xws8">Documentation</a></p>
+
+<h2>Whats on the Menu:</h2>
+
+<p>We will do the following:</p>
+
+<ul>
+<li>List Buckets</li>
+<li>List Objects</li>
+<li>Put Object</li>
+<li>Get Object</li>
+<li>Upload Object</li>
+<li>Download Object</li>
+<li>Delete Object(s)</li>
+</ul>
+
+
+<h2>Configuration</h2>
+
+<p>First we need to configure credentials, by providing the access key and access secret key, that is provided by DreamHost:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install awscli
+</span><span class='line'><span class="nv">$ </span>aws configure --profile dreamhost
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After your credentials is set to your profile, we will need to import boto3 and instantiate the s3 client with our profile name, region name and endpoint url:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;us-west-2&#39;</span><span class="p">,</span> <span class="n">profile_name</span><span class="o">=</span><span class="s">&#39;dreamhost&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">s3</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;s3&#39;</span><span class="p">,</span> <span class="n">endpoint_url</span><span class="o">=</span><span class="s">&#39;https://objects-us-west-1.dream.io&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>List Buckets:</h2>
+
+<p>To list our Buckets:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">list_buckets</span><span class="p">()</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;Owner&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">u&#39;DisplayName&#39;</span><span class="p">:</span> <span class="s">&#39;foobar&#39;</span><span class="p">,</span> <span class="s">u&#39;ID&#39;</span><span class="p">:</span> <span class="s">&#39;foobar&#39;</span><span class="p">},</span> <span class="s">u&#39;Buckets&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s">u&#39;CreationDate&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2017</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">15</span><span class="p">,</span> <span class="mi">21</span><span class="p">,</span> <span class="mi">51</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">921000</span><span class="p">,</span> <span class="n">tzinfo</span><span class="o">=</span><span class="n">tzutc</span><span class="p">()),</span> <span class="s">u&#39;Name&#39;</span><span class="p">:</span> <span class="s">&#39;ruanbucket&#39;</span><span class="p">}],</span> <span class="s">&#39;ResponseMetadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;HTTPStatusCode&#39;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span> <span class="s">&#39;RetryAttempts&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;HostId&#39;</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">,</span> <span class="s">&#39;RequestId&#39;</span><span class="p">:</span> <span class="s">&#39;tx00000000000000003cd88-005ac361f5-foobar-default&#39;</span><span class="p">,</span> <span class="s">&#39;HTTPHeaders&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;date&#39;</span><span class="p">:</span> <span class="s">&#39;Tue, 03 Apr 2018 11:13:57 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;content-length&#39;</span><span class="p">:</span> <span class="s">&#39;306&#39;</span><span class="p">,</span> <span class="s">&#39;x-amz-request-id&#39;</span><span class="p">:</span> <span class="s">&#39;tx00000000000000003cd88-005ac361f5-foobar-default&#39;</span><span class="p">,</span> <span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;application/xml&#39;</span><span class="p">}}}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">bucket</span> <span class="ow">in</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Buckets&#39;</span><span class="p">]:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">bucket</span><span class="p">[</span><span class="s">&#39;Name&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="n">ruanbucket</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>List Objects:</h2>
+
+<p>List all the Objects, after the given prefix:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">list_objects</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Prefix</span><span class="o">=</span><span class="s">&#39;logs/sysadmins.co.za/access/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">obj</span> <span class="ow">in</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Contents&#39;</span><span class="p">]:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span> <span class="n">obj</span><span class="p">[</span><span class="s">&#39;Key&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="n">logs</span><span class="o">/</span><span class="n">sysadmins</span><span class="o">.</span><span class="n">co</span><span class="o">.</span><span class="n">za</span><span class="o">/</span><span class="n">access</span><span class="o">/</span><span class="n">access</span><span class="o">.</span><span class="n">log</span><span class="o">-</span><span class="mi">2017</span><span class="o">-</span><span class="mi">10</span><span class="o">-</span><span class="mf">10.</span><span class="n">gz</span>
+</span><span class='line'><span class="n">logs</span><span class="o">/</span><span class="n">sysadmins</span><span class="o">.</span><span class="n">co</span><span class="o">.</span><span class="n">za</span><span class="o">/</span><span class="n">access</span><span class="o">/</span><span class="n">access</span><span class="o">.</span><span class="n">log</span><span class="o">-</span><span class="mi">2017</span><span class="o">-</span><span class="mi">10</span><span class="o">-</span><span class="mf">11.</span><span class="n">gz</span>
+</span><span class='line'><span class="n">logs</span><span class="o">/</span><span class="n">sysadmins</span><span class="o">.</span><span class="n">co</span><span class="o">.</span><span class="n">za</span><span class="o">/</span><span class="n">access</span><span class="o">/</span><span class="n">access</span><span class="o">.</span><span class="n">log</span><span class="o">-</span><span class="mi">2017</span><span class="o">-</span><span class="mi">10</span><span class="o">-</span><span class="mf">12.</span><span class="n">gz</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Put Object:</h2>
+
+<p>Write text as the body to the destination key on the Bucket:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">put_object</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Body</span><span class="o">=</span><span class="s">&#39;My Name is Ruan</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;uploads/docs/file.txt&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;Body&#39;</span><span class="p">:</span> <span class="o">&lt;</span><span class="n">botocore</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">StreamingBody</span> <span class="nb">object</span> <span class="n">at</span> <span class="mh">0x13cde10</span><span class="o">&gt;</span><span class="p">,</span> <span class="s">u&#39;AcceptRanges&#39;</span><span class="p">:</span> <span class="s">&#39;bytes&#39;</span><span class="p">,</span> <span class="s">u&#39;ContentType&#39;</span><span class="p">:</span> <span class="s">&#39;binary/octet-stream&#39;</span><span class="p">,</span> <span class="s">&#39;ResponseMetadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;HTTPStatusCode&#39;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span> <span class="s">&#39;RetryAttempts&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;HostId&#39;</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">,</span> <span class="s">&#39;RequestId&#39;</span><span class="p">:</span> <span class="s">&#39;tx0000000000000000053f2-005ac3e0db-foobar-default&#39;</span><span class="p">,</span> <span class="s">&#39;HTTPHeaders&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;content-length&#39;</span><span class="p">:</span> <span class="s">&#39;16&#39;</span><span class="p">,</span> <span class="s">&#39;accept-ranges&#39;</span><span class="p">:</span> <span class="s">&#39;bytes&#39;</span><span class="p">,</span> <span class="s">&#39;last-modified&#39;</span><span class="p">:</span> <span class="s">&#39;Tue, 03 Apr 2018 20:14:54 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;etag&#39;</span><span class="p">:</span> <span class="s">&#39;&quot;292edceea84d1234465f725c3921fc2a&quot;&#39;</span><span class="p">,</span> <span class="s">&#39;x-amz-request-id&#39;</span><span class="p">:</span> <span class="s">&#39;tx0000000000000000053f2-005ac3e0db-foobar-default&#39;</span><span class="p">,</span> <span class="s">&#39;date&#39;</span><span class="p">:</span> <span class="s">&#39;Tue, 03 Apr 2018 20:15:23 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;binary/octet-stream&#39;</span><span class="p">}},</span> <span class="s">u&#39;LastModified&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2018</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">14</span><span class="p">,</span> <span class="mi">54</span><span class="p">,</span> <span class="n">tzinfo</span><span class="o">=</span><span class="n">tzutc</span><span class="p">()),</span> <span class="s">u&#39;ContentLength&#39;</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span> <span class="s">u&#39;ETag&#39;</span><span class="p">:</span> <span class="s">&#39;&quot;292edceea84d1234465f725c3921fc2a&quot;&#39;</span><span class="p">,</span> <span class="s">u&#39;Metadata&#39;</span><span class="p">:</span> <span class="p">{}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the Object that we have created in the Bucket::</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">list_objects</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Prefix</span><span class="o">=</span><span class="s">&#39;uploads/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">obj</span> <span class="ow">in</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Contents&#39;</span><span class="p">]:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span> <span class="n">obj</span><span class="p">[</span><span class="s">&#39;Key&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="n">uploads</span><span class="o">/</span><span class="n">docs</span><span class="o">/</span><span class="nb">file</span><span class="o">.</span><span class="n">txt</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Get Object:</h2>
+
+<p>Read the value from the key that was uploaded:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">get_object</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;uploads/docs/file.txt&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;Body&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</span><span class='line'><span class="n">My</span> <span class="n">Name</span> <span class="ow">is</span> <span class="n">Ruan</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Upload Files:</h2>
+
+<p>Upload the file from disk to the Bucket:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;myfile.txt&#39;</span><span class="p">,</span> <span class="s">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">data</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="n">s3</span><span class="o">.</span><span class="n">upload_fileobj</span><span class="p">(</span><span class="n">Fileobj</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;uploads/docs/uploadobj.txt&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the contents from the uploaded file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">get_object</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;uploads/docs/uploadobj.txt&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">[</span><span class="s">&#39;Body&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</span><span class='line'><span class="n">This</span> <span class="ow">is</span> <span class="n">some</span> <span class="n">text</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Download File:</h2>
+
+<p>Download the file from the Bucket to the local disk:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;downloaded.txt&#39;</span><span class="p">,</span> <span class="s">&#39;wb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">data</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="n">s3</span><span class="o">.</span><span class="n">download_fileobj</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;uploads/docs/uploadobj.txt&#39;</span><span class="p">,</span> <span class="n">Fileobj</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the file&rsquo;s content from disk:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s">&#39;downloaded.txt&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</span><span class='line'><span class="n">This</span> <span class="ow">is</span> <span class="n">some</span> <span class="n">text</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Delete Object:</h2>
+
+<p>Delete one object:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">delete_object</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;uploads/docs/uploadobj.txt&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span><span class="s">&#39;ResponseMetadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;HTTPStatusCode&#39;</span><span class="p">:</span> <span class="mi">204</span><span class="p">,</span> <span class="s">&#39;RetryAttempts&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;HostId&#39;</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">,</span> <span class="s">&#39;RequestId&#39;</span><span class="p">:</span> <span class="s">&#39;tx00000000000000000be5a-005ac3e61a-foobar-default&#39;</span><span class="p">,</span> <span class="s">&#39;HTTPHeaders&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;date&#39;</span><span class="p">:</span> <span class="s">&#39;Tue, 03 Apr 2018 20:37:46 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;x-amz-request-id&#39;</span><span class="p">:</span> <span class="s">&#39;tx00000000000000000be5a-005ac3e61a-foobar-default&#39;</span><span class="p">}}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Delete Objects:</h2>
+
+<p>Delete more than one object with a single API call:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">delete_objects</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruanbucket&#39;</span><span class="p">,</span> <span class="n">Delete</span><span class="o">=</span><span class="p">{</span><span class="s">&#39;Objects&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s">&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;uploads/docs/file.txt&#39;</span><span class="p">},</span> <span class="p">{</span><span class="s">&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;uploads/docs/file2.txt&#39;</span><span class="p">},</span> <span class="p">{</span><span class="s">&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;uploads/docs/file3.txt&#39;</span><span class="p">}]})</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;Deleted&#39;</span><span class="p">:</span> <span class="p">[{</span><span class="s">u&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;uploads/docs/file.txt&#39;</span><span class="p">},</span> <span class="p">{</span><span class="s">u&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;uploads/docs/file2.txt&#39;</span><span class="p">},</span> <span class="p">{</span><span class="s">u&#39;Key&#39;</span><span class="p">:</span> <span class="s">&#39;uploads/docs/file3.txt&#39;</span><span class="p">}],</span> <span class="s">&#39;ResponseMetadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;HTTPStatusCode&#39;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span> <span class="s">&#39;RetryAttempts&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;HostId&#39;</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">,</span> <span class="s">&#39;RequestId&#39;</span><span class="p">:</span> <span class="s">&#39;tx000000000000000011008-005ac3e951-foobar-default&#39;</span><span class="p">,</span> <span class="s">&#39;HTTPHeaders&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;date&#39;</span><span class="p">:</span> <span class="s">&#39;Tue, 03 Apr 2018 20:51:29 GMT&#39;</span><span class="p">,</span> <span class="s">&#39;content-length&#39;</span><span class="p">:</span> <span class="s">&#39;270&#39;</span><span class="p">,</span> <span class="s">&#39;x-amz-request-id&#39;</span><span class="p">:</span> <span class="s">&#39;tx000000000000000011008-005ac3e951-217c0ac5-default&#39;</span><span class="p">,</span> <span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;application/xml&#39;</span><span class="p">}}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For more information on the above, have a look at <a href="http://boto3.readthedocs.io/en/latest/guide/quickstart.html">Boto&rsquo;s Documentation</a> and <a href="https://www.dreamhost.com/">DreamHost&rsquo;s Website</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1471,456 +2137,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/03/02/golang-reading-from-files-and-writing-to-disk-with-golang/">Golang: Reading From Files and Writing to Disk With Golang</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-03-02T06:44:59-05:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>2</span><span class='date-suffix'>nd</span>, <span class='date-year'>2018</span></span> <span class='time'>6:44 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="![](https://i.snag.gy/VJmUZz.jpg" alt="" />)</p>
-
-<p>Today we will create a very basic application to read content from a file, and write the content from the file back to disk, but to another filename.</p>
-
-<p>Basically, doing a copy of the file to another filename.</p>
-
-<h2>Golang Environment: Golang Docker Image</h2>
-
-<p>Dropping into a Golang Environment using Docker:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -it golang:alpine sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Our Golang Application</h2>
-
-<p>After we are in our container, lets write our app:</p>
-
-<figure class='code'><figcaption><span>app.go</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class='go'><span class='line'><span class="kn">package</span> <span class="nx">main</span>
-</span><span class='line'>
-</span><span class='line'><span class="kn">import</span> <span class="p">(</span>
-</span><span class='line'>    <span class="s">&quot;io/ioutil&quot;</span>
-</span><span class='line'><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">main</span><span class="p">()</span> <span class="p">{</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nx">content</span><span class="p">,</span> <span class="kt">error</span> <span class="o">:=</span> <span class="nx">ioutil</span><span class="p">.</span><span class="nx">ReadFile</span><span class="p">(</span><span class="s">&quot;source-data.txt&quot;</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="kt">error</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
-</span><span class='line'>        <span class="nb">panic</span><span class="p">(</span><span class="kt">error</span><span class="p">)</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="kt">error</span> <span class="p">=</span> <span class="nx">ioutil</span><span class="p">.</span><span class="nx">WriteFile</span><span class="p">(</span><span class="s">&quot;destination-data.txt&quot;</span><span class="p">,</span> <span class="nx">content</span><span class="p">,</span> <span class="mo">0644</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="kt">error</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
-</span><span class='line'>        <span class="nb">panic</span><span class="p">(</span><span class="kt">error</span><span class="p">)</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Building our application to a binary:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>go build app.go
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Creating our <code>source-data.txt</code> :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s2">&quot;foo&quot;</span> &gt; <span class="nb">source</span>-data.txt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Running the Golang App:</h2>
-
-<p>When we run this app, it will read the content of <code>source-data.txt</code> and write it to <code>destination-data.txt</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>./app.go
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can see that the file has been written to disk:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ls <span class="p">|</span> grep data
-</span><span class='line'>destination-data.txt
-</span><span class='line'><span class="nb">source</span>-data.txt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Making sure the data is the same, we can do a <code>md5sum hash</code> function on them:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>md5sum <span class="nb">source</span>-data.txt
-</span><span class='line'>d3b07384d113edec49eaa6238ad5ff00  <span class="nb">source</span>-data.txt
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>md5sum destination-data.txt
-</span><span class='line'>d3b07384d113edec49eaa6238ad5ff00  destination-data.txt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Next:</h2>
-
-<p>This was a very static way of doing it, as you need to hardcode the filenames. In the <a href="https://goo.gl/t8fasN">next post</a> I will show how to use arguments to make it more dynamic.</p>
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/02/20/setup-a-kvm-hypervisor-on-ubuntu-to-host-virtual-machines/">Setup a KVM Hypervisor on Ubuntu to Host Virtual Machines</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-02-20T06:21:56-05:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>20</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>6:21 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Today we will setup a KVM (Kernel Virtual Machine) Hypervisor, where we can host Virtual Machines. In order to do so, your host needs to Support Hardware Virtualization.</p>
-
-<h2>What we will be doing today:</h2>
-
-<ul>
-<li>Check if your host supports Hardware Virtualization</li>
-<li>Setup the KVM Hypervisor</li>
-<li>Setup a Alpine VM</li>
-</ul>
-
-
-<h2>Check for Hardware Virtualization Support:</h2>
-
-<p>We will install the package required to do the check:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt update <span class="o">&amp;&amp;</span> sudo apt install cpu-checker -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once that is installed, run <code>kvm-ok</code> and if its supported, your output should look something like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kvm-ok
-</span><span class='line'>INFO: /dev/kvm exists
-</span><span class='line'>KVM acceleration can be used
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Installing KVM</h2>
-
-<p>Update your System and get the Packages required to Setup KVM:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
-</span><span class='line'><span class="nv">$ </span>apt install bridge-utils qemu-kvm libvirt-bin virtinst -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Add your user to the libvirtd group:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo usermod -G libvirtd <span class="nv">$USER</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Check that the libvirtd service is running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl is-active libvirtd
-</span><span class='line'>active
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will also find that there is a new interface configured called <code>virbr0</code> in my case.</p>
-
-<h2>Provision the Alpine VM and Setup OpenSSH:</h2>
-
-<p>Get the ISO:</p>
-
-<ul>
-<li><a href="https://alpinelinux.org/downloads/">https://alpinelinux.org/downloads/</a></li>
-</ul>
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget http://dl-cdn.alpinelinux.org/alpine/v3.7/releases/x86_64/alpine-virt-3.7.0-x86_64.iso
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Provision the VM:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virt-install <span class="se">\</span>
-</span><span class='line'>--name alpine1 <span class="se">\</span>
-</span><span class='line'>--ram <span class="m">256</span> <span class="se">\</span>
-</span><span class='line'>--disk <span class="nv">path</span><span class="o">=</span>/var/lib/libvirt/images/alpine1.img,size<span class="o">=</span><span class="m">8</span> <span class="se">\</span>
-</span><span class='line'>--vcpus <span class="m">1</span> <span class="se">\</span>
-</span><span class='line'>--os-type linux <span class="se">\</span>
-</span><span class='line'>--os-variant generic <span class="se">\</span>
-</span><span class='line'>--network bridge:virbr0,model<span class="o">=</span>virtio <span class="se">\</span>
-</span><span class='line'>--graphics none <span class="se">\</span>
-</span><span class='line'>--console pty,target_type<span class="o">=</span>serial <span class="se">\</span>
-</span><span class='line'>--cdrom ./alpine-virt-3.7.0-x86_64.iso
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After this, you will be dropped into the console:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>Starting install...
-</span><span class='line'>Allocating <span class="s1">&#39;alpine1.img&#39;</span>                                                                                                           <span class="p">|</span>   <span class="m">8</span> GB  00:00:01
-</span><span class='line'>Creating domain...                                                                                                                 <span class="p">|</span>    <span class="m">0</span> B  00:00:00
-</span><span class='line'>Connected to domain alpine1
-</span><span class='line'>Escape character is ^<span class="o">]</span>
-</span><span class='line'>
-</span><span class='line'>ISOLINUX 6.04 6.04-pre1  Copyright <span class="o">(</span>C<span class="o">)</span> 1994-2015 H. Peter Anvin et al
-</span><span class='line'>boot:
-</span><span class='line'>
-</span><span class='line'>   OpenRC 0.24.1.a941ee4a0b is starting up Linux 4.9.65-1-virthardened <span class="o">(</span>x86_64<span class="o">)</span>
-</span><span class='line'>
-</span><span class='line'>Welcome to Alpine Linux 3.7
-</span><span class='line'>Kernel 4.9.65-1-virthardened on an x86_64 <span class="o">(</span>/dev/ttyS0<span class="o">)</span>
-</span><span class='line'>
-</span><span class='line'>localhost login:
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Login with the <code>root</code> user and no password, then setup the VM by running <code>setup-alpine</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>localhost login: root
-</span><span class='line'>Welcome to Alpine!
-</span><span class='line'>
-</span><span class='line'>localhost:~# setup-alpine
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After completing the prompts reboot the VM by running <code>reboot</code>, then you will be dropped out of the console. Check the status of the reboot:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virsh list
-</span><span class='line'> Id    Name                           State
-</span><span class='line'>----------------------------------------------------
-</span><span class='line'> <span class="m">2</span>     alpine1                        running
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As we can see our guest is running, lets console to our guest, provide the root user and password that you provided during the setup phase:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virsh console 2
-</span><span class='line'>Connected to domain alpine1
-</span><span class='line'>Escape character is ^<span class="o">]</span>
-</span><span class='line'>
-</span><span class='line'>alpine1 login: root
-</span><span class='line'>Password:
-</span><span class='line'>Welcome to Alpine!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Setup OpenSSH so that we can SSH to our guest over the network:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apk update
-</span><span class='line'><span class="nv">$ </span>apk add openssh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Configure SSH to accept Root Passwords, this is not advisable for production environments, but for testing this is okay. For Production servers, we will rather look at Key Based Authentication etc.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#PermitRootLogin prohibit-password/PermitRootLogin yes/g&#39;</span> /etc/ssh/sshd_config
-</span><span class='line'><span class="nv">$ </span>/etc/init.d/sshd restart
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Get the IP Address:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ifconfig
-</span><span class='line'>eth0      Link encap:Ethernet  HWaddr 52:54:00:D0:48:0C
-</span><span class='line'>          inet addr:192.168.122.176  Bcast:192.168.122.255  Mask:255.255.255.0
-</span><span class='line'>          inet6 addr: fe80::5054:ff:fed0:480c/64 Scope:Link
-</span><span class='line'>          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
-</span><span class='line'>          RX packets:55 errors:0 dropped:28 overruns:0 frame:0
-</span><span class='line'>          TX packets:34 errors:0 dropped:0 overruns:0 carrier:0
-</span><span class='line'>          collisions:0 txqueuelen:1000
-</span><span class='line'>          RX bytes:4545 <span class="o">(</span>4.4 KiB<span class="o">)</span>  TX bytes:3345 <span class="o">(</span>3.2 KiB<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Exit the guest by running <code>exit</code> and <code>Ctrl + ]</code> to exit the console session.</p>
-
-<p>Now SSH to your Alpine VM:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh root@192.168.122.176
-</span><span class='line'>root@192.168.122.176<span class="err">&#39;</span>s password:
-</span><span class='line'>Welcome to Alpine!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Some Useful Commands:</h2>
-
-<p>List Running VMs:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virsh list
-</span><span class='line'> Id    Name                           State
-</span><span class='line'>----------------------------------------------------
-</span><span class='line'> <span class="m">3</span>     alpine1                        running
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Shutdown a VM:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virsh shutdown alpine1
-</span><span class='line'>Domain alpine1 is being shutdown
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>List all VMs:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virsh list --all
-</span><span class='line'> Id    Name                           State
-</span><span class='line'>----------------------------------------------------
-</span><span class='line'> -     alpine1                        shut off
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Delete a VM:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virsh shutdown alpine1 <span class="c">#or to force shutdown:</span>
-</span><span class='line'><span class="nv">$ </span>virsh destroy alpine1
-</span><span class='line'><span class="nv">$ </span>virsh undefine alpine1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Any future KVM posts will be tagged under <a href="http://blog.ruanbekker.com/blog/categories/kvm?source_site=blog.ruanbekker.com?source_category=kvm">KVM</a> and Alpine posts will be available under the <a href="http://blog.ruanbekker.com/blog/categories/alpine?source_site=blog.ruanbekker.com?source_category=kvm">Alpine</a> tag.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/13">&larr; Older</a>
@@ -1961,6 +2177,14 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2019/03/18/setup-nrpe-client-and-server-for-monitoring-remote-services-in-nagios/">Setup NRPE Client and Server for Monitoring Remote Services in Nagios</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/03/18/monitor-your-first-host-and-services-with-nagios/">Monitor Your First Host and Services With Nagios</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2019/03/18/how-to-setup-the-nagiosgraph-plugin-on-nagios-monitoring-server/">How to Setup the NagiosGraph Plugin on Nagios Monitoring Server</a>
       </li>
     
@@ -1970,14 +2194,6 @@
     
       <li class="post">
         <a href="/blog/2019/03/09/setup-a-reverse-proxy-on-nginx-for-your-backend-applications/">Setup a Reverse Proxy on Nginx for Your Backend Applications</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/03/06/create-users-databases-and-granting-access-for-users-on-postgresql/">Create Users Databases and Granting Access for Users on PostgreSQL</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/03/05/setup-a-3-node-replicated-storage-volume-with-glusterfs/">Setup a 3 Node Replicated Storage Volume With GlusterFS</a>
       </li>
     
   </ul>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Swarm | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/swarm/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-03-20T19:21:59-04:00</updated>
+  <updated>2019-03-21T03:02:04-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,483 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Deploy a Docker Swarm Cluster on Scaleway With Terraform]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/03/21/how-to-deploy-a-docker-swarm-cluster-on-scaleway-with-terraform/"/>
+    <updated>2019-03-21T02:15:07-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/03/21/how-to-deploy-a-docker-swarm-cluster-on-scaleway-with-terraform</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/54737111-09fa2e80-4bb7-11e9-97f4-a94a31fc9a3a.png" alt="" /></p>
+
+<p>We will deploy a 3 node docker swarm cluster with terraform on scaleway. I have used the base source code from <a href="https://github.com/stefanprodan/scaleway-swarm-terraform">this</a> repository but tweaked the configuration to my needs.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>Ensure terraform and jq is instaled:</p>
+
+<pre><code class="bash">$ brew install terraform
+$ brew install jq
+</code></pre>
+
+<h2>Terraform</h2>
+
+<p>You can have a look at the linked source at the top for the source code, but below I will provide each file that will make up our terraform deployment.</p>
+
+<p>Ource <code>main.tf</code></p>
+
+<pre><code>provider "scaleway" {
+  region = "${var.region}"
+}
+
+data "scaleway_bootscript" "debian" {
+  architecture = "x86_64"
+  name = "x86_64 mainline 4.15.11 rev1"
+}
+
+data "scaleway_image" "debian_stretch" {
+  architecture = "x86_64"
+  name         = "Debian Stretch"
+}
+
+data "template_file" "docker_conf" {
+  template = "${file("conf/docker.tpl")}"
+
+  vars {
+    ip = "${var.docker_api_ip}"
+  }
+}
+</code></pre>
+
+<p>The <code>outputs.tf</code></p>
+
+<pre><code>output "swarm_manager_public_ip" {
+  value = "${scaleway_ip.swarm_manager_ip.0.ip}"
+}
+
+output "swarm_manager_private_ip" {
+  value = "${scaleway_server.swarm_manager.0.private_ip}"
+}
+
+output "swarm_workers_public_ip" {
+  value = "${concat(scaleway_server.swarm_worker.*.name, scaleway_server.swarm_worker.*.public_ip)}"
+}
+
+output "swarm_workers_private_ip" {
+  value = "${concat(scaleway_server.swarm_worker.*.name, scaleway_server.swarm_worker.*.private_ip)}"
+}
+
+output "workspace" {
+  value = "${terraform.workspace}"
+}
+</code></pre>
+
+<p>Our <code>security-groups.tf</code></p>
+
+<pre><code>resource "scaleway_security_group" "swarm_managers" {
+  name        = "swarm_managers"
+  description = "Allow HTTP/S and SSH traffic"
+}
+
+resource "scaleway_security_group_rule" "ssh_accept" {
+  security_group = "${scaleway_security_group.swarm_managers.id}"
+
+  action    = "accept"
+  direction = "inbound"
+  ip_range  = "0.0.0.0/0"
+  protocol  = "TCP"
+  port      = 22
+}
+
+resource "scaleway_security_group_rule" "http_accept" {
+  security_group = "${scaleway_security_group.swarm_managers.id}"
+
+  action    = "accept"
+  direction = "inbound"
+  ip_range  = "0.0.0.0/0"
+  protocol  = "TCP"
+  port      = 80
+}
+
+resource "scaleway_security_group_rule" "https_accept" {
+  security_group = "${scaleway_security_group.swarm_managers.id}"
+
+  action    = "accept"
+  direction = "inbound"
+  ip_range  = "0.0.0.0/0"
+  protocol  = "TCP"
+  port      = 443
+}
+
+resource "scaleway_security_group" "swarm_workers" {
+  name        = "swarm_workers"
+  description = "Allow SSH traffic"
+}
+
+resource "scaleway_security_group_rule" "ssh_accept_workers" {
+  security_group = "${scaleway_security_group.swarm_workers.id}"
+
+  action    = "accept"
+  direction = "inbound"
+  ip_range  = "0.0.0.0/0"
+  protocol  = "TCP"
+  port      = 22
+}
+</code></pre>
+
+<p>Our <code>variables.tf</code></p>
+
+<pre><code>variable "docker_version" {
+  default = "18.06.3~ce~3-0~debian"
+}
+
+variable "region" {
+  default = "ams1"
+}
+
+variable "manager_instance_type" {
+  default = "START1-M"
+}
+
+variable "worker_instance_type" {
+  default = "START1-M"
+}
+
+variable "worker_instance_count" {
+  default = 2
+}
+
+variable "docker_api_ip" {
+  default = "127.0.0.1"
+}
+</code></pre>
+
+<p>Our <code>managers.tf</code></p>
+
+<pre><code>resource "scaleway_ip" "swarm_manager_ip" {
+  count = 1
+}
+
+resource "scaleway_server" "swarm_manager" {
+  count          = 1
+  name           = "${terraform.workspace}-manager-${count.index + 1}"
+  image          = "${data.scaleway_image.debian_stretch.id}"
+  type           = "${var.manager_instance_type}"
+  bootscript     = "${data.scaleway_bootscript.debian.id}"
+  security_group = "${scaleway_security_group.swarm_managers.id}"
+  public_ip      = "${element(scaleway_ip.swarm_manager_ip.*.ip, count.index)}"
+
+  volume {
+    size_in_gb = 50
+    type       = "l_ssd"
+  }
+
+  provisioner "remote-exec" {
+    script = "scripts/mount-disk.sh"
+  }
+
+  connection {
+    type = "ssh"
+    user = "root"
+    private_key = "${file("~/.ssh/id_rsa")}"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "mkdir -p /etc/systemd/system/docker.service.d",
+    ]
+  }
+
+  provisioner "file" {
+    content     = "${data.template_file.docker_conf.rendered}"
+    destination = "/etc/systemd/system/docker.service.d/docker.conf"
+  }
+
+  provisioner "file" {
+    source      = "scripts/install-docker-ce.sh"
+    destination = "/tmp/install-docker-ce.sh"
+  }
+
+  provisioner "file" {
+    source      = "scripts/local-persist-plugin.sh"
+    destination = "/tmp/local-persist-plugin.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /tmp/install-docker-ce.sh",
+      "/tmp/install-docker-ce.sh ${var.docker_version}",
+      "docker swarm init --advertise-addr ${self.private_ip}",
+      "chmod +x /tmp/local-persist-plugin.sh",
+      "/tmp/local-persist-plugin.sh"
+    ]
+  }
+}
+</code></pre>
+
+<p>Our <code>workers.tf</code></p>
+
+<pre><code>resource "scaleway_ip" "swarm_worker_ip" {
+  count = "${var.worker_instance_count}"
+}
+
+resource "scaleway_server" "swarm_worker" {
+  count          = "${var.worker_instance_count}"
+  name           = "${terraform.workspace}-worker-${count.index + 1}"
+  image          = "${data.scaleway_image.debian_stretch.id}"
+  type           = "${var.worker_instance_type}"
+  bootscript     = "${data.scaleway_bootscript.debian.id}"
+  security_group = "${scaleway_security_group.swarm_workers.id}"
+  public_ip      = "${element(scaleway_ip.swarm_worker_ip.*.ip, count.index)}"
+
+  volume {
+    size_in_gb = 50
+    type       = "l_ssd"
+  }
+
+  provisioner "remote-exec" {
+    script = "scripts/mount-disk.sh"
+  }
+
+  connection {
+    type = "ssh"
+    user = "root"
+    private_key = "${file("~/.ssh/id_rsa")}"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "mkdir -p /etc/systemd/system/docker.service.d",
+    ]
+  }
+
+  provisioner "file" {
+    content     = "${data.template_file.docker_conf.rendered}"
+    destination = "/etc/systemd/system/docker.service.d/docker.conf"
+  }
+
+  provisioner "file" {
+    source      = "scripts/install-docker-ce.sh"
+    destination = "/tmp/install-docker-ce.sh"
+  }
+
+  provisioner "file" {
+    source      = "scripts/local-persist-plugin.sh"
+    destination = "/tmp/local-persist-plugin.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /tmp/install-docker-ce.sh",
+      "/tmp/install-docker-ce.sh ${var.docker_version}",
+      "docker swarm join --token ${data.external.swarm_tokens.result.worker} ${scaleway_server.swarm_manager.0.private_ip}:2377",
+      "chmod +x /tmp/local-persist-plugin.sh",
+      "/tmp/local-persist-plugin.sh",
+    ]
+  }
+
+  provisioner "remote-exec" {
+    when = "destroy"
+
+    inline = [
+      "docker node update --availability drain ${self.name}",
+    ]
+
+    on_failure = "continue"
+
+    connection {
+      type = "ssh"
+      user = "root"
+      host = "${scaleway_ip.swarm_manager_ip.0.ip}"
+    }
+  }
+
+  provisioner "remote-exec" {
+    when = "destroy"
+
+    inline = [
+      "docker swarm leave",
+    ]
+
+    on_failure = "continue"
+  }
+
+  provisioner "remote-exec" {
+    when = "destroy"
+
+    inline = [
+      "docker node rm --force ${self.name}",
+    ]
+
+    on_failure = "continue"
+
+    connection {
+      type = "ssh"
+      user = "root"
+      host = "${scaleway_ip.swarm_manager_ip.0.ip}"
+    }
+  }
+}
+
+data "external" "swarm_tokens" {
+  program = ["./scripts/fetch-tokens.sh"]
+
+  query = {
+    host = "${scaleway_ip.swarm_manager_ip.0.ip}"
+  }
+
+  depends_on = ["scaleway_server.swarm_manager"]
+}
+</code></pre>
+
+<p>Our config for the docker daemon: <code>conf/docker.tpl</code></p>
+
+<pre><code>[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd -H fd:// \
+  -H tcp://${ip}:2375 \
+  --storage-driver=overlay2 \
+  --dns 8.8.4.4 --dns 8.8.8.8 \
+  --log-driver json-file \
+  --log-opt max-size=50m --log-opt max-file=10 \
+  --experimental=true \
+  --metrics-addr 172.17.0.1:9323
+</code></pre>
+
+<p>Our script to mount our additional disk: <code>scripts/mount-disk.sh</code></p>
+
+<pre><code class="bash">#!/bin/bash
+apt update
+apt install xfsprogs attr -y
+mkfs -t xfs /dev/vdb
+echo "/dev/vdb /mnt xfs defaults 0 0" &gt;&gt; /etc/fstab
+mount -a
+</code></pre>
+
+<p>Our script to install docker: <code>scripts/install-docker-ce.sh</code></p>
+
+<pre><code class="bash">#!/usr/bin/env bash
+
+DOCKER_VERSION=$1
+DEBIAN_FRONTEND=noninteractive apt-get -qq update
+apt-get -qq install apt-transport-https ca-certificates curl software-properties-common
+curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable"
+
+apt-get -q update -y
+apt-get -q install -y docker-ce=$DOCKER_VERSION containerd.io
+</code></pre>
+
+<p>Our script that retrieves the swarm tokens: <code>scripts/fetch-tokens.sh</code></p>
+
+<pre><code class="bash">#!/usr/bin/env bash
+
+# Processing JSON in shell scripts
+# https://www.terraform.io/docs/providers/external/data_source.html#processing-json-in-shell-scripts
+
+set -e
+
+# Extract "host" argument from the input into HOST shell variable
+eval "$(jq -r '@sh "HOST=\(.host)"')"
+
+MANAGER=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$HOST docker swarm join-token manager -q)
+WORKER=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$HOST docker swarm join-token worker -q)
+
+# produce a json object containing the tokens
+jq -n --arg manager "$MANAGER" --arg worker "$WORKER" '{"manager":$manager,"worker":$worker}'
+</code></pre>
+
+<p>Our script to install the <a href="https://github.com/CWSpear/local-persist">local-persist docker volume</a> plugin: <code>scripts/local-persist-plugin.sh</code></p>
+
+<pre><code>#!/usr/bin/env bash
+set -e
+curl -fsSL https://raw.githubusercontent.com/CWSpear/local-persist/master/scripts/install.sh | bash
+</code></pre>
+
+<h2>Deploy your Swarm</h2>
+
+<p>Note that we will be deploying 3x SMART1-M servers with Debian Stretch. At this moment the image id is the one of debian stretch but may change in the future. If you want to change the distro, update the install script, and the terraform files.</p>
+
+<p><a href="https://www.scaleway.com/docs/generate-an-api-token/">Generate API Token on Scaleway</a> then export it to your current shell:</p>
+
+<pre><code class="bash">export SCALEWAY_ORGANIZATION="&lt;organization-id&gt;"
+export SCALEWAY_TOKEN="&lt;secret&gt;"
+</code></pre>
+
+<p>Make sure that your ssh private key is the intended one as in the config, in my example: <code>~/.ssh/id_rsa</code> and that they are allowed in your servers <code>authorized_keys</code> file</p>
+
+<p>Create a new workspace:</p>
+
+<pre><code class="bash">$ terraform new workspace swarm
+</code></pre>
+
+<p>Pull down the providers and initialize:</p>
+
+<pre><code class="bash">$ terraform init
+</code></pre>
+
+<p>Deploy!</p>
+
+<pre><code class="bash">$ terraform apply
+...
+...
+scaleway_server.swarm_worker[0]: Creation complete after 4m55s (ID: xx-xx-xx-xx-xx)
+
+Apply complete! Resources: 14 added, 0 changed, 0 destroyed.
+Outputs:
+
+swarm_manager_private_ip = 10.21.x.x
+swarm_manager_public_ip = 51.xx.xx.xx
+swarm_workers_private_ip = [
+    swarm-worker-1,
+    swarm-worker-2,
+    10.20.xx.xx,
+    10.20.xx.xx,
+]
+swarm_workers_public_ip = [
+    swarm-worker-1,
+    swarm-worker-2,
+    51.xx.xx.xx,
+    51.xx.xx.xx,
+]
+workspace = swarm
+</code></pre>
+
+<p>Once your deployment is done you will be prompted with the public/private ip addresses of your nodes as seen above, you can also manually retrieve them:</p>
+
+<pre><code>$ terraform terraform output
+</code></pre>
+
+<p>Or for a specific node, such as the manager:</p>
+
+<pre><code>$ terraform terraform output swarm-manager
+51.xx.xx.xx
+</code></pre>
+
+<p>Go ahead and ssh to your manager nodes and list the swarm nodes, boom, easy right.</p>
+
+<pre><code>$ docker node ls
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+2696o0vrt93x8qf2gblbfc8pf *   swarm-manager       Ready               Active              Leader              18.09.3
+72ava7rrp2acnyadisg52n7ym     swarm-worker-1      Ready               Active                                  18.09.3
+sy2otqn20qe9jc2v9io3a21jm     swarm-worker-2      Ready               Active                                  18.09.3
+</code></pre>
+
+<p>When you want to destroy the environment:</p>
+
+<pre><code>$ terraform destroy -force
+</code></pre>
+
+<h2>References:</h2>
+
+<p>Big thanks goes to <a href="https://github.com/stefanprodan">@stefanprodan</a></p>
+
+<ul>
+<li><a href="https://www.terraform.io/docs/index.html">https://www.terraform.io/docs/index.html</a></li>
+<li><a href="https://docs.docker.com/engine/swarm/">https://docs.docker.com/engine/swarm/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Container Persistent Storage for Docker Swarm Using a GlusterFS Volume Plugin]]></title>
@@ -945,280 +1422,6 @@ networks:
 <li><a href="https://github.com/ruanbekker/ghost-armhf">https://github.com/ruanbekker/ghost-armhf</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Build a Traefik Proxy Image for Your Raspberry Pi on Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/"/>
-    <updated>2018-10-23T17:31:02-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/traefik-logo-routing.png" alt="" /></p>
-
-<p>In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our Raspberry Pi Docker Swarm.</p>
-
-<p>Then we will build and push our image to a registry, then setup traefik and also setup a web application that sits behind our Traefik Proxy.</p>
-
-<h2>What is Traefik</h2>
-
-<p><a href="https://traefik.io/">Traefik</a> is a modern load balancer and reverse proxy built for micro services.</p>
-
-<h2>Dockerfile</h2>
-
-<p>We will be running Traefik on Alpine 3.8:</p>
-
-<pre><code class="dockerfile">FROM rbekker87/armhf-alpine:3.8
-
-ENV TRAEFIK_VERSION 1.7.0-rc3
-ENV ARCH arm
-
-ADD https://github.com/containous/traefik/releases/download/v${TRAEFIK_VERSION}/traefik_linux-${ARCH} /traefik
-
-RUN apk add --no-cache ca-certificates \
-    &amp;&amp; chmod +x /traefik \
-    &amp;&amp; rm -rf /var/cache/apk/*
-
-EXPOSE 80 8080 443
-
-ENTRYPOINT ["/traefik"]
-</code></pre>
-
-<h2>Build and Push</h2>
-
-<p>Build and Push your image to your registry of choice:</p>
-
-<pre><code class="bash">$ docker build -t your-user/repo:tag .
-$ docker push your-user/repo:tag
-</code></pre>
-
-<p>If you do not want to push to a registry, I have a public image available at <a href="https://hub.docker.com/r/rbekker87/armhf-traefik/">https://hub.docker.com/r/rbekker87/armhf-traefik/</a>, the image itself is <code>rbekker87/armhf-traefik:1.7.0-rc3</code></p>
-
-<h2>Deploy Traefik to the Swarm</h2>
-
-<p>From our <code>traefik-compose.yml</code>, you will notice that I have set that our network is external, so the network should exist prior to deploying the stack.</p>
-
-<p>Let&rsquo;s create the overlay network:</p>
-
-<pre><code class="bash">$ docker network create --driver overlay appnet
-</code></pre>
-
-<p>Below, the <code>traefik-compose.yml</code>, note that I&rsquo;m using pistack.co.za as my domain:</p>
-
-<pre><code class="yml">version: "3.4"
-
-services:
-  traefik: 
-    image: rbekker87/armhf-traefik:1.7.0-rc3
-    command:
-      - "--api"
-      - "--docker"
-      - "--docker.swarmmode"
-      - "--docker.domain=pistack.co.za"
-      - "--docker.watch"
-      - "--logLevel=DEBUG"
-      - "--web"
-    networks:
-      - appnet
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - 80:80
-      - 8080:8080
-    deploy:
-      mode: global
-      restart_policy:
-        condition: on-failure
-      placement:
-        constraints: [node.role == manager]
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<p>Deploy the stack:</p>
-
-<pre><code class="bash">$ docker stack deploy -c traefik-compose.yml proxy
-</code></pre>
-
-<p>List the stacks:</p>
-
-<pre><code class="bash">$ docker stack ls
-NAME                SERVICES
-proxy               1
-</code></pre>
-
-<p>Check if the services in your stack is running. Since our deploy mode was global, there will be a replica running on each node, and in my swarm I&rsquo;ve got 3 nodes:</p>
-
-<pre><code class="bash">$ docker stack services proxy
-ID                  NAME                MODE                REPLICAS            IMAGE                    PORTS
-16x31j7o0f0r        proxy_traefik       global              3/3                 rbekker87/armhf-traefik:1.7.0-rc3   *:80-&gt;80/tcp,*:8080-&gt;8080/tcp
-</code></pre>
-
-<h2>Deploy a Web Service hooked up to Traefik</h2>
-
-<p>Pre-Requirement:</p>
-
-<p>To register subdomains on the fly, set you DNS for your domain to the following (im using pistack.co.za in this example):</p>
-
-<ul>
-<li><code>pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
-<li><code>*.pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
-</ul>
-
-
-<p>Next, we will deploy we app that will be associated to our Traefik service domain, so we will inform Traefik that our web app fqdn and port that will be registered with the proxy.</p>
-
-<p>Our <code>app-compose.yml</code> file for our webapp:</p>
-
-<pre><code class="yml">version: "3.4"
-
-services:
-  whoami:
-    image: rbekker87/golang-whoami:alpine-amrhf
-    networks:
-      - appnet
-    deploy:
-      replicas: 3
-      labels:
-        - "traefik.backend=whoami"
-        - "traefik.port=80"
-        - "traefik.frontend.rule=Host:whoami.pistack.co.za"
-      update_config:
-        parallelism: 1
-        delay: 10s
-      restart_policy:
-        condition: on-failure
-      placement:
-        constraints: [node.role == worker]
-    healthcheck:
-      test: nc -vz 127.0.0.1 80 || exit 1
-      interval: 60s
-      timeout: 3s
-      retries: 3
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<p>In the above compose, you will notice that our traefik backend is set to our service name, our port is the port that the proxy will forward requests to the containers port, since the proxy and the whoami container is in the same network, they will be able to communicate with each other. Then we also have our frontend rule which will be the endpoint we will reach our application on.</p>
-
-<p>Deploy the stack:</p>
-
-<pre><code class="bash">$ docker stack deploy -c whoami.yml web
-Creating service web_whoami
-</code></pre>
-
-<p>List the tasks running in our web stack:</p>
-
-<pre><code class="bash">$ docker stack services web
-ID                  NAME                MODE                REPLICAS            IMAGE                                  PORTS
-31ylfcfb7uyw        web_whoami          replicated          3/3                 rbekker87/golang-whoami:alpine-amrhf
-</code></pre>
-
-<p>Once all the replicas is running, move along to test the application</p>
-
-<h2>Testing our Application:</h2>
-
-<p>I have 3 replicas each running on their own container, so each container will respond with its own hostname:</p>
-
-<pre><code class="bash">$ docker service ps web_whoami
-ID                  NAME                IMAGE                                  NODE                DESIRED STATE       CURRENT STATE            ERROR                              PORTS
-ivn8fgfosvgd        web_whoami.1        rbekker87/golang-whoami:alpine-amrhf   rpi-01              Running             Running 26 minutes ago
-rze6u6z56aop        web_whoami.2        rbekker87/golang-whoami:alpine-amrhf   rpi-02              Running             Running 26 minutes ago
-6fjua869r498        web_whoami.3        rbekker87/golang-whoami:alpine-amrhf   rpi-04              Running             Running 23 minutes ago
-</code></pre>
-
-<p>Making our 1st GET request:</p>
-
-<pre><code class="bash">$ $ curl http://whoami.pistack.co.za/
-Hostname: 43f5f0a6682f
-IP: 127.0.0.1
-IP: 10.0.0.138
-IP: 10.0.0.218
-IP: 172.18.0.4
-GET / HTTP/1.1
-Host: whoami.pistack.co.za
-User-Agent: curl/7.38.0
-Accept: */*
-Accept-Encoding: gzip
-X-Forwarded-For: 165.73.96.95, 10.255.0.2
-X-Forwarded-Host: whoami.pistack.co.za
-X-Forwarded-Port: 80
-X-Forwarded-Proto: http
-X-Forwarded-Server: 31b37f9714d3
-X-Real-Ip: 10.255.0.2
-</code></pre>
-
-<p>Our 2nd GET Request:</p>
-
-<pre><code class="bash">$ curl http://whoami.pistack.co.za/
-Hostname: d1c17a476414
-IP: 127.0.0.1
-IP: 10.0.0.138
-IP: 10.0.0.71
-IP: 172.19.0.5
-GET / HTTP/1.1
-Host: whoami.pistack.co.za
-User-Agent: curl/7.38.0
-Accept: */*
-Accept-Encoding: gzip
-X-Forwarded-For: 165.73.96.95, 10.255.0.2
-X-Forwarded-Host: whoami.pistack.co.za
-X-Forwarded-Port: 80
-X-Forwarded-Proto: http
-X-Forwarded-Server: 02b0ff6eab73
-X-Real-Ip: 10.255.0.2
-</code></pre>
-
-<p>And our 3rd GET Request:</p>
-
-<pre><code>$ curl http://whoami.pistack.co.za/
-Hostname: 17c817a1813b
-IP: 172.18.0.6
-IP: 127.0.0.1
-IP: 10.0.0.138
-IP: 10.0.0.73
-GET / HTTP/1.1
-Host: whoami.pistack.co.za
-User-Agent: curl/7.38.0
-Accept: */*
-Accept-Encoding: gzip
-X-Forwarded-For: 165.73.96.95, 10.255.0.2
-X-Forwarded-Host: whoami.pistack.co.za
-X-Forwarded-Port: 80
-X-Forwarded-Proto: http
-X-Forwarded-Server: 31b37f9714d3
-X-Real-Ip: 10.255.0.2
-</code></pre>
-
-<p>Hope this was useful.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://hub.docker.com/r/rbekker87/armhf-traefik/tags/">https://hub.docker.com/r/rbekker87/armhf-traefik/tags/</a></li>
-<li><a href="https://github.com/containous/traefik/releases">https://github.com/containous/traefik/releases</a></li>
-<li><a href="https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile">https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile</a></li>
-</ul>
-
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-<p></p>
 ]]></content>
   </entry>
   

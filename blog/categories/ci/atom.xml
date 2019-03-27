@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Ci | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/ci/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-03-27T11:29:51-04:00</updated>
+  <updated>2019-03-27T18:18:31-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,207 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Concourse Pipeline to Build a Docker Image Automatically on Git Commit]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/03/27/concourse-pipeline-to-build-a-docker-image-automatically-on-git-commit/"/>
+    <updated>2019-03-27T17:50:54-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/03/27/concourse-pipeline-to-build-a-docker-image-automatically-on-git-commit</id>
+    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
+
+<p>In this tutorial we will build a ci pipeline using concourse to build and push a image to dockerhub automatically, whenever a new git commit is made to the master branch.</p>
+
+<h2>Our Project Setup</h2>
+
+<p>Our Directory Tree:</p>
+
+<pre><code class="bash">$ find .
+./Dockerfile
+./ci
+./ci/pipeline.yml
+./README.md
+./docker-tunnel
+</code></pre>
+
+<p>The project used in this example is not important, but you can check it out at <a href="https://github.com/ruanbekker/docker-remote-tunnel">https://github.com/ruanbekker/docker-remote-tunnel</a></p>
+
+<h2>Our Pipeline</h2>
+
+<p>A visual to see how the pipeline will look like in concourse:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/55114996-1832d800-50ec-11e9-85ef-bc283711fbde.png" alt="" /></p>
+
+<p>Our pipeline definition will consist of 3 resources, <code>github repo</code>, <code>dockerhub image</code> and a <code>slack resource</code> to inform use whether a build has completed.</p>
+
+<p>Then we are specifying that the job should be triggered on a git commit for the master branch, build and push to our dockerhub repo.</p>
+
+<p>Our pipeline definition <code>ci/pipeline.yml</code>:</p>
+
+<pre><code class="yaml">resources:
+- name: git-repo
+  type: git
+  source:
+    uri: git@github.com:ruanbekker/docker-remote-tunnel.git
+    branch: master
+    private_key: ((github_private_key))
+
+- name: docker-remote-tunnel-image
+  type: docker-image
+  source:
+    repository: ruanbekker/docker-remote-tunnel
+    tag: test
+    username: ((dockerhub_user))
+    password: ((dockerhub_password))
+
+- name: slack-alert
+  type: slack-notification
+  source:
+    url: ((slack_notification_url))
+
+resource_types:
+  - name: slack-notification
+    type: docker-image
+    source:
+      repository: cfcommunity/slack-notification-resource
+      tag: v1.3.0
+
+jobs:
+- name: build-cached-image
+  plan:
+  - get: git-repo
+    trigger: true
+  - task: build-cached-image-workspace
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: rbekker87/build-tools
+
+      outputs:
+      - name: workspace
+      inputs:
+      - name: git-repo
+
+      run:
+        path: /bin/sh
+        args:
+        - -c
+        - |
+          output_dir=workspace
+
+          cat &lt;&lt; EOF &gt; "${output_dir}/Dockerfile"
+          FROM alpine
+
+          ADD git-repo /tmp/git-repo
+          RUN mv /tmp/git-repo/docker-tunnel /usr/bin/docker-tunnel
+          RUN apk --no-cache add screen docker openssl openssh-client apache2-utils
+          RUN /usr/bin/docker-tunnel -h
+          RUN rm -rf /tmp/git-repo
+          EOF
+
+          cp -R ./git-repo "${output_dir}/git-repo"
+
+  - put: docker-remote-tunnel-image
+    params:
+      build: workspace
+
+    on_failure:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED to build image
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+    on_success:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS - Image has been published
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+
+- name: test
+  plan:
+  - get: docker-remote-tunnel-image
+    passed: [build-cached-image]
+    trigger: true
+  - get: git-repo
+    passed: [build-cached-image]
+  - task: run-tests
+    image: docker-remote-tunnel-image
+    config:
+      platform: linux
+      inputs:
+      - name: git-repo
+      run:
+        dir: git-repo
+        path: sh
+        args:
+        - /usr/bin/docker-tunnel
+        - --help
+
+    on_failure:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED - Testing image failure
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+    on_success:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS - Testing image Succeeded
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+</code></pre>
+
+<p>Note that our secret information is templatized and saved in our local <code>credentials.yml</code> which should never be stored in version control:</p>
+
+<pre><code class="yaml">slack_notification_url: https://api.slack.com/aaa/bbb/ccc
+dockerhub_user: myuser
+dockerhub_password: mypasswd
+github_private_key: |-
+        -----BEGIN RSA PRIVATE KEY-----
+        some-secret-data
+        -----END RSA PRIVATE KEY------
+</code></pre>
+
+<h2>Set the Pipeline:</h2>
+
+<p>Now that we have our pipeline definition, credentials and application code (stored in version control), go ahead and set the pipeline, which will save the pipeline configuration in concourse:</p>
+
+<pre><code class="bash"># pipeline name: my-docker-app-pipeline
+$ fly -t scw sp -n main -c pipeline.yml -p my-docker-app-pipeline -l credentials.yml
+</code></pre>
+
+<p>Now the pipeline is saved on concourse but in a paused state, go ahead and unpause the pipeline:</p>
+
+<pre><code class="bash">$ fly -t scw up -p my-docker-app-pipeline
+</code></pre>
+
+<h2>Test your Pipeline</h2>
+
+<p>Make a commit to master and head over to concourse and look at it go:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/55116018-a5772c00-50ee-11e9-861e-a5ddc74550e2.png" alt="" /></p>
+
+<p>Thanks for reading, make sure to check out my other posts on <a href="https://blog.ruanbekker.com/blog/categories/concourse">#concourse</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Concourse Pipeline With Resources Tutorial]]></title>
@@ -591,212 +792,6 @@ succeeded
 </code></pre>
 
 <p>This was all done through the command line, but you can also accessed it from the web ui</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Basic Concourse Pipeline With Bash and Golang Jobs]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/11/24/basic-concourse-pipeline-with-bash-and-golang-jobs/"/>
-    <updated>2017-11-24T18:38:15-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/11/24/basic-concourse-pipeline-with-bash-and-golang-jobs</id>
-    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
-
-<p>From one of my previous posts, we went through the steps to setup a <a href="http://blog.ruanbekker.com/blog/2017/11/07/setup-a-concourse-ci-server-on-ubuntu-16/">Concourse CI Server on Ubuntu</a> .</p>
-
-<h2>What are we doing today?</h2>
-
-<p>Today we will setup a basic pipeline that executes 2 jobs, one using a alpine container that runs a couple of shell commands, and the other job will be using a Golang container to build and execute a golang app. I will also be experimenting with auto trigger, that will trigger the pipeline to run its jobs every 60 seconds.</p>
-
-<p>Our Pipeline will look like the following:</p>
-
-<p><img src="https://i.snag.gy/D0oO4M.jpg" alt="" /></p>
-
-<h2>Our Pipeline Definition:</h2>
-
-<pre><code class="yml bash-and-golang.yml">resources:
-- name: container-resource
-  type: time
-  source:
-    interval: 60m
-
-jobs:
-- name: my-alpine-job
-  plan:
-  - get: container-resource
-    trigger: true
-  - task: vanilla-alpine-tasks
-    params:
-      OWNER: ruan
-    config:
-      platform: linux
-      image_resource:
-        type: docker-image
-        source:
-          repository: alpine
-          tag: edge
-      run:
-        path: /bin/sh
-        args:
-        - -c
-        - |
-          apk update &gt; /dev/null
-          apk upgrade &gt; /dev/null
-          apk add curl &gt; /dev/null
-          echo "Public IP is: `curl -s http://ip.ruanbekker.com`"
-          echo "Hostname is: $HOSTNAME"
-          echo "Owner is: $OWNER"
-          echo foo &gt; /tmp/word.txt
-          export MAGIC_WORD=`cat /tmp/word.txt`
-          echo "Magic word is $MAGIC_WORD"
-          cat &gt; app.sh &lt;&lt; EOF
-          #!/usr/bin/env sh
-          echo "Hello, World!"
-          EOF
-          chmod +x app.sh
-          echo "Shell Script Executing:"
-          ./app.sh
-
-- name: my-golang-job
-  plan:
-  - get: container-resource
-    trigger: true
-  - task: golang-tasks
-    params:
-      OWNER: james
-    config:
-      platform: linux
-      image_resource:
-        type: docker-image
-        source:
-          repository: golang
-          tag: '1.6'
-      run:
-        path: /bin/sh
-        args:
-        - -c
-        - |
-          echo "User: `whoami`"
-          echo "Go Version: `go version`"
-          echo "Hostname is: $HOSTNAME"
-          echo "Owner is: $OWNER"
-          echo bar &gt; /tmp/word.txt
-          export MAGIC_WORD=`cat /tmp/word.txt`
-          echo "Magic word is $MAGIC_WORD"
-          cat &gt; app.go &lt;&lt; EOF
-          package main
-
-          import "fmt"
-
-          func main() {
-            fmt.Println("Hello, World!")
-          }
-          EOF
-          go build app.go
-          echo "Go App Executing:"
-          ./app
-</code></pre>
-
-<h2>Login to Concourse:</h2>
-
-<p>Logon to concourse and set your target:</p>
-
-<pre><code class="bash">$ fly -t ci login --concourse-url=http://10.20.30.40:8080
-logging in to team 'main'
-
-username: admin
-password:
-
-target saved
-</code></pre>
-
-<p>List your targets:</p>
-
-<pre><code class="bash">$ fly targets
-name      url                       team  expiry
-ci        http://10.20.30.40:8080   main  Sat, 25 Nov 2017 23:30:55 UTC
-</code></pre>
-
-<h2>Apply Configuration</h2>
-
-<p>Apply your Configuration:</p>
-
-<pre><code class="bash">$ fly -t ci set-pipeline -p bash-and-golang -c bash-and-golang.yml
-
-apply configuration? [yN]: y
-pipeline created!
-you can view your pipeline here: http://10.20.30.40:8080/teams/main/pipelines/bash-and-golang
-
-the pipeline is currently paused. to unpause, either:
-  - run the unpause-pipeline command
-  - click play next to the pipeline in the web ui
-</code></pre>
-
-<h2>Unpause</h2>
-
-<p>Unpause your Pipeline:</p>
-
-<pre><code class="bash">$ fly -t ci unpause-pipeline -p bash-and-golang
-unpaused 'bash-and-golang'
-</code></pre>
-
-<h2>Trigger</h2>
-
-<p>Trigger your first job, which will be the Alpine job:</p>
-
-<pre><code class="bash">$ fly -t ci trigger-job --job bash-and-golang/my-alpine-job
-started bash-and-golang/my-alpine-job #2
-</code></pre>
-
-<p><img src="https://i.snag.gy/x7ksQO.jpg?nocache=1511567544851" alt="" /></p>
-
-<p>Trigger your second job, which will be the Golang job:</p>
-
-<pre><code class="bash">$ fly -t ci trigger-job --job bash-and-golang/my-golang-job
-started bash-and-golang/my-golang-job #2
-</code></pre>
-
-<p><img src="https://i.snag.gy/07nDiZ.jpg" alt="" /></p>
-
-<p>Remember, we can also monitor the output from the shell:</p>
-
-<pre><code class="bash">$ fly -t ci trigger-job --job bash-and-golang/my-golang-job --watch
-started bash-and-golang/my-golang-job #3
-
-initializing
-running /bin/sh -c echo "User: `whoami`"
-echo "Go Version: `go version`"
-echo "Hostname is: $HOSTNAME"
-echo "Owner is: $OWNER"
-echo bar &gt; /tmp/word.txt
-export MAGIC_WORD=`cat /tmp/word.txt`
-echo "Magic word is $MAGIC_WORD"
-cat &gt; app.go &lt;&lt; EOF
-package main
-
-import "fmt"
-
-func main() {
-  fmt.Println("Hello, World!")
-}
-EOF
-go build app.go
-echo "Go App Executing:"
-./app
-
-User: root
-Go Version: go version go1.6.4 linux/amd64
-Hostname is:
-Owner is: james
-Magic word is bar
-Go App Executing:
-Hello, World!
-succeeded
-</code></pre>
-
-<p>And you can also debug the job by dropping yourself into the container by using hijack:</p>
-
-<pre><code>$ fly -t ci hijack --job bash-and-golang/my-golang-job
-</code></pre>
 ]]></content>
   </entry>
   

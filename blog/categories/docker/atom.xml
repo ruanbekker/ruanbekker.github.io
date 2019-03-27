@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-03-27T11:29:51-04:00</updated>
+  <updated>2019-03-27T18:18:31-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,207 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Concourse Pipeline to Build a Docker Image Automatically on Git Commit]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/03/27/concourse-pipeline-to-build-a-docker-image-automatically-on-git-commit/"/>
+    <updated>2019-03-27T17:50:54-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/03/27/concourse-pipeline-to-build-a-docker-image-automatically-on-git-commit</id>
+    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
+
+<p>In this tutorial we will build a ci pipeline using concourse to build and push a image to dockerhub automatically, whenever a new git commit is made to the master branch.</p>
+
+<h2>Our Project Setup</h2>
+
+<p>Our Directory Tree:</p>
+
+<pre><code class="bash">$ find .
+./Dockerfile
+./ci
+./ci/pipeline.yml
+./README.md
+./docker-tunnel
+</code></pre>
+
+<p>The project used in this example is not important, but you can check it out at <a href="https://github.com/ruanbekker/docker-remote-tunnel">https://github.com/ruanbekker/docker-remote-tunnel</a></p>
+
+<h2>Our Pipeline</h2>
+
+<p>A visual to see how the pipeline will look like in concourse:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/55114996-1832d800-50ec-11e9-85ef-bc283711fbde.png" alt="" /></p>
+
+<p>Our pipeline definition will consist of 3 resources, <code>github repo</code>, <code>dockerhub image</code> and a <code>slack resource</code> to inform use whether a build has completed.</p>
+
+<p>Then we are specifying that the job should be triggered on a git commit for the master branch, build and push to our dockerhub repo.</p>
+
+<p>Our pipeline definition <code>ci/pipeline.yml</code>:</p>
+
+<pre><code class="yaml">resources:
+- name: git-repo
+  type: git
+  source:
+    uri: git@github.com:ruanbekker/docker-remote-tunnel.git
+    branch: master
+    private_key: ((github_private_key))
+
+- name: docker-remote-tunnel-image
+  type: docker-image
+  source:
+    repository: ruanbekker/docker-remote-tunnel
+    tag: test
+    username: ((dockerhub_user))
+    password: ((dockerhub_password))
+
+- name: slack-alert
+  type: slack-notification
+  source:
+    url: ((slack_notification_url))
+
+resource_types:
+  - name: slack-notification
+    type: docker-image
+    source:
+      repository: cfcommunity/slack-notification-resource
+      tag: v1.3.0
+
+jobs:
+- name: build-cached-image
+  plan:
+  - get: git-repo
+    trigger: true
+  - task: build-cached-image-workspace
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: rbekker87/build-tools
+
+      outputs:
+      - name: workspace
+      inputs:
+      - name: git-repo
+
+      run:
+        path: /bin/sh
+        args:
+        - -c
+        - |
+          output_dir=workspace
+
+          cat &lt;&lt; EOF &gt; "${output_dir}/Dockerfile"
+          FROM alpine
+
+          ADD git-repo /tmp/git-repo
+          RUN mv /tmp/git-repo/docker-tunnel /usr/bin/docker-tunnel
+          RUN apk --no-cache add screen docker openssl openssh-client apache2-utils
+          RUN /usr/bin/docker-tunnel -h
+          RUN rm -rf /tmp/git-repo
+          EOF
+
+          cp -R ./git-repo "${output_dir}/git-repo"
+
+  - put: docker-remote-tunnel-image
+    params:
+      build: workspace
+
+    on_failure:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED to build image
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+    on_success:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS - Image has been published
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+
+- name: test
+  plan:
+  - get: docker-remote-tunnel-image
+    passed: [build-cached-image]
+    trigger: true
+  - get: git-repo
+    passed: [build-cached-image]
+  - task: run-tests
+    image: docker-remote-tunnel-image
+    config:
+      platform: linux
+      inputs:
+      - name: git-repo
+      run:
+        dir: git-repo
+        path: sh
+        args:
+        - /usr/bin/docker-tunnel
+        - --help
+
+    on_failure:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED - Testing image failure
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+    on_success:
+      put: slack-alert
+      params:
+        channel: '#system_events'
+        username: 'concourse'
+        icon_emoji: ':concourse:'
+        silent: true
+        text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS - Testing image Succeeded
+            https://ci.domain.com/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+</code></pre>
+
+<p>Note that our secret information is templatized and saved in our local <code>credentials.yml</code> which should never be stored in version control:</p>
+
+<pre><code class="yaml">slack_notification_url: https://api.slack.com/aaa/bbb/ccc
+dockerhub_user: myuser
+dockerhub_password: mypasswd
+github_private_key: |-
+        -----BEGIN RSA PRIVATE KEY-----
+        some-secret-data
+        -----END RSA PRIVATE KEY------
+</code></pre>
+
+<h2>Set the Pipeline:</h2>
+
+<p>Now that we have our pipeline definition, credentials and application code (stored in version control), go ahead and set the pipeline, which will save the pipeline configuration in concourse:</p>
+
+<pre><code class="bash"># pipeline name: my-docker-app-pipeline
+$ fly -t scw sp -n main -c pipeline.yml -p my-docker-app-pipeline -l credentials.yml
+</code></pre>
+
+<p>Now the pipeline is saved on concourse but in a paused state, go ahead and unpause the pipeline:</p>
+
+<pre><code class="bash">$ fly -t scw up -p my-docker-app-pipeline
+</code></pre>
+
+<h2>Test your Pipeline</h2>
+
+<p>Make a commit to master and head over to concourse and look at it go:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/55116018-a5772c00-50ee-11e9-861e-a5ddc74550e2.png" alt="" /></p>
+
+<p>Thanks for reading, make sure to check out my other posts on <a href="https://blog.ruanbekker.com/blog/categories/concourse">#concourse</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Deploy a Docker Swarm Cluster on Scaleway With Terraform]]></title>
@@ -1131,424 +1332,6 @@ Accept-Ranges: bytes
 <input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
 </form>
 </center>
-
-
-
-
-<p><p></p>
-
-<p>Thanks for reading!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Tutorial on Using Gitlab CI/CD Pipelines to Deploy Your Python Flask Restful API With Postgres on Heroku]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/01/05/tutorial-on-using-gitlab-cicd-pipelines-to-deploy-your-python-flask-restful-api-with-postgres-on-heroku/"/>
-    <updated>2019-01-05T10:27:31-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/01/05/tutorial-on-using-gitlab-cicd-pipelines-to-deploy-your-python-flask-restful-api-with-postgres-on-heroku</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
-
-<p>Today we will build a Restful API using Python Flask, SQLAlchemy using Postgres as our Database, testing using Python Unittest, a CI/CD Pipeline on Gitlab, and Deployment to Heroku.</p>
-
-<p>From our previous post, we demonstrated setting up a <a href="https://blog.ruanbekker.com/blog/2018/12/20/setup-a-gitlab-runner-on-your-own-server-to-run-your-jobs-that-gets-triggered-from-gitlab-ci/">Custom Gitlab Runner on Your Own Server for  Gitlab CI</a>.</p>
-
-<h2>Heroku</h2>
-
-<p>If you don&rsquo;t have an account already, <a href="https://dashboard.heroku.com/account">Heroku</a> offer&rsquo;s 5 free applications in their free tier account. Once you have created your account, create 2 applications. I named mine flask-api-staging and flask-api-prod.</p>
-
-<p>You can create the applications via cli or the ui, from the ui it will look more or less like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50719120-69f53480-10a0-11e9-8720-aa3dc007b6fc.png" alt="" /></p>
-
-<p>Select an app name and check if the name is available then select create. Note down the name and config as we will use it in our <code>.gitlab-ci.yml</code> config:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50719134-8db87a80-10a0-11e9-80f4-cccd9a86752f.png" alt="" /></p>
-
-<h2>Heroku API Key</h2>
-
-<p>To allow the deployment of applications to Heroku from Gitlab, we need to generate a API Key on Heroku and save the config in Gitlab.</p>
-
-<p>Head over to your <a href="https://dashboard.heroku.com/account">Heroku Dashboard</a>, select Account Settings, scroll to the API Key section and generate a API Key.</p>
-
-<p>Head over to your Gitlab Repository, select Settings, CI/CD, then select Variables enter the Key: HEROKU_API_KEY and the Secret of the API Key into the Value and select Save Variable.</p>
-
-<p>We will reference this variable from our deploy steps.</p>
-
-<h2>Heroku Postgres Add-on</h2>
-
-<p>Heroku offers a free Postgres Add-On, to activate: Select your application, select Resources, search for the Add-on <code>Heroku Postgres</code>, select and select the Hobby Dev Free version and select provision.</p>
-
-<h2>Our Application Code</h2>
-
-<p>Clone your repository then let&rsquo;s start by creating our Flask API. Note this is more on Gitlab CI/CD than going into detail into the Flask Application.</p>
-
-<p>Create the files that we will need:</p>
-
-<pre><code class="bash">$ touch app.py config.cfg requirements.txt tests.py Procfile
-</code></pre>
-
-<p>Let&rsquo;s start by populating our configuration for our flask app: <code>config.cfg</code></p>
-
-<pre><code class="bash">#SQLALCHEMY_DATABASE_URI='sqlite:///database.db'
-SQLALCHEMY_TRACK_MODIFICATIONS=False
-</code></pre>
-
-<p>Our Flask Application: <code>app.py</code></p>
-
-<p>Note that we are using flask-heroku, with this package Heroku will automatically discover your configuration for your database using environment variables. So if you have a postgres add-on, you don&rsquo;t need to specify the location of your database.</p>
-
-<p>If you want to use sqlite, you can remove the heroku instantiation and uncomment the <code>SQLALCHEMY_DATABASE_URI</code> property in your <code>config.cfg</code></p>
-
-<pre><code class="python">from flask import Flask, jsonify, request
-from flask_sqlalchemy import SQLAlchemy
-from flask_marshmallow import Marshmallow
-from flask_heroku import Heroku
-from passlib.hash import sha256_crypt
-from datetime import datetime
-
-app = Flask(__name__)
-app.config.from_pyfile('config.cfg')
-heroku = Heroku(app)
-db = SQLAlchemy(app)
-ma = Marshmallow(app)
-
-## --Database Models--
-class Member(db.Model):
-    __tablename__ = 'members'
-
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    email = db.Column(db.String(255), unique=True, nullable=False)
-    username = db.Column(db.String(50), unique=True)
-    password_hash = db.Column(db.String(100))
-    firstname = db.Column(db.String(50), unique=False)
-    lastname = db.Column(db.String(50), unique=False)
-    registered_on = db.Column(db.DateTime, nullable=False)
-
-class MemberSchema(ma.ModelSchema):
-    class Meta:
-        model = Member
-        fields = ('id', 'username', 'email')
-
-member_schema = MemberSchema(strict=True, only=('id', 'username'))
-members_schema = MemberSchema(strict=True, many=True)
-
-## --Views--
-@app.route('/')
-def index():
-    return jsonify({'message': 'ok'}), 200
-
-# list users
-@app.route('/api/user', methods=['GET'])
-def list_users():
-    all_users = Member.query.all()
-    result = members_schema.dump(all_users)
-    return jsonify(result.data)
-
-# get user
-@app.route('/api/user/&lt;int:id&gt;', methods=['GET'])
-def get_user(id):
-    user = Member.query.get(id)
-    result = member_schema.dump(user)
-    return jsonify(result.data)
-
-# add user
-@app.route('/api/user', methods=['POST'])
-def add_user():
-    email = request.json['email']
-    username = request.json['username']
-    password_hash = sha256_crypt.encrypt(request.json['password'])
-    firstname = request.json['firstname']
-    lastname = request.json['lastname']
-    new_user = Member(email=email, username=username, password_hash=password_hash, firstname=firstname, lastname=lastname, registered_on=datetime.utcnow())
-    try:
-        db.session.add(new_user)
-        db.session.commit()
-        result = member_schema.dump(Member.query.get(new_user.id))
-        return jsonify({'member': result.data})
-    except:
-        db.session.rollback()
-        result = {'message': 'error'}
-        return jsonify(result)
-
-# update user
-@app.route('/api/user/&lt;int:id&gt;', methods=['PUT'])
-def update_user(id):
-    user = Member.query.get(id)
-    username = request.json['username']
-    email = request.json['email']
-    user.email = email
-    user.username = username
-    db.session.commit()
-    return member_schema.jsonify(user)
-
-# delete user
-@app.route('/api/user/&lt;int:id&gt;', methods=['DELETE'])
-def delete_user(id):
-    user = Member.query.get(id)
-    db.session.delete(user)
-    db.session.commit()
-    return jsonify({'message': '{} has been deleted'.format(user.username)})
-
-if __name__ == '__main__':
-    app.run()
-</code></pre>
-
-<p>Our tests: <code>tests.py</code></p>
-
-<pre><code class="python">import unittest
-import app as myapi
-import json
-import sys
-
-class TestFlaskApi(unittest.TestCase):
-    def setUp(self):
-        self.app = myapi.app.test_client()
-
-    def test_hello_world(self):
-        response = self.app.get('/')
-        self.assertEqual(
-            json.loads(response.get_data().decode(sys.getdefaultencoding())),
-            {"message": "ok"}
-        )
-
-if __name__ == '__main__':
-    unittest.main()
-</code></pre>
-
-<p>Our requirements file: <code>requirements.txt</code></p>
-
-<pre><code>Click==7.0
-Flask==1.0.2
-flask-heroku==0.1.9
-flask-marshmallow==0.9.0
-Flask-SQLAlchemy==2.3.2
-gunicorn==19.9.0
-itsdangerous==1.1.0
-Jinja2==2.10
-MarkupSafe==1.1.0
-marshmallow==2.17.0
-marshmallow-sqlalchemy==0.15.0
-passlib==1.7.1
-psycopg2-binary==2.7.6.1
-six==1.12.0
-SQLAlchemy==1.2.15
-Werkzeug==0.14.1
-</code></pre>
-
-<p>Our Procfile for Heroku: <code>Procfile</code></p>
-
-<pre><code>web: gunicorn app:app
-</code></pre>
-
-<p>And lastly, our gitlab-ci configuration which will include our build, test and deploy steps. As soon as a commit to master is received the pipeline will be acticated. Note that our production deploy step is a manual trigger.</p>
-
-<p>Our config for <code>.gitlab-ci.yml</code>. Note to replace your Heroku app names.</p>
-
-<pre><code class="yaml">image: rbekker87/build-tools:latest
-
-stages:
-  - ver
-  - init
-  - tests
-  - deploy
-
-ver:
-  stage: ver
-  script:
-    - python --version
-    - whoami
-
-init:
-  stage: init
-  script:
-    - apk add postgresql-dev --no-cache
-    - pip install psycopg2-binary
-    - pip install -r requirements.txt
-
-run_tests:
-  stage: tests
-  script:
-    - apk add postgresql-dev --no-cache
-    - pip install psycopg2-binary
-    - pip install -r requirements.txt
-    - python tests.py
-
-deploy_staging:
-  stage: deploy
-  script:
-    - git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/flask-api-staging.git
-    - git push heroku master
-    - echo "Deployed to Staging Server https://flask-api-staging.herokuapp.com"
-  environment:
-    name: staging
-    url: https://flask-api-staging.herokuapp.com/
-  only:
-    - master
-
-deploy_production:
-  stage: deploy
-  script:
-    - git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/flask-api-prod.git
-    - git push heroku master
-    - echo "Deployed to Production Server https://flask-api-prod.herokuapp.com"
-  environment:
-    name: production
-    url: https://flask-api-prod.herokuapp.com/
-  when: manual
-  only:
-    - master
-</code></pre>
-
-<h2>Send to Gitlab:</h2>
-
-<p>Once everything is populated, stage your changes, commit your work and push to master:</p>
-
-<pre><code class="bash">$ git add .
-$ git commit -m "blogpost demo commit"
-$ git push origin master
-</code></pre>
-
-<p>Once the code has been pushed to master, gitlab will pick it up and trigger the pipeline to run.</p>
-
-<h2>Gitlab Pipelines</h2>
-
-<p>Head over to Gitlab, select CI/CD -> Pipelines, you should see a running pipeline, select it, then you should see the overview of all your jobs:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50728734-83958b00-1137-11e9-8c6f-4f7d9aaab46d.png" alt="" /></p>
-
-<p>If everything has passed you should see the <code>Passed</code> status as shown above.</p>
-
-<p>You will notice that the staging environment has been deployed. Now you can do some testing and when you are happy with it, you can select the play button which will deploy to production on the pipelines dashboard.</p>
-
-<h2>Creating the Tables on Postgres</h2>
-
-<p>Before we can interact with our API, we need to provision the postgres tables from the database models that we wrote in our application.</p>
-
-<p>Open up a Python shell on Heroku and initialize the tables:</p>
-
-<pre><code class="bash">$ heroku run python -a flask-api-prod
-&gt;&gt;&gt; from app import db
-&gt;&gt;&gt; db.create_all()
-&gt;&gt;&gt; exit()
-</code></pre>
-
-<h2>Testing the API:</h2>
-
-<p>Now that everything is up and running, its time to test our API.</p>
-
-<p>List the users:</p>
-
-<pre><code class="bash">$ curl https://flask-api-staging.herokuapp.com/api/user
-[]
-</code></pre>
-
-<p>Create a User:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPOST https://flask-api-staging.herokuapp.com/api/user -d '{"username": "ruanb", "password": "pass", "email": "r@r.com", "firstname": "ruan", "lastname": "bekker"}'
-{
-  "member": {
-    "id": 1,
-    "username": "ruanb"
-  }
-}
-</code></pre>
-
-<p>List Users:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XGET https://flask-api-staging.herokuapp.com/api/user
-[
-  {
-    "email": "ruan@r.com",
-    "id": 1,
-    "username": "ruanb"
-  }
-]
-</code></pre>
-
-<p>Update a User&rsquo;s email address:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XPUT https://flask-api-staging.herokuapp.com/api/user/1 -d '{"username": "ruanb", "email": "ruan@r.com"}'
-{
-  "id": 1,
-  "username": "ruanb"
-}
-</code></pre>
-
-<p>Retrieve a single user:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XGET https://flask-api-staging.herokuapp.com/api/user/1
-{
-  "email": "ruan@r.com",
-  "id": 1,
-  "username": "ruanb"
-}
-</code></pre>
-
-<p>Delete User:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -XDELETE https://flask-api-staging.herokuapp.com/api/user/1
-{
-  "message": "ruanb has been deleted"
-}
-</code></pre>
-
-<h2>Troubleshooting</h2>
-
-<p>I had some issues with Heroku, where one was after I deployed, I received this error in Heroku&rsquo;s logs:</p>
-
-<pre><code class="bash">code=H14 desc="No web processes running" method=GET path="/"
-</code></pre>
-
-<p>I just had to scale my web dyno to 1:</p>
-
-<pre><code class="bash">$ heroku ps:scale web=1 -a flask-api-staging
-Scaling dynos... done, now running web at 1:Free
-</code></pre>
-
-<p>Have a look at their <a href="https://devcenter.heroku.com/articles/heroku-cli">documentation</a> if you need help with the heroku cli.</p>
-
-<p>And to troubleshoot within the dyno, you can exec into it by running this:</p>
-
-<pre><code>heroku ps:exec -a flask-api-staging
-</code></pre>
-
-<p>I seriously dig Gitlab-CI and with this demonstration you can see how easy it is to setup a CI/CD Pipeline on Gitlab and Deploy them to Heroku.</p>
-
-<h2>Resources:</h2>
-
-<p>The code for this demo is available at: <a href="https://gitlab.com/rbekker87/demo-cicd-flask-heroku">gitlab.com/rbekker87/demo-cicd-flask-heroku</a></p>
-
-<p>For more blog posts on Gitlab, have a look at my <a href="https://blog.ruanbekker.com/blog/categories/gitlab/">gitlab</a> category on <a href="https://blog.ruanbekker.com/">blog.ruanbekker.com</a></p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<p>Ad space:</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
 
 
 

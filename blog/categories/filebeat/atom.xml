@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Filebeat | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/filebeat/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2019-03-27T11:29:51-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Ship Your Logs to Elasticsearch With Filebeat]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/03/27/ship-your-logs-to-elasticsearch-with-filebeat/"/>
+    <updated>2019-03-27T10:52:21-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/03/27/ship-your-logs-to-elasticsearch-with-filebeat</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/55086561-4b0baa80-50b1-11e9-8062-a9e6de5ab56a.png" alt="" /></p>
+
+<p><strong><a href="https://www.elastic.co/guide/en/beats/filebeat/6.7/filebeat-overview.html">Filebeat</a></strong> by Elastic is a lightweight log shipper, that ships your logs to Elastic products such as Elasticsearch and Logstash. Filbeat monitors the logfiles from the given configuration and ships the to the locations that is specified.</p>
+
+<h2>Filebeat Overview</h2>
+
+<p>Filebeat runs as agents, monitors your logs and ships them in response of events, or whenever the logfile receives data.</p>
+
+<p>Below is a overview (credit: elastic.co) how Filebeat works</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/55086346-e18b9c00-50b0-11e9-8eac-ea4880cb1aff.png" alt="" /></p>
+
+<h2>Installing Filebeat</h2>
+
+<p>Let&rsquo;s go ahead and install Filebeat. I will be using version 6.7 as that will be the same version that I am running on my Elasticsearch. To check the version of your elasticsearch cluster:</p>
+
+<pre><code class="bash">$ curl http://127.0.0.1:9200/_cluster/health?pretty # i have es running locally
+</code></pre>
+
+<p>Install the dependencies:</p>
+
+<pre><code class="bash">$ apt install wget apt-transport-https -y
+</code></pre>
+
+<p>Get the public signing key:</p>
+
+<pre><code class="bash">$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+</code></pre>
+
+<p>Get the repository definition:</p>
+
+<pre><code class="bash">$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | tee -a /etc/apt/sources.list.d/elastic-6.x.list
+</code></pre>
+
+<p>Update the repositories:</p>
+
+<pre><code class="bash">$ apt update &amp;&amp; apt upgrade -y
+</code></pre>
+
+<p>Install Filebeat and enable the service on boot:</p>
+
+<pre><code class="bash">$ apt install filebeat -y
+$ systemctl enable filebeat
+</code></pre>
+
+<h2>Configure Filebeat</h2>
+
+<p>Let&rsquo;s configure our main configuration in filebeat, to specify our location where the data should be shipped to (in this case elasticsearch) and I will also like to set some extra fields that will apply to this specific server.</p>
+
+<p>Open up <code>/etc/filebeat/filebeat.yml</code> and edit the following:</p>
+
+<pre><code class="yaml">filebeat.inputs:
+
+- type: log
+  enabled: false
+  paths:
+    - /var/log/nginx/*.log 
+
+filebeat.config.modules:
+  path: ${path.config}/modules.d/*.yml
+  reload.enabled: false
+
+setup.template.settings:
+  index.number_of_shards: 3
+
+fields:
+  blog_name: sysadmins
+  service_type: webserver
+  cloud_provider: aws
+
+setup.kibana:
+  host: "http://localhost:5601"
+  username: "elastic"
+  password: "changeme"
+
+output.elasticsearch:
+  hosts: ["localhost:9200"]
+  protocol: "http"
+  username: "elastic"
+  password: "changeme"
+</code></pre>
+
+<p>Above, just setting my path to nginx access logs, some extra fields, including that it shoulds seed kibana with example visualizations and the output configuration of elasticsearch.</p>
+
+<h2>Filebeat Modules</h2>
+
+<p>Filebeat comes with modules that has context on specific applications like nginx, mysql etc. Lets enable system (syslog, auth, etc) and nginx for our web server:</p>
+
+<pre><code class="bash">$ filebeat modules enable system
+$ filebeat modules enable nginx
+</code></pre>
+
+<p>Example of my <code>/etc/filebeat/modules.d/system.yml</code> configuration:</p>
+
+<pre><code class="yaml">- module: system
+  syslog:
+    enabled: true
+    var.paths: ["/var/log/syslog"]
+
+  auth:
+    enabled: true
+    var.paths: ["/var/log/auth.log"]
+</code></pre>
+
+<p>Example of my <code>/etc/filebeat/modules.d/nginx.yml</code> configuration:</p>
+
+<pre><code class="yaml">- module: nginx
+  access:
+    enabled: true
+    var.paths: ["/var/log/nginx/access.log"]
+
+  error:
+    enabled: true
+    var.paths: ["/var/log/nginx/error.log"]
+</code></pre>
+
+<p>Now setup the <a href="https://www.elastic.co/guide/en/beats/filebeat/6.7/filebeat-template.html">templates</a></p>
+
+<pre><code class="bash">$ filebeat setup
+</code></pre>
+
+<p>Then restart filebeat:</p>
+
+<pre><code class="bash">$ /etc/init.d/filebeat restart
+</code></pre>
+
+<p>You can have a look at the logs, should you need to debug:</p>
+
+<pre><code class="bash">tail -f /var/log/filebeat/filebeat
+</code></pre>
+
+<p>Your data should now be shipped to elasticsearch, by default under the <code>filebeat-YYYY.mm.dd</code> index pattern.</p>
+
+<pre><code class="bash">$ curl 'http://127.0.0.1:9200/_cat/indices/filebeat*?v'
+health status index                     uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   filebeat-6.7.1-2019.03.27 CBdV7adjRKypN1wguwuHDA   3   1     453220            0    230.2mb        115.9mb
+</code></pre>
+
+<h2>Kibana</h2>
+
+<p>You can head over to Kibana at <a href="http://localhost:5601">http://localhost:5601</a> (in this case) to visualize the data that is ingested into your filebeat index. I will write a tutorial on how to graph up most common dashboards later this week.</p>
+
+<p>Thats it for now :D</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.elastic.co/guide/en/beats/filebeat/6.7/index.html">https://www.elastic.co/guide/en/beats/filebeat/6.7/index.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

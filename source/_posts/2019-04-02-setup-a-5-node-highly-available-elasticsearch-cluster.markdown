@@ -14,18 +14,21 @@ This is post 1 of my big collection of **[elasticsearch-tutorials](https://blog.
 In this tutorial we will setup a **5 node highly available elasticsearch cluster** that will consist of 3 Elasticsearch Master Nodes and 2 Elasticsearch Data Nodes.
 
 > "Three master nodes is the way to start, but only if you're building a full cluster, which at minimum is 3 master nodes plus at least 2 data nodes."
-> - https://discuss.elastic.co/t/should-dedicated-master-nodes-and-data-nodes-be-considered-separately/75093/14
+>  - https://discuss.elastic.co/t/should-dedicated-master-nodes-and-data-nodes-be-considered-separately/75093/14
 
 ## The Overview:
 
 In short the responsibilites of the node types:
 
 **Master Nodes**: Master nodes are responsible for Cluster related tasks, creating / deleting indexes, tracking of nodes, allocate shards to nodes, etc.
+
 **Data Nodes**: Data nodes are responsible for hosting the actual shards that has the indexed data also handles data related operations like CRUD, search, and aggregations. 
+
+For more concepts of Elasticsearch, have a look at their [basic-concepts](https://www.elastic.co/guide/en/elasticsearch/reference/current/getting-started-concepts.html) documentation.
 
 Our Inventory will consist of:
 
-Master Nodes:
+**Master Nodes:**
 
 ```
 Hostname: es-master-1, Private IP: 172.31.0.77
@@ -33,23 +36,25 @@ Hostname: es-master-2, Private IP: 172.31.0.45
 Hostname: es-master-3, Private IP: 172.31.1.31
 ```
 
-Data Nodes:
+**Data Nodes:**
 
 ```
 Hostname: es-data-1, Private IP:172.31.2.30
 Hostname: es-data-2, Private IP:172.31.0.83
 ```
 
-Reserved Volumes for Data Nodes:
+**Reserved Volumes** for Data Nodes:
 
 ```
 es-data-1: 10GB assigned to /dev/vdb
 es-data-2: 10GB assigned to /dev/vdb
 ```
 
-Authentication:
+**Authentication:**
 
-Note that I have configured the bind address for elasticsearch to `0.0.0.0` using `network.host: 0.0.0.0` for this demonstration, but this means that if your server has a public ip address with no firewall rules or no auth, that anyone will be able to interact with your cluster. This address will also be reachable for all nodes to see each other. 
+Note that I have configured the bind address for elasticsearch to `0.0.0.0` using `network.host: 0.0.0.0` for this demonstration, but this means that if your server has a public ip address with no firewall rules or no auth, that anyone will be able to interact with your cluster. 
+
+This address will also be reachable for all nodes to see each other. 
 
 It's advisable do protect your endpoint, either with [basic auth using nginx](https://blog.ruanbekker.com/blog/2017/08/31/secure-your-access-to-kibana-5-and-elasticsearch-5-with-nginx-for-aws/) which can be found in the embedded link, or using firewall rules to protect communication from the outside (depending on your setup)
 
@@ -227,7 +232,7 @@ ip          heap.percent ram.percent cpu load_1m load_5m load_15m node.role mast
 10.163.68.4           15          79   6    0.62    0.47     0.18 mi        -      es-master-3
 ```
 
-## Provisioning the Data Nodes
+## Setup the Elasticsearch Data Nodes
 
 Now that we have our 3 elasticsearch master nodes running, its time to provision the 2 elasticsearch data nodes. This setup needs to be repeated on both `es-data-1` and `es-data-2`.
 
@@ -330,8 +335,8 @@ Also update them via limits.conf:
 
 ```
 $ cat > /etc/security/limits.conf << EOF
-* soft memlock unlimited
-* hard memlock unlimited
+elasticsearch soft memlock unlimited
+elasticsearch hard memlock unlimited
 EOF
 ```
 
@@ -403,7 +408,7 @@ $ curl http://127.0.0.1:9200
 }
 ```
 
-Let's look at the health api:
+Let's look at the Health API:
 
 ```
 $ curl http://127.0.0.1:9200/_cat/health?v
@@ -421,7 +426,7 @@ $ curl -H 'Content-Type: application/json' -XPOST http://127.0.0.1:9200/first-in
 $ curl -H 'Content-Type: application/json' -XPOST http://127.0.0.1:9200/first-index/docs/ -d '{"username": "franka", "name": "frank", "surname": "adams", "location": {"country": "new zealand", "city": "auckland"}, "hobbies": ["programming", "swimming", "rugby"]}'
 ```
 
-Now that we ingested our data into elasticsearch, lets have a look at the indices api, where the number of documents, size etc should reflect:
+Now that we ingested our data into elasticsearch, lets have a look at the Indices API, where the number of documents, size etc should reflect:
 
 ```
 $ curl http://127.0.0.1:9200/_cat/indices?v
@@ -510,7 +515,7 @@ $ curl http://127.0.0.1:9200/first-index/_search?pretty
 }
 ```
 
-Let's have a look at our shards using the shards api, you will also see where each document is assigned to a specific shard, and also if its a primary or replica shard:
+Let's have a look at our shards using the Shards API, you will also see where each document is assigned to a specific shard, and also if its a primary or replica shard:
 
 ```
 $ curl http://127.0.0.1:9200/_cat/shards?v
@@ -527,7 +532,7 @@ first-index 0     p      STARTED    0  230b 10.163.68.7  es-data-2
 first-index 0     r      STARTED    0  230b 10.163.68.11 es-data-1
 ```
 
-Then we can also use the allocation api to see the size of our indices, disk space per node:
+Then we can also use the Allocation API to see the size of our indices, disk space per node:
 
 ```
 $ curl http://127.0.0.1:9200/_cat/allocation?v
@@ -644,3 +649,4 @@ Oke byyyyyye :D
 ## Resources
 
 - [Elasticsearch](https://www.elastic.co/products/elasticsearch)
+- [Elasticsearch Docs](https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html)

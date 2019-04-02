@@ -6,6 +6,8 @@ comments: true
 categories: ["docker", "swarm", "docker-swarm-apps", "kibana", "traefik"] 
 ---
 
+![kibana](https://user-images.githubusercontent.com/567298/55419050-44c77380-5574-11e9-988c-dae1e001f7bd.png)
+
 We will create a Kibana Service on Docker Swarm, that will sit behind a Traefik Reverse Proxy.
 
 ## Create the Overlay Network:
@@ -17,7 +19,7 @@ $ docker network create --driver overlay appnet
 ## Create the Traefik Service:
 
 ```bash
-docker service create \
+$ docker service create \
 --name traefik \
 --constraint 'node.role==manager' \
 --publish 80:80 \

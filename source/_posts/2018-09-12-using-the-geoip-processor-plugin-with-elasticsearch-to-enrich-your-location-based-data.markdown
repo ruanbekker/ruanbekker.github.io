@@ -1,9 +1,10 @@
 ---
 layout: post
 title: "Using the GeoIP Processor Plugin with Elasticsearch to enrich your location based data"
+description: "Ruan Bekker will demonstrate how to use the geoip plugin to enrich your data with geolocation information for analysis of logdata"
 date: 2018-09-12 10:14:30 -0400
 comments: true
-categories: ["elasticsearch", "geoip", "location"] 
+categories: ["elasticsearch", "geoip", "location", "kibana"] 
 ---
 
 ![](https://objects.ruanbekker.com/assets/images/kibana-map-plot-1.png)

@@ -7,8 +7,7 @@ comments: true
 categories: ["kibana", "elasticsearch", "logs", "visualizations", "dashboards", "analytics"] 
 ---
 
-
-![kibana](https://user-images.githubusercontent.com/567298/55419050-44c77380-5574-11e9-988c-dae1e001f7bd.png)
+![kibana](https://user-images.githubusercontent.com/567298/55418811-b8b54c00-5573-11e9-810d-d244d27c4fb3.png)
 
 In this tutorial we will setup a Basic Kibana Dashboard for a Web Server that is running a Blog on Nginx.
 

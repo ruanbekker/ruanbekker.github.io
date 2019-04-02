@@ -9,7 +9,7 @@ categories: ["elasticsearch", "cluster", "databases", "elasticsearch-tutorials"]
 
 ![elasticsearch](https://user-images.githubusercontent.com/567298/53352581-b3892f80-392b-11e9-9532-5db5cbfc8f1c.jpg)
 
-This is post 1 of my big collection of my **[elasticsearch-tutorials](https://blog.ruanbekker.com/blog/categories/elasticsearch-tutorials)** which includes, setup, index, management, searching, etc. More details at the bottom.
+This is post 1 of my big collection of **[elasticsearch-tutorials](https://blog.ruanbekker.com/blog/categories/elasticsearch-tutorials)** which includes, setup, index, management, searching, etc. More details at the bottom.
 
 In this tutorial we will setup a **5 node highly available elasticsearch cluster** that will consist of 3 Elasticsearch Master Nodes and 2 Elasticsearch Data Nodes.
 

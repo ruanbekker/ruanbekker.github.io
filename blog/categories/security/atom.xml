@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Security | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/security/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-02T13:51:14-04:00</updated>
+  <updated>2019-04-02T18:22:40-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,346 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/"/>
+    <updated>2019-04-02T14:55:58-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
+
+<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
+
+<h2>Install Nginx:</h2>
+
+<p>Install nginx and the dependency package to create basic auth:</p>
+
+<pre><code class="bash">$ apt install nginx apache2-utils -y
+</code></pre>
+
+<h2>Configure Nginx for Reverse Proxy</h2>
+
+<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
+
+<p>Edit the main nginx configuration:</p>
+
+<pre><code>$ vim /etc/nginx/nginx.conf
+</code></pre>
+
+<p>and populate the information as shown below:</p>
+
+<pre><code>user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    # multi_accept on;
+}
+
+http {
+
+    # basic Settings
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # ssl settings
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+
+    # logging settings
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    # gzip settings
+    gzip on;
+    gzip_disable "msie6";
+
+    # virtual host configs
+    include /etc/nginx/conf.d/*.conf;
+}
+</code></pre>
+
+<p>Next, edit the virtual host config:</p>
+
+<pre><code>$ vim /etc/nginx/conf.d/elasticsearch.conf
+</code></pre>
+
+<p>And populate the following config:</p>
+
+<pre><code># https://gist.github.com/sahilsk/b16cb51387847e6c3329
+
+upstream elasticsearch {
+    # define your es nodes
+    server 10.0.0.10:9200;
+    server 10.0.0.11:9200;
+    # persistent http connections
+    # https://www.elastic.co/blog/playing-http-tricks-nginx
+    keepalive 15;
+}
+
+server {
+  listen 80;
+  server_name elasticsearch.domain.com;
+
+  auth_basic "server auth";
+  auth_basic_user_file /etc/nginx/passwords;
+
+  location / {
+
+    # deny node shutdown api
+    if ($request_filename ~ "_shutdown") {
+      return 403;
+      break;
+    }
+
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+  }
+
+  location = / {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+    auth_basic "off";
+  }
+
+  location ~* ^(/_cluster/health|/_cat/health) {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+    auth_basic "off";
+  }
+}
+</code></pre>
+
+<p>Set your username and password to protect your endpoint:</p>
+
+<pre><code class="bash">$ htpasswd -c /etc/nginx/passwords admin
+</code></pre>
+
+<p>Enable nginx on boot and restart the process:</p>
+
+<pre><code class="bash">$ systemctl enable nginx
+$ systemctl restart nginx
+</code></pre>
+
+<h2>Test it</h2>
+
+<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -u 'admin:admin' http://myproxy.domain.com/_cat/indices?v
+health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   first-index 1o6yM7tCSqagqoeihKM7_g   5   1          3            0     40.6kb         20.3kb
+</code></pre>
+
+<h2>Letsencrypt SSL Certificates</h2>
+
+<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
+
+<pre><code class="bash">$ apt-get update
+$ apt-get install software-properties-common -y
+$ add-apt-repository universe
+$ add-apt-repository ppa:certbot/certbot
+$ apt-get update
+$ apt-get install certbot python-certbot-nginx -y
+</code></pre>
+
+<p>Request a Certificate for your domain:</p>
+
+<pre><code class="bash">$ certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
+
+Obtaining a new certificate
+Performing the following challenges:
+dns-01 challenge for myproxy.domain.com
+</code></pre>
+
+<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
+
+<pre><code>Please deploy a DNS TXT record under the name
+_acme-challenge.myproxy.domain.com with the following value:
+
+xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
+
+Before continuing, verify the record is deployed.
+Press Enter to Continue
+Waiting for verification...
+Cleaning up challenges
+
+IMPORTANT NOTES:
+ - Congratulations! Your certificate and chain have been saved at:
+   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
+   Your key file has been saved at:
+   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
+   Your cert will expire on 2019-07-01. To obtain a new or tweaked
+   version of this certificate in the future, simply run certbot
+   again. To non-interactively renew *all* of your certificates, run
+   "certbot renew"
+ - If you like Certbot, please consider supporting our work by:
+
+   Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
+   Donating to EFF:                    https://eff.org/donate-le
+</code></pre>
+
+<h2>Update Nginx Config</h2>
+
+<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
+
+<p>Open up the virtual host nginx configuration:</p>
+
+<pre><code class="bash">$ vim /etc/nginx/conf.d/elasticsearch.conf
+</code></pre>
+
+<p>Update the config like the one below:</p>
+
+<pre><code>upstream elasticsearch {
+    server 10.0.0.10:9200;
+    server 10.0.0.11:9200;
+    keepalive 15;
+}
+
+server {
+  listen 80;
+  server_name myproxy.domain.com;
+  return 301 https://$host$request_uri;
+}
+
+server {
+  listen 443 ssl;
+  server_name myproxy.domain.com;
+
+  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem;
+
+  auth_basic "server auth";
+  auth_basic_user_file /etc/nginx/passwords;
+
+  location ^~ /.well-known/acme-challenge/ {
+    auth_basic off;
+  }
+
+  location / {
+
+    # deny node shutdown api
+    if ($request_filename ~ "_shutdown") {
+      return 403;
+      break;
+    }
+
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+  }
+
+  location = / {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+    auth_basic "off";
+  }
+
+  location ~* ^(/_cluster/health|/_cat/health) {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+    auth_basic "off";
+  }
+}
+</code></pre>
+
+<p>Restart the nginx process:</p>
+
+<pre><code class="bash">$ systemctl restart nginx
+</code></pre>
+
+<h2>Test the Nginx Proxy with SSL</h2>
+
+<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
+
+<pre><code class="bash">$ curl -iL -u 'admin:admin' http://myproxy.domain.com/_cat/nodes?v
+HTTP/1.1 301 Moved Permanently
+Server: nginx/1.14.0 (Ubuntu)
+Date: Tue, 02 Apr 2019 21:40:09 GMT
+Content-Type: text/html
+Content-Length: 194
+Connection: keep-alive
+Location: https://myproxy.domain.com/_cat/nodes?v
+
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Tue, 02 Apr 2019 21:40:10 GMT
+Content-Type: text/plain; charset=UTF-8
+Content-Length: 276
+Connection: keep-alive
+
+ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.0.0.10               40          97   3    0.15    0.10     0.08 mdi       -      Lq9P7eP
+10.0.0.11               44          96   3    0.21    0.10     0.09 mdi       *      F5edOwK
+</code></pre>
+
+<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
+
+<pre><code class="bash">$ curl -i -u 'admin:admin' https://myproxy.domain.com/_cat/nodes?v
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Tue, 02 Apr 2019 21:40:22 GMT
+Content-Type: text/plain; charset=UTF-8
+Content-Length: 276
+Connection: keep-alive
+
+ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.0.0.10               44          96   4    0.18    0.10     0.09 mdi       *      F5edOwK
+10.0.0.11               39          97   5    0.13    0.09     0.08 mdi       -      Lq9P7eP
+</code></pre>
+
+<p>Setup a cronjob to auto renew the certificates:</p>
+
+<pre><code class="bash">$ crontab -e
+</code></pre>
+
+<p>Populate the following line:</p>
+
+<pre><code class="bash">6 1,13 * * * /usr/bin/certbot renew --post-hook "systemctl restart nginx" --quiet
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Create Read Only Users in MongoDB]]></title>
@@ -544,130 +884,6 @@ $ docker logs -f f6cb | grep -v 'Error exchanging' | awk '{print $6, $7, $8}' &g
 <ul>
 <li><a href="https://www.facebook.com/security/">https://www.facebook.com/security/</a></li>
 <li><a href="https://www.facebook.com/support">https://www.facebook.com/support</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Distributing a Shared Secret Amongst a Group of Participants Using Shamirs Secret Sharing Scheme Aka Ssss]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/08/27/distributing-a-shared-secret-amongst-a-group-of-participants-using-shamirs-secret-sharing-scheme-aka-ssss/"/>
-    <updated>2018-08-27T18:29:48-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/08/27/distributing-a-shared-secret-amongst-a-group-of-participants-using-shamirs-secret-sharing-scheme-aka-ssss</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/cryptography-word-logo.png" alt="" /></p>
-
-<p>In situations where a group of participants join together to split up a secret in a form of secret sharing, where the secret is devided into parts, giving each participant their own unique part. Together contributing to reconstruct the initial secret. We can achieve this with Shamir&rsquo;s Secret Sharing which is an algorithm in cryptography created by <a href="https://en.wikipedia.org/wiki/Shamir%27s_Secret_Sharing">Adi Shamir</a>.</p>
-
-<h2>More info on Secret Sharing</h2>
-
-<p>Referenced from <a href="https://en.wikipedia.org/wiki/Secret_sharing">Wikipedia: Secret Sharing</a>:</p>
-
-<p>&ldquo;Secret sharing (also called secret splitting) refers to methods for distributing a secret amongst a group of participants, each of whom is allocated a share of the secret. The secret can be reconstructed only when a sufficient number, of possibly different types, of shares are combined together; individual shares are of no use on their own.&rdquo;</p>
-
-<h2>Installing ssss</h2>
-
-<p>On Mac OSX:</p>
-
-<pre><code>$ brew install ssss
-</code></pre>
-
-<p>On Debian:</p>
-
-<pre><code>$ apt install ssss -y
-</code></pre>
-
-<h2>Creating a Secret:</h2>
-
-<p>Generate a Secret where we will distribute 5 shares, where each participant will have their own unique share, and to reconstruct the secret, we will need 3 participants to rebuild the secret. In our case our shares will be distributed to the following example users:</p>
-
-<pre><code>- Share 1: James
-- Share 2: John
-- Share 3: Frank
-- Share 4: Paul
-- Share 5: Ryan
-</code></pre>
-
-<p>For this demonstration our secret&rsquo;s value will be <code>SuperSecret@123!</code>, which we will split into 5 shares, but to reconstruct, we need 3 parts / shares:</p>
-
-<pre><code class="bash">$ ssss-split -t 3 -n 5
-Generating shares using a (3,5) scheme with dynamic security level.
-Enter the secret, at most 128 ASCII characters: Using a 128 bit security level.
-1-41ac84013bf568d1cc88b751539f1ff5
-2-7d9ca3ca26442bfcca35e0ad205e5659
-3-519038837bbf1b7ceefde331ad1ae40f
-4-6d4f4e0f086af5be033f516bb3e227d2
-5-4143d5465591c53e27f752f73ea69596
-</code></pre>
-
-<p>In this case, each share will be distributed to each user to save in a secure location.</p>
-
-<h2>Reconstructing the Secret:</h2>
-
-<p>Let&rsquo;s reconstruct the secret, and as we need 3 participants, we will ask <code>John</code>, <code>Paul</code> and <code>Ryan</code> for their shares, so that we can reconstruct the secret:</p>
-
-<pre><code class="bash">$ ssss-combine -t 3
-Enter 3 shares separated by newlines:
-Share [1/3]: 2-7d9ca3ca26442bfcca35e0ad205e5659
-Share [2/3]: 4-6d4f4e0f086af5be033f516bb3e227d2
-Share [3/3]: 5-4143d5465591c53e27f752f73ea69596
-Resulting secret: SuperSecret@123!
-</code></pre>
-
-<p>As you can see the secret is verified the same as the initial secret.</p>
-
-<h2>Using ssss and qrencode for MFA Codes</h2>
-
-<p>This can be useful for Multi Factor Authentication as well. Setup a Virtual MFA with a Identity that supports MFA Authentication, copy or make note of the &ldquo;Secret Key / Secret Configuration Key&rdquo;, go ahead and setup the MFA Device on your MFA Device to complete the setup.</p>
-
-<p>Once verified and able to logon, logout and delete the MFA Account from your Device.</p>
-
-<p>Generate the same share scheme for the MFA Secret Key, for this example: <code>ABCDEXAMPLE1029384756</code>:</p>
-
-<pre><code class="bash">$ ssss-split -t 3 -n 5
-Generating shares using a (3,5) scheme with dynamic security level.
-Enter the secret, at most 128 ASCII characters: Using a 168 bit security level.
-1-8d2cf979fb346297cab47ff691bddc1c5a5f34af37
-2-4d0f2cdcfff653cc60a4f293c15805f7e84b0a956d
-3-dadb6d2cbe42772c9a9042273f0b71dd71422f19cb
-4-546bcef428151ceb01fdc6007ac2e5e4f1516670ca
-5-c3bf8f0469a1380bfbc976b4849191ce685843fc7e
-</code></pre>
-
-<p>Distribute the Shares, and when the MFA Device needs to be restored on a Device, reconstruct the secret to get the Secret Key for the MFA Device:</p>
-
-<pre><code class="bash">$ ssss-combine -t 3
-Enter 3 shares separated by newlines:
-Share [1/3]: 1-8d2cf979fb346297cab47ff691bddc1c5a5f34af37
-Share [2/3]: 2-4d0f2cdcfff653cc60a4f293c15805f7e84b0a956d
-Share [3/3]: 3-dadb6d2cbe42772c9a9042273f0b71dd71422f19cb
-Resulting secret: ABCDEXAMPLE1029384756
-</code></pre>
-
-<p>Now that we have the Secret Key for our MFA Device, let&rsquo;s Generate a QRCode that we can scan in from our device, which will save us from typing a lot of characters. We will need <code>qrencode</code> for this:</p>
-
-<p>For Mac OSX:</p>
-
-<pre><code>$ brew install qrencode
-</code></pre>
-
-<p>for Debian:</p>
-
-<pre><code class="bash">$ apt install qrencode -y
-</code></pre>
-
-<p>To generate the QRCode, we will pass the filename: <code>myqrcode.png</code>, the name that will appear on our device: <code>MyNewMFADevice</code>, and the Secret: <code>ABCDEXAMPLE1029384756</code>:</p>
-
-<pre><code>$ qrencode -o myqrcode.png -d 300 -s 10 "otpauth://totp/MyNewMFADevice?secret=ABCDEXAMPLE1029384756"
-</code></pre>
-
-<p>You will find the <code>myqrcode.png</code> in your current working directory, open the file scan the barcode and your MFA device will be setup and enabled to use.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://en.wikipedia.org/wiki/Secret_sharing">https://en.wikipedia.org/wiki/Secret_sharing</a></li>
-<li><a href="http://point-at-infinity.org/ssss/">http://point-at-infinity.org/ssss/</a></li>
-<li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-iam-user">https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html#enable-virt-mfa-for-iam-user</a></li>
 </ul>
 
 ]]></content>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Elasticsearch | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/elasticsearch/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-02T13:51:14-04:00</updated>
+  <updated>2019-04-02T18:22:40-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,346 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/"/>
+    <updated>2019-04-02T14:55:58-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
+
+<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
+
+<h2>Install Nginx:</h2>
+
+<p>Install nginx and the dependency package to create basic auth:</p>
+
+<pre><code class="bash">$ apt install nginx apache2-utils -y
+</code></pre>
+
+<h2>Configure Nginx for Reverse Proxy</h2>
+
+<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
+
+<p>Edit the main nginx configuration:</p>
+
+<pre><code>$ vim /etc/nginx/nginx.conf
+</code></pre>
+
+<p>and populate the information as shown below:</p>
+
+<pre><code>user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    # multi_accept on;
+}
+
+http {
+
+    # basic Settings
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # ssl settings
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+
+    # logging settings
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    # gzip settings
+    gzip on;
+    gzip_disable "msie6";
+
+    # virtual host configs
+    include /etc/nginx/conf.d/*.conf;
+}
+</code></pre>
+
+<p>Next, edit the virtual host config:</p>
+
+<pre><code>$ vim /etc/nginx/conf.d/elasticsearch.conf
+</code></pre>
+
+<p>And populate the following config:</p>
+
+<pre><code># https://gist.github.com/sahilsk/b16cb51387847e6c3329
+
+upstream elasticsearch {
+    # define your es nodes
+    server 10.0.0.10:9200;
+    server 10.0.0.11:9200;
+    # persistent http connections
+    # https://www.elastic.co/blog/playing-http-tricks-nginx
+    keepalive 15;
+}
+
+server {
+  listen 80;
+  server_name elasticsearch.domain.com;
+
+  auth_basic "server auth";
+  auth_basic_user_file /etc/nginx/passwords;
+
+  location / {
+
+    # deny node shutdown api
+    if ($request_filename ~ "_shutdown") {
+      return 403;
+      break;
+    }
+
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+  }
+
+  location = / {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+    auth_basic "off";
+  }
+
+  location ~* ^(/_cluster/health|/_cat/health) {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+    auth_basic "off";
+  }
+}
+</code></pre>
+
+<p>Set your username and password to protect your endpoint:</p>
+
+<pre><code class="bash">$ htpasswd -c /etc/nginx/passwords admin
+</code></pre>
+
+<p>Enable nginx on boot and restart the process:</p>
+
+<pre><code class="bash">$ systemctl enable nginx
+$ systemctl restart nginx
+</code></pre>
+
+<h2>Test it</h2>
+
+<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
+
+<pre><code class="bash">$ curl -H 'Content-Type: application/json' -u 'admin:admin' http://myproxy.domain.com/_cat/indices?v
+health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   first-index 1o6yM7tCSqagqoeihKM7_g   5   1          3            0     40.6kb         20.3kb
+</code></pre>
+
+<h2>Letsencrypt SSL Certificates</h2>
+
+<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
+
+<pre><code class="bash">$ apt-get update
+$ apt-get install software-properties-common -y
+$ add-apt-repository universe
+$ add-apt-repository ppa:certbot/certbot
+$ apt-get update
+$ apt-get install certbot python-certbot-nginx -y
+</code></pre>
+
+<p>Request a Certificate for your domain:</p>
+
+<pre><code class="bash">$ certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
+
+Obtaining a new certificate
+Performing the following challenges:
+dns-01 challenge for myproxy.domain.com
+</code></pre>
+
+<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
+
+<pre><code>Please deploy a DNS TXT record under the name
+_acme-challenge.myproxy.domain.com with the following value:
+
+xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
+
+Before continuing, verify the record is deployed.
+Press Enter to Continue
+Waiting for verification...
+Cleaning up challenges
+
+IMPORTANT NOTES:
+ - Congratulations! Your certificate and chain have been saved at:
+   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
+   Your key file has been saved at:
+   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
+   Your cert will expire on 2019-07-01. To obtain a new or tweaked
+   version of this certificate in the future, simply run certbot
+   again. To non-interactively renew *all* of your certificates, run
+   "certbot renew"
+ - If you like Certbot, please consider supporting our work by:
+
+   Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
+   Donating to EFF:                    https://eff.org/donate-le
+</code></pre>
+
+<h2>Update Nginx Config</h2>
+
+<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
+
+<p>Open up the virtual host nginx configuration:</p>
+
+<pre><code class="bash">$ vim /etc/nginx/conf.d/elasticsearch.conf
+</code></pre>
+
+<p>Update the config like the one below:</p>
+
+<pre><code>upstream elasticsearch {
+    server 10.0.0.10:9200;
+    server 10.0.0.11:9200;
+    keepalive 15;
+}
+
+server {
+  listen 80;
+  server_name myproxy.domain.com;
+  return 301 https://$host$request_uri;
+}
+
+server {
+  listen 443 ssl;
+  server_name myproxy.domain.com;
+
+  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem;
+
+  auth_basic "server auth";
+  auth_basic_user_file /etc/nginx/passwords;
+
+  location ^~ /.well-known/acme-challenge/ {
+    auth_basic off;
+  }
+
+  location / {
+
+    # deny node shutdown api
+    if ($request_filename ~ "_shutdown") {
+      return 403;
+      break;
+    }
+
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+  }
+
+  location = / {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+    auth_basic "off";
+  }
+
+  location ~* ^(/_cluster/health|/_cat/health) {
+    proxy_pass http://elasticsearch;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Host $http_host;
+    proxy_redirect off;
+    auth_basic "off";
+  }
+}
+</code></pre>
+
+<p>Restart the nginx process:</p>
+
+<pre><code class="bash">$ systemctl restart nginx
+</code></pre>
+
+<h2>Test the Nginx Proxy with SSL</h2>
+
+<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
+
+<pre><code class="bash">$ curl -iL -u 'admin:admin' http://myproxy.domain.com/_cat/nodes?v
+HTTP/1.1 301 Moved Permanently
+Server: nginx/1.14.0 (Ubuntu)
+Date: Tue, 02 Apr 2019 21:40:09 GMT
+Content-Type: text/html
+Content-Length: 194
+Connection: keep-alive
+Location: https://myproxy.domain.com/_cat/nodes?v
+
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Tue, 02 Apr 2019 21:40:10 GMT
+Content-Type: text/plain; charset=UTF-8
+Content-Length: 276
+Connection: keep-alive
+
+ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.0.0.10               40          97   3    0.15    0.10     0.08 mdi       -      Lq9P7eP
+10.0.0.11               44          96   3    0.21    0.10     0.09 mdi       *      F5edOwK
+</code></pre>
+
+<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
+
+<pre><code class="bash">$ curl -i -u 'admin:admin' https://myproxy.domain.com/_cat/nodes?v
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Tue, 02 Apr 2019 21:40:22 GMT
+Content-Type: text/plain; charset=UTF-8
+Content-Length: 276
+Connection: keep-alive
+
+ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.0.0.10               44          96   4    0.18    0.10     0.09 mdi       *      F5edOwK
+10.0.0.11               39          97   5    0.13    0.09     0.08 mdi       -      Lq9P7eP
+</code></pre>
+
+<p>Setup a cronjob to auto renew the certificates:</p>
+
+<pre><code class="bash">$ crontab -e
+</code></pre>
+
+<p>Populate the following line:</p>
+
+<pre><code class="bash">6 1,13 * * * /usr/bin/certbot renew --post-hook "systemctl restart nginx" --quiet
+</code></pre>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Kibana Dashboards for Nginx Log Data to Understand the Behavior]]></title>
@@ -1326,172 +1666,6 @@ done
 <p>APM is available for other languages as well and provides a getting started snippets from the APM UI. For more information on APM, have a look at their <a href="https://www.elastic.co/solutions/apm">Documentation</a></p>
 
 <p>Hope this was useful.</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/"/>
-    <updated>2018-11-11T12:31:43-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
-
-<p>In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive the metric data from the application side, and is then pushed to apm indices on Elasticsearch.</p>
-
-<p>This will be a 2 post blog on APM:</p>
-
-<ul>
-<li>1) <a href="">Setup the Elastic Stack with Elasticsearch, Kibana and APM Server</a> - this post</li>
-<li>2) <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Setup a Python Flask application with the APM Agent</a></li>
-</ul>
-
-
-<h2>What is APM</h2>
-
-<p>From their website APM is described as: &ldquo;Elastic APM is an application performance monitoring system built on the Elastic Stack. It allows you to monitor software services and applications in real time, collecting detailed performance information on response time for incoming requests, database queries, calls to caches, external HTTP requests, etc.&rdquo;</p>
-
-<p>You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred etc.</p>
-
-<ul>
-<li><a href="https://www.elastic.co/solutions/apm">More Info</a></li>
-</ul>
-
-
-<h2>APM Agents:</h2>
-
-<p>The APM Agents will be loaded inside your application, application metrics will then be pushed to the APM Server (which we will setup in this post), which then gets pushed to Elasticsearch and is then consumed by Kibana.</p>
-
-<p>At the time of writing, the APM Agents are supported in the following languages:</p>
-
-<ul>
-<li>Node.js</li>
-<li>Django</li>
-<li>Flask</li>
-<li>Ruby on Rails</li>
-<li>Rack</li>
-<li>RUM</li>
-<li>Golang</li>
-<li>Java</li>
-</ul>
-
-
-<h2>Setup the Elastic Stack</h2>
-
-<p>One thing to note, every service in your Elastic Stack needs to be running on the same version. In this post we will setup Elasticsearch, APM and Kibana all running on version <code>6.4.3</code></p>
-
-<h2>Setup the Pre-Requirements:</h2>
-
-<p>Elasticsearch depends on Java, se we will go ahead and setup the repositories:</p>
-
-<pre><code class="bash">$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
-$ apt-get install apt-transport-https -y
-$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
-$ apt update &amp;&amp; apt upgrade -y 
-$ apt install openjdk-8-jdk -y
-</code></pre>
-
-<p>Verify that Java is installed:</p>
-
-<pre><code class="bash">$ java -version
-openjdk version "1.8.0_181"
-OpenJDK Runtime Environment (build 1.8.0_181-8u181-b13-1ubuntu0.16.04.1-b13)
-OpenJDK 64-Bit Server VM (build 25.181-b13, mixed mode)
-</code></pre>
-
-<p>Setup Kernel parameters for Elasticsearch:</p>
-
-<pre><code class="bash">$ sysctl -w vm.max_map_count=262144
-$ echo 'vm.max_map_count=262144' &gt;&gt; /etc/sysctl.conf
-</code></pre>
-
-<h2>Setup Elasticsearch:</h2>
-
-<p>Search for the latest versions (when already having elasticsearch, either upgrade or install apm on the same version as elasticsearch/kibana):</p>
-
-<pre><code class="bash">$ apt-cache madison elasticsearch
-elasticsearch |      6.4.3 | https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
-elasticsearch |      6.4.2 | https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
-</code></pre>
-
-<p>Install Elasticsearch:</p>
-
-<pre><code class="bash">$ apt-get install elasticsearch=6.4.3 -y
-</code></pre>
-
-<p>Configure Elasticsearch to lock the memory on startup:</p>
-
-<pre><code class="bash">$ sed -i 's/#bootstrap.memory_lock: true/bootstrap.memory_lock: true/g' /etc/elasticsearch/elasticsearch.yml
-</code></pre>
-
-<p>Enable Elasticsearch on startup and start the service:</p>
-
-<pre><code>$ systemctl daemon-reload
-$ systemctl enable elasticsearch.service
-$ systemctl start elasticsearch.service
-</code></pre>
-
-<h2>Install Kibana:</h2>
-
-<p>Install Kibana version <code>6.4.3</code>:</p>
-
-<pre><code class="bash">$ apt install kibana=6.4.3 -y
-</code></pre>
-
-<p>For demonstration, I will configure Kibana to listen on all interfaces on port <code>5601</code>, but note this will enable access for everyone, you can [follow this blogpost] to setup a Nginx Reverse Proxy to upstream to localhost on port 5601.</p>
-
-<p>Since this demonstration we are using Elasticsearch locally, so if you have a remote cluster, configuration can be applied where needed.</p>
-
-<pre><code class="bash">$ sed -i 's/#server.host: "localhost"/server.host: "0.0.0.0"/'g /etc/kibana/kibana.yml
-$ sed -i 's/#elasticsearch.url: "http:\/\/localhost:9200"/elasticsearch.url: "http:\/\/localhost:9200"/'g /etc/kibana/kibana.yml
-</code></pre>
-
-<p>Enable Kibana on startup and start the service:</p>
-
-<pre><code class="bash">$ systemctl enable kibana.service
-$ systemctl restart kibana.service
-</code></pre>
-
-<h2>Install the APM Server</h2>
-
-<p>Install APM Server version <code>6.4.3</code>:</p>
-
-<pre><code class="bash">$ apt install apm-server=6.4.3 -y
-</code></pre>
-
-<p>Since we have everything locally, the configuration can be kept as is, but if you need to configure the elasticsearch or kibana hosts, it can be done via <code>/etc/apm-server/apm-server.yml</code></p>
-
-<p>Then once Kibana and Elasticsearch is started, load the mapping templates, enable and start the service:</p>
-
-<pre><code class="bash">$ apm-server setup
-$ systemctl enable apm-server.service
-$ systemctl restart apm-server.service
-</code></pre>
-
-<p>Ensure all the services are running with <code>netstat -tulpn</code> and port <code>9200</code>, <code>9300</code>, <code>5601</code> and <code>8300</code> should be listening</p>
-
-<h2>Access Your Elastic Stack</h2>
-
-<p>Access Kibana on your routable endpoint on port <code>5601</code> and you should see something like this:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-startup.png" alt="" /></p>
-
-<h2>Configuring a Application to push metrics to APM</h2>
-
-<p>In the <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">next post</a> I will setup a Python Flask Application on APM</p>
 
 <script type="text/javascript">
   ( function() {

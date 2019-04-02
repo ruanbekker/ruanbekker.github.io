@@ -1,0 +1,898 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  <!-- samwize.com/2012/09/24/octopress-table-stylesheet --!>
+  <link href="/stylesheets/data-table.css" media="screen, projection" rel="stylesheet" type="text/css" />
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="https://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My Sysadmins Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-04-02T14:55:58-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>2</span><span class='date-suffix'>nd</span>, <span class='date-year'>2019</span></span> <span class='time'>2:55 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
+
+<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
+
+<h2>Install Nginx:</h2>
+
+<p>Install nginx and the dependency package to create basic auth:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install nginx apache2-utils -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Nginx for Reverse Proxy</h2>
+
+<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
+
+<p>Edit the main nginx configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/nginx.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>and populate the information as shown below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user www-data<span class="p">;</span>
+</span><span class='line'>worker_processes auto<span class="p">;</span>
+</span><span class='line'>pid /run/nginx.pid<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>  worker_connections 1024<span class="p">;</span>
+</span><span class='line'>  <span class="c"># multi_accept on;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># basic Settings</span>
+</span><span class='line'>  sendfile on<span class="p">;</span>
+</span><span class='line'>  tcp_nopush on<span class="p">;</span>
+</span><span class='line'>  tcp_nodelay on<span class="p">;</span>
+</span><span class='line'>  keepalive_timeout 65<span class="p">;</span>
+</span><span class='line'>  types_hash_max_size 2048<span class="p">;</span>
+</span><span class='line'>  include /etc/nginx/mime.types<span class="p">;</span>
+</span><span class='line'>  default_type application/octet-stream<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># ssl settings</span>
+</span><span class='line'>  ssl_protocols TLSv1 TLSv1.1 TLSv1.2<span class="p">;</span>
+</span><span class='line'>  ssl_prefer_server_ciphers on<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># logging settings</span>
+</span><span class='line'>  access_log /var/log/nginx/access.log<span class="p">;</span>
+</span><span class='line'>  error_log /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># gzip settings</span>
+</span><span class='line'>  gzip on<span class="p">;</span>
+</span><span class='line'>  gzip_disable <span class="s2">&quot;msie6&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># virtual host configs</span>
+</span><span class='line'>  include /etc/nginx/conf.d/*.conf<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next, edit the virtual host config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/conf.d/elasticsearch.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And populate the following config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c"># https://gist.github.com/sahilsk/b16cb51387847e6c3329</span>
+</span><span class='line'>
+</span><span class='line'>upstream elasticsearch <span class="o">{</span>
+</span><span class='line'>    <span class="c"># define your es nodes</span>
+</span><span class='line'>    server 10.0.0.10:9200<span class="p">;</span>
+</span><span class='line'>    server 10.0.0.11:9200<span class="p">;</span>
+</span><span class='line'>    <span class="c"># persistent http connections</span>
+</span><span class='line'>    <span class="c"># https://www.elastic.co/blog/playing-http-tricks-nginx</span>
+</span><span class='line'>    keepalive 15<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name elasticsearch.domain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  auth_basic <span class="s2">&quot;server auth&quot;</span><span class="p">;</span>
+</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># deny node shutdown api</span>
+</span><span class='line'>    <span class="k">if</span> <span class="o">(</span><span class="nv">$request_filename</span> ~ <span class="s2">&quot;_shutdown&quot;</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>      <span class="k">return</span> 403<span class="p">;</span>
+</span><span class='line'>      <span class="nb">break</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="nv">location</span> <span class="o">=</span> / <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location ~* ^<span class="o">(</span>/_cluster/health<span class="p">|</span>/_cat/health<span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set your username and password to protect your endpoint:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>htpasswd -c /etc/nginx/passwords admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable nginx on boot and restart the process:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>nginx
+</span><span class='line'><span class="nv">$ </span>systemctl restart nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test it</h2>
+
+<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -H <span class="s1">&#39;Content-Type: application/json&#39;</span> -u <span class="s1">&#39;admin:admin&#39;</span> http://myproxy.domain.com/_cat/indices?v
+</span><span class='line'>health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+</span><span class='line'>green  open   first-index 1o6yM7tCSqagqoeihKM7_g   <span class="m">5</span>   <span class="m">1</span>          <span class="m">3</span>            <span class="m">0</span>     40.6kb         20.3kb
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Letsencrypt SSL Certificates</h2>
+
+<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get update
+</span><span class='line'><span class="nv">$ </span>apt-get install software-properties-common -y
+</span><span class='line'><span class="nv">$ </span>add-apt-repository universe
+</span><span class='line'><span class="nv">$ </span>add-apt-repository ppa:certbot/certbot
+</span><span class='line'><span class="nv">$ </span>apt-get update
+</span><span class='line'><span class="nv">$ </span>apt-get install certbot python-certbot-nginx -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Request a Certificate for your domain:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
+</span><span class='line'>
+</span><span class='line'>Obtaining a new certificate
+</span><span class='line'>Performing the following challenges:
+</span><span class='line'>dns-01 challenge <span class="k">for</span> myproxy.domain.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Please deploy a DNS TXT record under the name
+</span><span class='line'>_acme-challenge.myproxy.domain.com with the following value:
+</span><span class='line'>
+</span><span class='line'>xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
+</span><span class='line'>
+</span><span class='line'>Before continuing, verify the record is deployed.
+</span><span class='line'>Press Enter to Continue
+</span><span class='line'>Waiting <span class="k">for</span> verification...
+</span><span class='line'>Cleaning up challenges
+</span><span class='line'>
+</span><span class='line'>IMPORTANT NOTES:
+</span><span class='line'> - Congratulations! Your certificate and chain have been saved at:
+</span><span class='line'>   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
+</span><span class='line'>   Your key file has been saved at:
+</span><span class='line'>   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
+</span><span class='line'>   Your cert will expire on 2019-07-01. To obtain a new or tweaked
+</span><span class='line'>   version of this certificate in the future, simply run certbot
+</span><span class='line'>   again. To non-interactively renew *all* of your certificates, run
+</span><span class='line'>   <span class="s2">&quot;certbot renew&quot;</span>
+</span><span class='line'> - If you like Certbot, please consider supporting our work by:
+</span><span class='line'>
+</span><span class='line'>   Donating to ISRG / Let<span class="err">&#39;</span>s Encrypt:   https://letsencrypt.org/donate
+</span><span class='line'>   Donating to EFF:                    https://eff.org/donate-le
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Update Nginx Config</h2>
+
+<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
+
+<p>Open up the virtual host nginx configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/conf.d/elasticsearch.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Update the config like the one below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>upstream elasticsearch <span class="o">{</span>
+</span><span class='line'>    server 10.0.0.10:9200<span class="p">;</span>
+</span><span class='line'>    server 10.0.0.11:9200<span class="p">;</span>
+</span><span class='line'>    keepalive 15<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name myproxy.domain.com<span class="p">;</span>
+</span><span class='line'>  <span class="k">return</span> <span class="m">301</span> https://<span class="nv">$host$request_uri</span><span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>  listen <span class="m">443</span> ssl<span class="p">;</span>
+</span><span class='line'>  server_name myproxy.domain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem<span class="p">;</span>
+</span><span class='line'>  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  auth_basic <span class="s2">&quot;server auth&quot;</span><span class="p">;</span>
+</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  location ^~ /.well-known/acme-challenge/ <span class="o">{</span>
+</span><span class='line'>    auth_basic off<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># deny node shutdown api</span>
+</span><span class='line'>    <span class="k">if</span> <span class="o">(</span><span class="nv">$request_filename</span> ~ <span class="s2">&quot;_shutdown&quot;</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>      <span class="k">return</span> 403<span class="p">;</span>
+</span><span class='line'>      <span class="nb">break</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="nv">location</span> <span class="o">=</span> / <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location ~* ^<span class="o">(</span>/_cluster/health<span class="p">|</span>/_cat/health<span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart the nginx process:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl restart nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the Nginx Proxy with SSL</h2>
+
+<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -iL -u <span class="s1">&#39;admin:admin&#39;</span> http://myproxy.domain.com/_cat/nodes?v
+</span><span class='line'>HTTP/1.1 <span class="m">301</span> Moved Permanently
+</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
+</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:09 GMT
+</span><span class='line'>Content-Type: text/html
+</span><span class='line'>Content-Length: 194
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>Location: https://myproxy.domain.com/_cat/nodes?v
+</span><span class='line'>
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
+</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:10 GMT
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>UTF-8
+</span><span class='line'>Content-Length: 276
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>
+</span><span class='line'>ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+</span><span class='line'>10.0.0.10               <span class="m">40</span>          <span class="m">97</span>   <span class="m">3</span>    0.15    0.10     0.08 mdi       -      Lq9P7eP
+</span><span class='line'>10.0.0.11               <span class="m">44</span>          <span class="m">96</span>   <span class="m">3</span>    0.21    0.10     0.09 mdi       *      F5edOwK
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i -u <span class="s1">&#39;admin:admin&#39;</span> https://myproxy.domain.com/_cat/nodes?v
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
+</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:22 GMT
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>UTF-8
+</span><span class='line'>Content-Length: 276
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>
+</span><span class='line'>ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+</span><span class='line'>10.0.0.10               <span class="m">44</span>          <span class="m">96</span>   <span class="m">4</span>    0.18    0.10     0.09 mdi       *      F5edOwK
+</span><span class='line'>10.0.0.11               <span class="m">39</span>          <span class="m">97</span>   <span class="m">5</span>    0.13    0.09     0.08 mdi       -      Lq9P7eP
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup a cronjob to auto renew the certificates:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>crontab -e
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Populate the following line:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="m">6</span> 1,13 * * * /usr/bin/certbot renew --post-hook <span class="s2">&quot;systemctl restart nginx&quot;</span> --quiet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
+</ul>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2019-04-02T14:55:58-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>2</span><span class='date-suffix'>nd</span>, <span class='date-year'>2019</span></span> <span class='time'>2:55 pm</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/basic-auth/'>basic-auth</a>, <a class='category' href='/blog/categories/elasticsearch/'>elasticsearch</a>, <a class='category' href='/blog/categories/letsencrypt/'>letsencrypt</a>, <a class='category' href='/blog/categories/nginx/'>nginx</a>, <a class='category' href='/blog/categories/security/'>security</a>, <a class='category' href='/blog/categories/ssl/'>ssl</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2019/04/02/setup-kibana-dashboards-for-nginx-log-data-to-understand-the-behavior/" title="Previous Post: Setup Kibana Dashboards for Nginx log data to understand the behavior">&laquo; Setup Kibana Dashboards for Nginx log data to understand the behavior</a>
+      
+      
+    </p>
+  </footer>
+</article>
+    <script async src="//pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({
+        google_ad_client: "ca-pub-1543437721119411",
+        enable_page_level_ads: true
+      });
+    </script>
+
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Subscribe</h1>
+  <!-- Begin MailChimp Signup Form -->
+  <div id="mc_embed_signup">
+  <form action="https://sysadmins.us15.list-manage.com/subscribe/post?u=3dfcff447b6ee598231eeb658&amp;id=3542f323a9" method="post" id="mc-embedded-subscribe-form" name="mc-embedded-subscribe-form" class="validate" target="_blank" novalidate>
+    <div id="mc_embed_signup_scroll">
+      <div class="indicates-required"><span class="asterisk"></span></div>
+      <div class="mc-field-group">
+	<label for="mce-EMAIL">Email Address:  <span class="asterisk"></span>
+        </label>
+	<input type="email" value="" name="EMAIL" class="required email" id="mce-EMAIL">
+        </div>
+	<div id="mce-responses" class="clear">
+	  <div class="response" id="mce-error-response" style="display:none"></div>
+	  <div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+      <div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_3dfcff447b6ee598231eeb658_3542f323a9" tabindex="-1" value=""></div>
+    <div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+    </div>
+  </form>
+</div>
+<!--End mc_embed_signup-->
+</section>
+<section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/">Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/04/02/setup-kibana-dashboards-for-nginx-log-data-to-understand-the-behavior/">Setup Kibana Dashboards for Nginx Log Data to Understand the Behavior</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster/">Setup a 5 Node Highly Available Elasticsearch Cluster</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/03/28/snippet-create-custom-cloudwatch-metrics-with-python/">Snippet: Create Custom CloudWatch Metrics With Python</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/03/27/concourse-pipeline-to-build-a-docker-image-automatically-on-git-commit/">Concourse Pipeline to Build a Docker Image Automatically on Git Commit</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2019 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+      <script async src="//pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({
+        google_ad_client: "ca-pub-1543437721119411",
+        enable_page_level_ads: true
+      });
+    </script>
+
+</body>
+</html>

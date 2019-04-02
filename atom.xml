@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-02T13:51:14-04:00</updated>
+  <updated>2019-04-02T18:22:40-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,598 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/"/>
+    <updated>2019-04-02T14:55:58-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
+
+<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
+
+<h2>Install Nginx:</h2>
+
+<p>Install nginx and the dependency package to create basic auth:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install nginx apache2-utils -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Nginx for Reverse Proxy</h2>
+
+<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
+
+<p>Edit the main nginx configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/nginx.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>and populate the information as shown below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user www-data<span class="p">;</span>
+</span><span class='line'>worker_processes auto<span class="p">;</span>
+</span><span class='line'>pid /run/nginx.pid<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>  worker_connections 1024<span class="p">;</span>
+</span><span class='line'>  <span class="c"># multi_accept on;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># basic Settings</span>
+</span><span class='line'>  sendfile on<span class="p">;</span>
+</span><span class='line'>  tcp_nopush on<span class="p">;</span>
+</span><span class='line'>  tcp_nodelay on<span class="p">;</span>
+</span><span class='line'>  keepalive_timeout 65<span class="p">;</span>
+</span><span class='line'>  types_hash_max_size 2048<span class="p">;</span>
+</span><span class='line'>  include /etc/nginx/mime.types<span class="p">;</span>
+</span><span class='line'>  default_type application/octet-stream<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># ssl settings</span>
+</span><span class='line'>  ssl_protocols TLSv1 TLSv1.1 TLSv1.2<span class="p">;</span>
+</span><span class='line'>  ssl_prefer_server_ciphers on<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># logging settings</span>
+</span><span class='line'>  access_log /var/log/nginx/access.log<span class="p">;</span>
+</span><span class='line'>  error_log /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># gzip settings</span>
+</span><span class='line'>  gzip on<span class="p">;</span>
+</span><span class='line'>  gzip_disable <span class="s2">&quot;msie6&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># virtual host configs</span>
+</span><span class='line'>  include /etc/nginx/conf.d/*.conf<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next, edit the virtual host config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/conf.d/elasticsearch.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And populate the following config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c"># https://gist.github.com/sahilsk/b16cb51387847e6c3329</span>
+</span><span class='line'>
+</span><span class='line'>upstream elasticsearch <span class="o">{</span>
+</span><span class='line'>    <span class="c"># define your es nodes</span>
+</span><span class='line'>    server 10.0.0.10:9200<span class="p">;</span>
+</span><span class='line'>    server 10.0.0.11:9200<span class="p">;</span>
+</span><span class='line'>    <span class="c"># persistent http connections</span>
+</span><span class='line'>    <span class="c"># https://www.elastic.co/blog/playing-http-tricks-nginx</span>
+</span><span class='line'>    keepalive 15<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name elasticsearch.domain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  auth_basic <span class="s2">&quot;server auth&quot;</span><span class="p">;</span>
+</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># deny node shutdown api</span>
+</span><span class='line'>    <span class="k">if</span> <span class="o">(</span><span class="nv">$request_filename</span> ~ <span class="s2">&quot;_shutdown&quot;</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>      <span class="k">return</span> 403<span class="p">;</span>
+</span><span class='line'>      <span class="nb">break</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="nv">location</span> <span class="o">=</span> / <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location ~* ^<span class="o">(</span>/_cluster/health<span class="p">|</span>/_cat/health<span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set your username and password to protect your endpoint:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>htpasswd -c /etc/nginx/passwords admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable nginx on boot and restart the process:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>nginx
+</span><span class='line'><span class="nv">$ </span>systemctl restart nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test it</h2>
+
+<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -H <span class="s1">&#39;Content-Type: application/json&#39;</span> -u <span class="s1">&#39;admin:admin&#39;</span> http://myproxy.domain.com/_cat/indices?v
+</span><span class='line'>health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+</span><span class='line'>green  open   first-index 1o6yM7tCSqagqoeihKM7_g   <span class="m">5</span>   <span class="m">1</span>          <span class="m">3</span>            <span class="m">0</span>     40.6kb         20.3kb
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Letsencrypt SSL Certificates</h2>
+
+<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get update
+</span><span class='line'><span class="nv">$ </span>apt-get install software-properties-common -y
+</span><span class='line'><span class="nv">$ </span>add-apt-repository universe
+</span><span class='line'><span class="nv">$ </span>add-apt-repository ppa:certbot/certbot
+</span><span class='line'><span class="nv">$ </span>apt-get update
+</span><span class='line'><span class="nv">$ </span>apt-get install certbot python-certbot-nginx -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Request a Certificate for your domain:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
+</span><span class='line'>
+</span><span class='line'>Obtaining a new certificate
+</span><span class='line'>Performing the following challenges:
+</span><span class='line'>dns-01 challenge <span class="k">for</span> myproxy.domain.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Please deploy a DNS TXT record under the name
+</span><span class='line'>_acme-challenge.myproxy.domain.com with the following value:
+</span><span class='line'>
+</span><span class='line'>xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
+</span><span class='line'>
+</span><span class='line'>Before continuing, verify the record is deployed.
+</span><span class='line'>Press Enter to Continue
+</span><span class='line'>Waiting <span class="k">for</span> verification...
+</span><span class='line'>Cleaning up challenges
+</span><span class='line'>
+</span><span class='line'>IMPORTANT NOTES:
+</span><span class='line'> - Congratulations! Your certificate and chain have been saved at:
+</span><span class='line'>   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
+</span><span class='line'>   Your key file has been saved at:
+</span><span class='line'>   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
+</span><span class='line'>   Your cert will expire on 2019-07-01. To obtain a new or tweaked
+</span><span class='line'>   version of this certificate in the future, simply run certbot
+</span><span class='line'>   again. To non-interactively renew *all* of your certificates, run
+</span><span class='line'>   <span class="s2">&quot;certbot renew&quot;</span>
+</span><span class='line'> - If you like Certbot, please consider supporting our work by:
+</span><span class='line'>
+</span><span class='line'>   Donating to ISRG / Let<span class="err">&#39;</span>s Encrypt:   https://letsencrypt.org/donate
+</span><span class='line'>   Donating to EFF:                    https://eff.org/donate-le
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Update Nginx Config</h2>
+
+<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
+
+<p>Open up the virtual host nginx configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/conf.d/elasticsearch.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Update the config like the one below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>upstream elasticsearch <span class="o">{</span>
+</span><span class='line'>    server 10.0.0.10:9200<span class="p">;</span>
+</span><span class='line'>    server 10.0.0.11:9200<span class="p">;</span>
+</span><span class='line'>    keepalive 15<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name myproxy.domain.com<span class="p">;</span>
+</span><span class='line'>  <span class="k">return</span> <span class="m">301</span> https://<span class="nv">$host$request_uri</span><span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>  listen <span class="m">443</span> ssl<span class="p">;</span>
+</span><span class='line'>  server_name myproxy.domain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem<span class="p">;</span>
+</span><span class='line'>  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  auth_basic <span class="s2">&quot;server auth&quot;</span><span class="p">;</span>
+</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  location ^~ /.well-known/acme-challenge/ <span class="o">{</span>
+</span><span class='line'>    auth_basic off<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># deny node shutdown api</span>
+</span><span class='line'>    <span class="k">if</span> <span class="o">(</span><span class="nv">$request_filename</span> ~ <span class="s2">&quot;_shutdown&quot;</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>      <span class="k">return</span> 403<span class="p">;</span>
+</span><span class='line'>      <span class="nb">break</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="nv">location</span> <span class="o">=</span> / <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location ~* ^<span class="o">(</span>/_cluster/health<span class="p">|</span>/_cat/health<span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
+</span><span class='line'>    proxy_redirect off<span class="p">;</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart the nginx process:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl restart nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the Nginx Proxy with SSL</h2>
+
+<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -iL -u <span class="s1">&#39;admin:admin&#39;</span> http://myproxy.domain.com/_cat/nodes?v
+</span><span class='line'>HTTP/1.1 <span class="m">301</span> Moved Permanently
+</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
+</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:09 GMT
+</span><span class='line'>Content-Type: text/html
+</span><span class='line'>Content-Length: 194
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>Location: https://myproxy.domain.com/_cat/nodes?v
+</span><span class='line'>
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
+</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:10 GMT
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>UTF-8
+</span><span class='line'>Content-Length: 276
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>
+</span><span class='line'>ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+</span><span class='line'>10.0.0.10               <span class="m">40</span>          <span class="m">97</span>   <span class="m">3</span>    0.15    0.10     0.08 mdi       -      Lq9P7eP
+</span><span class='line'>10.0.0.11               <span class="m">44</span>          <span class="m">96</span>   <span class="m">3</span>    0.21    0.10     0.09 mdi       *      F5edOwK
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i -u <span class="s1">&#39;admin:admin&#39;</span> https://myproxy.domain.com/_cat/nodes?v
+</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
+</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
+</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:22 GMT
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>UTF-8
+</span><span class='line'>Content-Length: 276
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>
+</span><span class='line'>ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+</span><span class='line'>10.0.0.10               <span class="m">44</span>          <span class="m">96</span>   <span class="m">4</span>    0.18    0.10     0.09 mdi       *      F5edOwK
+</span><span class='line'>10.0.0.11               <span class="m">39</span>          <span class="m">97</span>   <span class="m">5</span>    0.13    0.09     0.08 mdi       -      Lq9P7eP
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup a cronjob to auto renew the certificates:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>crontab -e
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Populate the following line:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="m">6</span> 1,13 * * * /usr/bin/certbot renew --post-hook <span class="s2">&quot;systemctl restart nginx&quot;</span> --quiet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Kibana Dashboards for Nginx Log Data to Understand the Behavior]]></title>
@@ -5487,387 +6079,6 @@
 
 <script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Building Python Serverless Slack Apps on OpenFaas]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/02/21/building-python-serverless-slack-apps-on-openfaas/"/>
-    <updated>2019-02-21T16:29:15-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/02/21/building-python-serverless-slack-apps-on-openfaas</id>
-    <content type="html"><![CDATA[<p><img src="https://camo.githubusercontent.com/cf01eefb5b6905f3774376d6d1ed55b8f052d211/68747470733a2f2f626c6f672e616c6578656c6c69732e696f2f636f6e74656e742f696d616765732f323031372f30382f666161735f736964652e706e67" alt="" /></p>
-
-<p>If you are not familliar with OpenFaas, it&rsquo;s definitely time that you should have a look at it, plus, they are doing some pretty awesome work!</p>
-
-<script src="//ap.lijit.com/www/delivery/fpi.js?z=601358&width=300&height=250"></script>
-
-
-<p></p>
-
-<p>From their documentation: &ldquo;OpenFaaS (Functions as a Service) is a framework for building serverless functions with Docker and Kubernetes which has first class support for metrics. Any process can be packaged as a function enabling you to consume a range of web events without repetitive boiler-plate coding.&rdquo;</p>
-
-<p>Make sure to give them a visit at <a href="https://docs.openfaas.com">openfaas.com</a> and while you are there, in the world of serverless, have a look at how Alex outlines architecture and patterns he applies in a real-world example, <a href="https://www.openfaas.com/blog/serverless-single-page-app/">absolutely great read!</a></p>
-
-<h2>What are we doing today?</h2>
-
-<p>Today we will build a slack app using python which we will deploy as a function on OpenFaas!</p>
-
-<p>Our slash command will make a request to our <code>slack-request</code> function, which will respond with a json string, which will then be parsed in a slack attachment message, then based on your button decision, it will then invoke our <code>slack-interaction</code> function, which will then respond with another message that will allow you to follow the embedded link.</p>
-
-<p>The slack messages are really basic, but you can create a awesome workflow using slack apps. And the best of all, its running on OpenFaas!</p>
-
-<h2>Deploying OpenFaas</h2>
-
-<p>Docker Swarm and Kubernetes are supported, but since I am using Docker Swarm at the moment of writing, this tutorial will show how to deploy OpenFaas to your cluster. Have a look at <a href="https://docs.openfaas.com/deployment/docker-swarm/">OpenFaas Documentation</a> for more detailed information.</p>
-
-<p>Installing OpenFaas CLI for Mac:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew install faas-cli
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Deploy the OpenFaas Stack:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>git clone https://github.com/openfaas/faas
-</span><span class='line'><span class="nv">$ </span><span class="nb">cd </span>faas
-</span><span class='line'><span class="nv">$ </span>./deploy_stack.sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Credentials: The default configuration will create credentials for you and returns instructions on how to authorize faas-cli, for demonstration it will look more or less like the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> -n &lt;some_hash_secret&gt; <span class="p">|</span> faas-cli login --username<span class="o">=</span>admin --password-stdin
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The UI will be available at: <a href="http://127.0.0.1:8080.">http://127.0.0.1:8080.</a> For this demonstration we will only use the cli.</p>
-
-<h2>Create the Functions</h2>
-
-<p>I will create 2 python functions:</p>
-
-<ul>
-<li>The <code>slack-request</code> function, which will be associated to the slash command</li>
-<li>The <code>slack-interactive</code> function, which will be used for interactivity</li>
-</ul>
-
-
-<p>Create a home directory for your functions and create 2 functions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p ~/functions <span class="o">&amp;&amp;</span> <span class="nb">cd</span> ~/functions
-</span><span class='line'><span class="nv">$ </span>faas-cli new --lang python slack-request
-</span><span class='line'><span class="nv">$ </span>faas-cli new --lang python slack-interactive
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Read the <a href="https://docs.openfaas.com/tutorials/first-python-function/">documentation</a> if you&rsquo;d like to learn more.</p>
-
-<p>Configure the first function:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim slack-request/handler.py
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And our function code:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Serverless Message&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;attachments&quot;</span><span class="p">:</span> <span class="p">[{</span>
-</span><span class='line'>            <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;The Awesome world of Serverless introduces: OpenFaas!&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;fields&quot;</span><span class="p">:</span> <span class="p">[{</span>
-</span><span class='line'>                <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;Amazing Level&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;10&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;short&quot;</span><span class="p">:</span> <span class="bp">True</span>
-</span><span class='line'>            <span class="p">},</span>
-</span><span class='line'>      <span class="p">{</span>
-</span><span class='line'>                <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;Github Stars&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;15k +&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;short&quot;</span><span class="p">:</span> <span class="bp">True</span>
-</span><span class='line'>            <span class="p">}],</span>
-</span><span class='line'>            <span class="s">&quot;author_name&quot;</span><span class="p">:</span> <span class="s">&quot;OpenFaas&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;author_icon&quot;</span><span class="p">:</span> <span class="s">&quot;&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;image_url&quot;</span><span class="p">:</span> <span class="s">&quot;https://blog.alexellis.io/content/images/2017/08/small.png&quot;</span>
-</span><span class='line'>        <span class="p">},</span>
-</span><span class='line'>        <span class="p">{</span>
-</span><span class='line'>            <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;About OpenFaas&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;OpenFaaS is a framework for packaging code, binaries or containers as Serverless functions on any platform.&quot;</span>
-</span><span class='line'>        <span class="p">},</span>
-</span><span class='line'>        <span class="p">{</span>
-</span><span class='line'>            <span class="s">&quot;fallback&quot;</span><span class="p">:</span> <span class="s">&quot;Would you recommend OpenFaas to your friends?&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;Would you recommend OpenFaas to your friends?&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;callback_id&quot;</span><span class="p">:</span> <span class="s">&quot;response123&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;color&quot;</span><span class="p">:</span> <span class="s">&quot;#3AA3E3&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;attachment_type&quot;</span><span class="p">:</span> <span class="s">&quot;default&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;actions&quot;</span><span class="p">:</span> <span class="p">[</span>
-</span><span class='line'>                <span class="p">{</span>
-</span><span class='line'>                    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;recommend&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Ofcourse!&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;type&quot;</span><span class="p">:</span> <span class="s">&quot;button&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;recommend&quot;</span>
-</span><span class='line'>                <span class="p">},</span>
-</span><span class='line'>                <span class="p">{</span>
-</span><span class='line'>                    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;definitely&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Most Definitely!&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;type&quot;</span><span class="p">:</span> <span class="s">&quot;button&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;value&quot;</span><span class="p">:</span> <span class="s">&quot;definitely&quot;</span>
-</span><span class='line'>                <span class="p">}</span>
-</span><span class='line'>            <span class="p">]</span>
-</span><span class='line'>        <span class="p">}]</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Since our response needs to be parsed as json, we need to set the content type for our environment in our yaml configuration. Read more on it <a href="https://docs.openfaas.com/reference/yaml/">here</a>. Edit the <code>slack-request.yml</code> :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">provider</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">faas</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">gateway</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://&lt;your.gw.address&gt;:8080</span>
-</span><span class='line'><span class="l-Scalar-Plain">functions</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">slack-request</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">lang</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">python</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">handler</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">./slack-request</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">&lt;your-repo&gt;/slack-request:latest</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">content_type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">application/json</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to build our image, push it to our repository like dockerhub, then deploy to openfaas:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli build -f ./slack-request.yml
-</span><span class='line'><span class="nv">$ </span>faas-cli push -f ./slack-request.yml
-</span><span class='line'><span class="nv">$ </span>faas-cli deploy -f ./slack-request.yml
-</span><span class='line'>Deploying: slack-request.
-</span><span class='line'>
-</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
-</span><span class='line'>URL: http://your.gw.address:8080/function/slack-interactive
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Configure the <code>slack-interactive</code> function:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim slack-interactive/handler.py
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Note that whenever your interact with the first message, a post request will be made against the interactivity request url, you will notice that I decoded the payload (but not doing anything with it), where you will find the callback_id, request_url etc. But for simplicity, I am just using a static json message to respond. Our function code:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">urllib</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">urlstring</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">unquote</span><span class="p">(</span><span class="n">req</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s">&#39;payload=&#39;</span><span class="p">)</span>
-</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">urlstring</span><span class="p">)</span>
-</span><span class='line'>    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;attachments&quot;</span><span class="p">:</span> <span class="p">[</span>
-</span><span class='line'>            <span class="p">{</span>
-</span><span class='line'>                <span class="s">&quot;replace_original&quot;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;response_type&quot;</span><span class="p">:</span> <span class="s">&quot;ephemeral&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;fallback&quot;</span><span class="p">:</span> <span class="s">&quot;Required plain-text summary of the attachment.&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;color&quot;</span><span class="p">:</span> <span class="s">&quot;#36a64f&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;pretext&quot;</span><span class="p">:</span> <span class="s">&quot;Ahh yeah! Great choice, OpenFaas is absolutely brilliant!&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;author_name&quot;</span><span class="p">:</span> <span class="s">&quot;&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;author_link&quot;</span><span class="p">:</span> <span class="s">&quot;https://github.com/openfaas/faas&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;author_icon&quot;</span><span class="p">:</span> <span class="s">&quot;http://flickr.com/icons/bobby.jpg&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;title&quot;</span><span class="p">:</span> <span class="s">&quot;OpenFaas&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;title_link&quot;</span><span class="p">:</span> <span class="s">&quot;https://github.com/openfaas/faas&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Head over to OpenFaas&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;image_url&quot;</span><span class="p">:</span> <span class="s">&quot;https://avatars2.githubusercontent.com/u/27013154?s=400&amp;v=4&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;thumb_url&quot;</span><span class="p">:</span> <span class="s">&quot;https://github.com/openfaas/faas&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;footer&quot;</span><span class="p">:</span> <span class="s">&quot;Slack Apps built on OpenFaas&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;footer_icon&quot;</span><span class="p">:</span> <span class="s">&quot;https://a.slack-edge.com/45901/marketing/img/_rebrand/meta/slack_hash_256.png&quot;</span><span class="p">,</span>
-</span><span class='line'>                <span class="s">&quot;ts&quot;</span><span class="p">:</span> <span class="mi">123456789</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>        <span class="p">]</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We also need to set the content type to json:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>provider:
-</span><span class='line'>  name: faas
-</span><span class='line'>  gateway: http://&lt;your.gw.address&gt;:8080
-</span><span class='line'>functions:
-</span><span class='line'>  slack-interactive:
-</span><span class='line'>    lang: python
-</span><span class='line'>    handler: ./slack-interactive
-</span><span class='line'>    image: &lt;repo&gt;/slack-interactive:latest
-</span><span class='line'>    environment:
-</span><span class='line'>      content_type: application/json
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Build, deploy and ship:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli build -f ./slack-interactive.yml
-</span><span class='line'><span class="nv">$ </span>faas-cli push -f ./slack-interactive.yml
-</span><span class='line'><span class="nv">$ </span>faas-cli deploy -f ./slack-interactive.yml
-</span><span class='line'>
-</span><span class='line'>Deploying: slack-interactive.
-</span><span class='line'>
-</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
-</span><span class='line'>URL: http://&lt;your.gw.address&gt;:8080/function/slack-interactive
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When your functions are deployed, go ahead and create the slack app.</p>
-
-<h2>Create the Slack App</h2>
-
-<ul>
-<li>Head over to <a href="https://api.slack.com/apps">https://api.slack.com/apps</a> and create a new app</li>
-<li>Create a incoming webhook</li>
-<li>Head over to slash commands and create a new command, in my case it was <code>/supersam</code>, set the request url to the public endpoint of your function: <code>http://pub-ip:8080/function/slack-request</code></li>
-<li>Head over to interactive components, set the request url for the interactivity: <code>http://pub-ip:8080/function/slack-interactive</code></li>
-<li>If you dont have a public routable address, have a look at <a href="https://ngrok.com">ngrok</a></li>
-</ul>
-
-
-<p>Once you are set, you should be able to see the slash command integration in your slack workspace, head over to slacks <a href="https://api.slack.com/docs">documentation</a> if you run into any trouble.</p>
-
-<h2>Test your Slack App</h2>
-
-<p>Now that everything is good to go, its time to test your slack app running on OpenFaas!</p>
-
-<p>Head over to slack and run your command <code>/&lt;your-slack-slash-command&gt;</code>. You should see this output:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/53206700-56932e00-363a-11e9-8d44-dfd27f005ab0.png" alt="" /></p>
-
-<p>When you select one of the buttons, you will get a new message:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/53206764-74f92980-363a-11e9-91cb-6cfc30c74457.png" alt="" /></p>
-
-<p>This is a real basic example of slack apps, but slack apps are really powerful. You can for example create a slack app that deploys ephemeral environments on swarm, or create change management approval workflows etc.</p>
-
-<p>I hope this was informative, I am really enjoying OpenFaas at the moment and if your have not tested it, I encourage you to try it out, its really, really amazing!</p>
 ]]></content>
   </entry>
   

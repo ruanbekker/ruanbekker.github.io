@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Cluster | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/cluster/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-03-31T12:25:47-04:00</updated>
+  <updated>2019-04-02T05:24:10-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,622 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a 5 Node Highly Available Elasticsearch Cluster]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster/"/>
+    <updated>2019-04-02T05:05:19-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/53352581-b3892f80-392b-11e9-9532-5db5cbfc8f1c.jpg" alt="elasticsearch" /></p>
+
+<p>This is post 1 of my big collection of my <strong><a href="https://blog.ruanbekker.com/blog/categories/elasticsearch-tutorials">elasticsearch-tutorials</a></strong> which includes, setup, index, management, searching, etc. More details at the bottom.</p>
+
+<p>In this tutorial we will setup a <strong>5 node highly available elasticsearch cluster</strong> that will consist of 3 Elasticsearch Master Nodes and 2 Elasticsearch Data Nodes.</p>
+
+<blockquote><p>&ldquo;Three master nodes is the way to start, but only if you&rsquo;re building a full cluster, which at minimum is 3 master nodes plus at least 2 data nodes.&rdquo;
+- <a href="https://discuss.elastic.co/t/should-dedicated-master-nodes-and-data-nodes-be-considered-separately/75093/14">https://discuss.elastic.co/t/should-dedicated-master-nodes-and-data-nodes-be-considered-separately/75093/14</a></p></blockquote>
+
+<h2>The Overview:</h2>
+
+<p>In short the responsibilites of the node types:</p>
+
+<p><strong>Master Nodes</strong>: Master nodes are responsible for Cluster related tasks, creating / deleting indexes, tracking of nodes, allocate shards to nodes, etc.
+<strong>Data Nodes</strong>: Data nodes are responsible for hosting the actual shards that has the indexed data also handles data related operations like CRUD, search, and aggregations.</p>
+
+<p>Our Inventory will consist of:</p>
+
+<p>Master Nodes:</p>
+
+<pre><code>Hostname: es-master-1, Private IP: 172.31.0.77
+Hostname: es-master-2, Private IP: 172.31.0.45
+Hostname: es-master-3, Private IP: 172.31.1.31
+</code></pre>
+
+<p>Data Nodes:</p>
+
+<pre><code>Hostname: es-data-1, Private IP:172.31.2.30
+Hostname: es-data-2, Private IP:172.31.0.83
+</code></pre>
+
+<p>Reserved Volumes for Data Nodes:</p>
+
+<pre><code>es-data-1: 10GB assigned to /dev/vdb
+es-data-2: 10GB assigned to /dev/vdb
+</code></pre>
+
+<p>Authentication:</p>
+
+<p>Note that I have configured the bind address for elasticsearch to <code>0.0.0.0</code> using <code>network.host: 0.0.0.0</code> for this demonstration, but this means that if your server has a public ip address with no firewall rules or no auth, that anyone will be able to interact with your cluster. This address will also be reachable for all nodes to see each other.</p>
+
+<p>It&rsquo;s advisable do protect your endpoint, either with <a href="https://blog.ruanbekker.com/blog/2017/08/31/secure-your-access-to-kibana-5-and-elasticsearch-5-with-nginx-for-aws/">basic auth using nginx</a> which can be found in the embedded link, or using firewall rules to protect communication from the outside (depending on your setup)</p>
+
+<h2>Setup the Elasticsearch Master Nodes</h2>
+
+<p>The setup below how to provision a elasticsearch master node. Repeat this on node: <code>es-master-1</code>, <code>es-master-2</code>, <code>es-master-3</code></p>
+
+<p>Set your hosts file for name resolution (if you don&rsquo;t have private dns in place):</p>
+
+<pre><code>$ cat &gt; /etc/hosts &lt;&lt; EOF
+127.0.0.1 localhost
+172.31.0.77 es-master-1
+172.31.0.45 es-master-2
+172.31.1.31 es-master-3
+172.31.2.30 es-data-1
+172.31.0.83 es-data-2
+EOF
+</code></pre>
+
+<p>Get the elasticsearch repositories, install the java development kit dependency and install elasticsearch:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+$ apt install software-properties-common python-software-properties apt-transport-https -y
+$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+$ apt update
+$ apt install default-jdk -y
+$ apt install elasticsearch -y
+</code></pre>
+
+<p>The elasticsearch config, before we get to the full example config, I just want to show a snippet of how you could split up logs and data.</p>
+
+<p>Note that you can seperate your logging between data/logs like this:</p>
+
+<pre><code># example of log splitting:
+...
+path:
+  logs: /var/log/elasticsearch
+  data: /var/data/elasticsearch
+...
+</code></pre>
+
+<p>Also, your data can be divided between paths:</p>
+
+<pre><code># example of data paths:
+...
+path:
+  data:
+    - /mnt/elasticsearch_1
+    - /mnt/elasticsearch_2
+    - /mnt/elasticsearch_3
+...
+</code></pre>
+
+<p>Bootstrap the elasticsearch config with a cluster name (all the nodes should have the same cluster name), set the nodes as master <code>node.master: true</code> disable the <code>node.data</code> and specify that the cluster should at least have a minimum of 2 master nodes before it stops. This is used to prevent split brain.</p>
+
+<p>To avoid a split brain, this setting should be set to a quorum of master-eligible nodes:
+<code>(master_eligible_nodes / 2) + 1</code></p>
+
+<p>The full example config:</p>
+
+<pre><code>$ cat &gt; /etc/elasticsearch/elasticsearch.yml &lt;&lt; EOF
+cluster.name: es-cluster
+node.name: \${HOSTNAME}
+node.master: true
+node.data: false
+path.logs: /var/log/elasticsearch
+bootstrap.memory_lock: true
+network.host: 0.0.0.0
+discovery.zen.minimum_master_nodes: 2
+discovery.zen.ping.unicast.hosts: ["es-master-1", "es-master-2", "es-master-3"]
+EOF
+</code></pre>
+
+<p>Important settings for your elasticsearch cluster is described on their <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/system-config.html">docs</a>:</p>
+
+<ul>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/setup-configuration-memory.html">Disable swapping</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/file-descriptors.html">Increase file descriptors</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html">Ensure sufficient virtual memory</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/max-number-of-threads.html">Ensure sufficient threads</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/networkaddress-cache-ttl.html">JVM DNS cache settings</a></li>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/executable-jna-tmpdir.html">Temporary directory not mounted with noexec</a></li>
+</ul>
+
+
+<pre><code>$ cat &gt; /etc/default/elasticsearch &lt;&lt; EOF
+ES_STARTUP_SLEEP_TIME=5
+MAX_OPEN_FILES=65536
+MAX_LOCKED_MEMORY=unlimited
+EOF
+</code></pre>
+
+<p>Ensure that pages are not swapped out to disk by requesting the JVM to lock the heap in memory by setting <code>LimitMEMLOCK=infinity</code>. Set the maxiumim file descriptor number for this process: <code>LimitNOFILE</code> and increase the number of threads using <code>LimitNPROC</code>:</p>
+
+<pre><code>$ vim /usr/lib/systemd/system/elasticsearch.service
+
+[Service]
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+LimitNPROC=4096
+...
+</code></pre>
+
+<p>Increase the limit on the number of open files descriptors to user elasticsearch of 65536 or higher</p>
+
+<pre><code>$ cat &gt; /etc/security/limits.conf &lt;&lt; EOF
+elasticsearch soft memlock unlimited
+elasticsearch hard memlock unlimited
+EOF
+</code></pre>
+
+<p>Increase the value of the mmap counts as elasticsearch uses mmapfs directory to store its indices:</p>
+
+<pre><code>$ sysctl -w vm.max_map_count=262144
+</code></pre>
+
+<p>For a permanent setting, update <code>vm.max_map_count</code> in <code>/etc/sysctl.conf</code> and run</p>
+
+<pre><code>$ sysctl -p /etc/sysctl.conf 
+</code></pre>
+
+<p>Prepare the directories and set the ownership to elasticsearch:</p>
+
+<pre><code>$ mkdir /usr/share/elasticsearch/data
+$ chown -R elasticsearch:elasticsearch /usr/share/elasticsearch/data
+</code></pre>
+
+<p>Reload the systemd daemon, enable and start elasticsearch</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl enable elasticsearch
+$ systemctl restart elasticsearch
+</code></pre>
+
+<p>Once all 3 elasticsearch masters has been started, verify that they are listening: <code>netstat -tulpn | grep 9200</code> then look at the cluster health:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cluster/health?pretty
+{
+  "cluster_name" : "es-cluster",
+  "status" : "green",
+  "timed_out" : false,
+  "number_of_nodes" : 3,
+  "number_of_data_nodes" : 0,
+  "active_primary_shards" : 0,
+  "active_shards" : 0,
+  "relocating_shards" : 0,
+  "initializing_shards" : 0,
+  "unassigned_shards" : 0,
+  "delayed_unassigned_shards" : 0,
+  "number_of_pending_tasks" : 0,
+  "number_of_in_flight_fetch" : 0,
+  "task_max_waiting_in_queue_millis" : 0,
+  "active_shards_percent_as_number" : 100.0
+}
+</code></pre>
+
+<p>Have a look at the nodes, you will see that the node.role for now shows <code>mi</code>:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cat/nodes?v
+ip          heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.163.68.8           11          80  18    0.28    0.14     0.09 mi        -      es-master-2
+10.163.68.5           14          80  14    0.27    0.18     0.11 mi        *      es-master-1
+10.163.68.4           15          79   6    0.62    0.47     0.18 mi        -      es-master-3
+</code></pre>
+
+<h2>Provisioning the Data Nodes</h2>
+
+<p>Now that we have our 3 elasticsearch master nodes running, its time to provision the 2 elasticsearch data nodes. This setup needs to be repeated on both <code>es-data-1</code> and <code>es-data-2</code>.</p>
+
+<p>Configure the hosts file for name resolution:</p>
+
+<pre><code>$ cat &gt; /etc/hosts &lt;&lt; EOF
+127.0.0.1 localhost
+172.31.0.77 es-master-1
+172.31.0.45 es-master-2
+172.31.1.31 es-master-3
+172.31.2.30 es-data-1
+172.31.0.83 es-data-2
+EOF
+</code></pre>
+
+<p>Get the elasticsearch repositories, install the java development kit dependency and install elasticsearch:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+$ apt install software-properties-common python-software-properties apt-transport-https -y
+$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+$ apt update
+$ apt install default-jdk -y
+$ apt install elasticsearch -y
+</code></pre>
+
+<p>Since we attached an extra disk to our data nodes, verify that you can see the disk:</p>
+
+<pre><code>$ lsblk
+NAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
+vda    253:0    0  25G  0 disk
+└─vda1 253:1    0  25G  0 part /
+vdb    253:16   0  10G  0 disk             &lt;----
+</code></pre>
+
+<p>Provision the block device with xfs or anything else that you prefer, create the directory where elasticsearch data will reside, change the ownership that elasticsearch has permission to write/read, set the device on startup and mount the disk:</p>
+
+<pre><code>$ mkfs.xfs /dev/vdb
+$ mkdir /data
+$ mkdir /data/nodes
+$ chown -R elasticsearch:elasticsearch /data
+$ chown -R elasticsearch:elasticsearch /data/nodes
+$ echo '/dev/vdb /data xfs defaults 0 0' &gt;&gt; /etc/fstab
+$ mount -a
+</code></pre>
+
+<p>Verify that the disk is mounted:</p>
+
+<pre><code>$ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+udev            994M     0  994M   0% /dev
+tmpfs           201M  3.1M  197M   2% /run
+/dev/vda1        25G  1.8G   23G   8% /
+/dev/vdb         10G   33M   10G   1% /data
+</code></pre>
+
+<p>Bootstrap the elasticsearch config with a cluster name, set the <code>node.name</code> to an identifier, in this case I will use the servers hostname, set the <code>node.master</code> to false as this will be data nodes, also enable these nodes as data nodes: <code>node.data: true</code>, configure the <code>path.data: /data</code> to the path that we configured, etc:</p>
+
+<pre><code>$ cat &gt; /etc/elasticsearch/elasticsearch.yml &lt;&lt; EOF
+cluster.name: es-cluster
+node.name: \${HOSTNAME}
+node.master: false
+node.data: true
+path.data: /data
+path.logs: /var/log/elasticsearch
+bootstrap.memory_lock: true
+network.host: 0.0.0.0
+discovery.zen.minimum_master_nodes: 2
+discovery.zen.ping.unicast.hosts: ["es-master-1", "es-master-2", "es-master-3"]
+EOF
+</code></pre>
+
+<p>Set a couple of important settings for your elasticsearch cluster is described on their <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/system-config.html">docs</a>:</p>
+
+<pre><code>$ cat &gt; /etc/default/elasticsearch &lt;&lt; EOF
+ES_STARTUP_SLEEP_TIME=5
+MAX_OPEN_FILES=65536
+MAX_LOCKED_MEMORY=unlimited
+EOF
+</code></pre>
+
+<p>Disable swapping, increase the file descriptors and increase the maximum number of threads:</p>
+
+<pre><code>$ vim /usr/lib/systemd/system/elasticsearch.service
+[Service]
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+LimitNPROC=4096
+</code></pre>
+
+<p>Also update them via limits.conf:</p>
+
+<pre><code>$ cat &gt; /etc/security/limits.conf &lt;&lt; EOF
+* soft memlock unlimited
+* hard memlock unlimited
+EOF
+</code></pre>
+
+<p>Reload the systemd daemon, enable and start elasticsearch. Allow it to start and check if the ports are listening with <code>netstat -tulpn | grep 9200</code>, then:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl enable elasticsearch
+$ systemctl restart elasticsearch
+</code></pre>
+
+<p>Verify that everything works as expected, look at the cluster health and look at the status and number of nodes:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cluster/health?pretty
+{
+  "cluster_name" : "es-cluster",
+  "status" : "green",
+  "timed_out" : false,
+  "number_of_nodes" : 5,
+  "number_of_data_nodes" : 2,
+  "active_primary_shards" : 0,
+  "active_shards" : 0,
+  "relocating_shards" : 0,
+  "initializing_shards" : 0,
+  "unassigned_shards" : 0,
+  "delayed_unassigned_shards" : 0,
+  "number_of_pending_tasks" : 0,
+  "number_of_in_flight_fetch" : 0,
+  "task_max_waiting_in_queue_millis" : 0,
+  "active_shards_percent_as_number" : 100.0
+}
+</code></pre>
+
+<p>Look at the nodes api and you will see that we now have the extra 2 nodes showing up on <code>node.role</code> as <code>di</code>:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cat/nodes?v
+ip           heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
+10.163.68.7             9          96   6    0.12    0.11     0.03 di        -      es-data-2
+10.163.68.5            10          80   2    0.20    0.09     0.08 mi        *      es-master-1
+10.163.68.11           12          96   9    0.12    0.09     0.03 di        -      es-data-1
+10.163.68.4            10          79   0    0.00    0.12     0.11 mi        -      es-master-3
+10.163.68.8            12          79   1    0.05    0.06     0.07 mi        -      es-master-2
+</code></pre>
+
+<h2>Interact with Elasticsearch</h2>
+
+<p>Let&rsquo;s interact with elasticsearch, the overview:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200
+{
+  "name" : "es-data-1",
+  "cluster_name" : "es-cluster",
+  "cluster_uuid" : "5BLs4sxsSEK-4OxlGnmlmw",
+  "version" : {
+    "number" : "6.7.0",
+    "build_flavor" : "default",
+    "build_type" : "deb",
+    "build_hash" : "8453f77",
+    "build_date" : "2019-03-21T15:32:29.844721Z",
+    "build_snapshot" : false,
+    "lucene_version" : "7.7.0",
+    "minimum_wire_compatibility_version" : "5.6.0",
+    "minimum_index_compatibility_version" : "5.0.0"
+  },
+  "tagline" : "You Know, for Search"
+}
+</code></pre>
+
+<p>Let&rsquo;s look at the health api:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cat/health?v
+epoch      timestamp cluster    status node.total node.data shards pri relo init unassign pending_tasks max_task_wait_time active_shards_percent
+1554154652 21:37:32  es-cluster green           5         2     10   5    0    0        0             0                  -                100.0%
+</code></pre>
+
+<p>Let&rsquo;s ingest some data into elasticsearch, we will create an index named <code>first-index</code> with some dummy data about people, username, name, surname, location and hobbies:</p>
+
+<pre><code>$ curl -H 'Content-Type: application/json' -XPOST http://127.0.0.1:9200/first-index/docs/ -d '{"username": "mikes", "name": "mike", "surname": "steyn", "location": {"country": "south africa", "city": "cape town"}, "hobbies": ["sport", "coffee"]}'
+
+$ curl -H 'Content-Type: application/json' -XPOST http://127.0.0.1:9200/first-index/docs/ -d '{"username": "clarissas", "name": "clarissa", "surname": "smith", "location": {"country": "ireland", "city": "dublin"}, "hobbies": ["shopping", "reading", "chess"]}'
+
+$ curl -H 'Content-Type: application/json' -XPOST http://127.0.0.1:9200/first-index/docs/ -d '{"username": "franka", "name": "frank", "surname": "adams", "location": {"country": "new zealand", "city": "auckland"}, "hobbies": ["programming", "swimming", "rugby"]}'
+</code></pre>
+
+<p>Now that we ingested our data into elasticsearch, lets have a look at the indices api, where the number of documents, size etc should reflect:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cat/indices?v
+health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   first-index 1o6yM7tCSqagqoeihKM7_g   5   1          3            0     40.6kb         20.3kb
+</code></pre>
+
+<p>Now lets request a search, which will give you by default 10 returned documents:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/first-index/_search?pretty
+{
+  "took" : 116,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 3,
+    "max_score" : 1.0,
+    "hits" : [
+      {
+        "_index" : "first-index",
+        "_type" : "docs",
+        "_id" : "-NTO2mkB8pugP4aC2jtZ",
+        "_score" : 1.0,
+        "_source" : {
+          "username" : "mikes",
+          "name" : "mike",
+          "surname" : "steyn",
+          "location" : {
+            "country" : "south africa",
+            "city" : "cape town"
+          },
+          "hobbies" : [
+            "sport",
+            "coffee"
+          ]
+        }
+      },
+      {
+        "_index" : "first-index",
+        "_type" : "docs",
+        "_id" : "-tTR2mkB8pugP4aCAzvG",
+        "_score" : 1.0,
+        "_source" : {
+          "username" : "franka",
+          "name" : "frank",
+          "surname" : "adams",
+          "location" : {
+            "country" : "new zealand",
+            "city" : "auckland"
+          },
+          "hobbies" : [
+            "programming",
+            "swimming",
+            "rugby"
+          ]
+        }
+      },
+      {
+        "_index" : "first-index",
+        "_type" : "docs",
+        "_id" : "-dTP2mkB8pugP4aC1ztI",
+        "_score" : 1.0,
+        "_source" : {
+          "username" : "clarissas",
+          "name" : "clarissa",
+          "surname" : "smith",
+          "location" : {
+            "country" : "ireland",
+            "city" : "dublin"
+          },
+          "hobbies" : [
+            "shopping",
+            "reading",
+            "chess"
+          ]
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+
+<p>Let&rsquo;s have a look at our shards using the shards api, you will also see where each document is assigned to a specific shard, and also if its a primary or replica shard:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cat/shards?v
+index       shard prirep state   docs store ip           node
+first-index 4     p      STARTED    0  230b 10.163.68.7  es-data-2
+first-index 4     r      STARTED    0  230b 10.163.68.11 es-data-1
+first-index 2     p      STARTED    0  230b 10.163.68.7  es-data-2
+first-index 2     r      STARTED    0  230b 10.163.68.11 es-data-1
+first-index 3     r      STARTED    1 6.6kb 10.163.68.7  es-data-2
+first-index 3     p      STARTED    1 6.6kb 10.163.68.11 es-data-1
+first-index 1     r      STARTED    2  13kb 10.163.68.7  es-data-2
+first-index 1     p      STARTED    2  13kb 10.163.68.11 es-data-1
+first-index 0     p      STARTED    0  230b 10.163.68.7  es-data-2
+first-index 0     r      STARTED    0  230b 10.163.68.11 es-data-1
+</code></pre>
+
+<p>Then we can also use the allocation api to see the size of our indices, disk space per node:</p>
+
+<pre><code>$ curl http://127.0.0.1:9200/_cat/allocation?v
+shards disk.indices disk.used disk.avail disk.total disk.percent host         ip           node
+     5       20.3kb    32.4mb      9.9gb      9.9gb            0 10.163.68.11 10.163.68.11 es-data-1
+     5       20.3kb    32.4mb      9.9gb      9.9gb            0 10.163.68.7  10.163.68.7  es-data-2
+</code></pre>
+
+<p>Let&rsquo;s search for anyone with the surname <code>smith</code>:</p>
+
+<pre><code>$ curl -s http://127.0.0.1:9200/first-index/_search?q=surname=smith | jq .
+{
+  "took": 22,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1,
+    "max_score": 0.2876821,
+    "hits": [
+      {
+        "_index": "first-index",
+        "_type": "docs",
+        "_id": "-dTP2mkB8pugP4aC1ztI",
+        "_score": 0.2876821,
+        "_source": {
+          "username": "clarissas",
+          "name": "clarissa",
+          "surname": "smith",
+          "location": {
+            "country": "ireland",
+            "city": "dublin"
+          },
+          "hobbies": [
+            "shopping",
+            "reading",
+            "chess"
+          ]
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+
+<p>Let&rsquo;s search for anyone with <code>rugby</code> as one of their hobbies:</p>
+
+<pre><code>$ curl -s http://127.0.0.1:9200/first-index/_search?q=hobbies=rugby | jq .
+{
+  "took": 23,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1,
+    "max_score": 0.64072424,
+    "hits": [
+      {
+        "_index": "first-index",
+        "_type": "docs",
+        "_id": "-tTR2mkB8pugP4aCAzvG",
+        "_score": 0.64072424,
+        "_source": {
+          "username": "franka",
+          "name": "frank",
+          "surname": "adams",
+          "location": {
+            "country": "new zealand",
+            "city": "auckland"
+          },
+          "hobbies": [
+            "programming",
+            "swimming",
+            "rugby"
+          ]
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+
+<h2>More on Elasticsearch</h2>
+
+<p>I am planning to write up <strong>elasticsearch</strong> articles on the following topics:</p>
+
+<ul>
+<li><a href="">Setting up a 5 Node HA Elasticsearch Cluster</a></li>
+<li>Indexes / Replicas</li>
+<li>Search Queries</li>
+<li>Delete Queries</li>
+<li>Elasticsearch Snapshots and Restores on S3</li>
+<li>Mapping Templates</li>
+<li>Resizing Index Shards</li>
+<li>Dealing with Old Timeseries Data</li>
+<li>Elasticsearch Percentiles</li>
+<li>Managing Yellow and Red Status Clusters</li>
+<li>Managing High JVM Memory Pressure</li>
+<li>and more</li>
+</ul>
+
+
+<p>As I finish up the writing of these posts they will be published under the <a href="https://blog.ruanbekker.com/blog/categories/elasticsearch-tutorials">#elasticsearch-tutorials</a> category on my blog and for any other elasticsearch tutorials, you can find them under the <a href="https://blog.ruanbekker.com/blog/categories/elasticsearch">#elasticsearch</a> category.</p>
+
+<p>Oke byyyyyye :D</p>
+
+<h2>Resources</h2>
+
+<ul>
+<li><a href="https://www.elastic.co/products/elasticsearch">Elasticsearch</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a 3 Node Docker Swarm Cluster on Ubuntu 16.04]]></title>

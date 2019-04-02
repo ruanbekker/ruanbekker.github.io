@@ -18,17 +18,19 @@ We will setup common visualizations to give us an idea on how our blog/website i
 
 In some situations we need to create visualizations to understand the behavior of our log data in order to answer these type of questions:
 
-1. I want a heat map to see where people are connecting from
-2. I want a piechart that represents the percentage of cities accessing my blog
-3. Top 10 Most Accessed Pages
-4. Top 5 HTTP Status Codes
-5. Top 10 Pages that returned 404 Responses
-6. The Top 10 User Agents
-7. Timeseries: Status Codes Over Time
-8. Timeseries: Successfull Website Hits over time
-9. Counter with Website Hits
-10. Average Bytes Returned
-11. Tag Cloud with the City Names that Accessed my Blog
+| Number | Scenario                                                             |
+| ------ | --------------------------------------------------------------------:|
+| 1      | Geographical map to see where people are connecting from             |
+| 2      | Piechart that represents the percentage of cities accessing my blog  |
+| 3      | Top 10 Most Accessed Pages                                           |
+| 4      | Top 5 HTTP Status Codes                                              |
+| 5      | Top 10 Pages that returned 404 Responses                             |
+| 6      | The Top 10 User Agents                                               |
+| 7      | Timeseries: Status Codes Over Time                                   |
+| 8      | Timeseries: Successfull Website Hits over time                       |
+| 9      | Counter with Website Hits                                            |
+| 10     | Average Bytes Returned                                               |
+| 11     | Tag Cloud with the City Names that Accessed my Blog                  |
 
 ## Pre-Requirements
 

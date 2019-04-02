@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Setup a 5 Node Highly Available Elasticsearch Cluster"
-description: "Deploy a highly available 5 node elasticsearch cluster with elasticsearch master and elasticsearch data nodes. search and analytic engine on ubuntu linux.
+description: "Deploy a highly available 5 node elasticsearch cluster with elasticsearch master and elasticsearch data nodes. search and analytic engine on ubuntu linux."
 date: 2019-04-02 05:05:19 -0400
 comments: true
 categories: ["elasticsearch", "cluster", "databases", "elasticsearch-tutorials"] 

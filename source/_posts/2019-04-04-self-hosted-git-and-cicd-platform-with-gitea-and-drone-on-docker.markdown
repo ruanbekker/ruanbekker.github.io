@@ -16,7 +16,9 @@ In this tutorial we will see how we can implement our own git service and cicd p
 ## Some definition
 
 **Gitea**: will be your self hosted git server
+
 **Drone Server**: will be server being responsible for the web service, repositories, secrets, users, etc.
+
 **Drone Agent**: will be the workers that runs your builds, jobs etc.
 
 ## Server Confguration

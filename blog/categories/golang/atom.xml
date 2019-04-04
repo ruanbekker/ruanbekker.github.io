@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Golang | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/golang/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-04T03:04:42-04:00</updated>
+  <updated>2019-04-04T17:59:15-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,319 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Self Hosted Git and CICD Platform With Gitea and Drone on Docker]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/04/self-hosted-git-and-cicd-platform-with-gitea-and-drone-on-docker/"/>
+    <updated>2019-04-04T17:57:16-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/04/self-hosted-git-and-cicd-platform-with-gitea-and-drone-on-docker</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/55591102-f57c7100-5734-11e9-96cf-8a60d091a769.png" alt="" /></p>
+
+<p>Both gitea and drone is built on golang runs on multiple platforms including a raspberry pi and its super lightweight. Oh yes, and its awesome!</p>
+
+<p>In this tutorial we will see how we can implement our own git service and cicd platform by setting up gitea and drone on docker and commit a python flask application to gitea and build a pipeline on drone.</p>
+
+<h2>Some definition</h2>
+
+<p><strong>Gitea</strong>: will be your self hosted git server
+<strong>Drone Server</strong>: will be server being responsible for the web service, repositories, secrets, users, etc.
+<strong>Drone Agent</strong>: will be the workers that runs your builds, jobs etc.</p>
+
+<h2>Server Confguration</h2>
+
+<p>We will change our host&rsquo;s ssh port to something else as our git server&rsquo;s ssh method will be listening on port 22 and we would like to add our ssh key to gitea so that we can commit to our git server via ssh.</p>
+
+<p>Change your server&rsquo;s ssh port to 2222, by opening <code>/etc/ssh/sshd_config</code> and edit the port to <code>2222</code> then restart sshd with:</p>
+
+<pre><code>$ /etc/init.d/sshd restart
+</code></pre>
+
+<p>Your ssh connection will still be established, but you can exit and ssh to your server by specifying the new port:</p>
+
+<pre><code>$ ssh -p 2222 user@host
+</code></pre>
+
+<h2>Pre-Requirements</h2>
+
+<p>Make sure you have <a href="https://docs.docker.com/install/">docker and docker-compose</a> installed</p>
+
+<h2>Deploy Gitea and Drone</h2>
+
+<p>Below is the docker-compose file for our deployment. Note that we are running a postgres database which gitea will be configured on, you can also use other databases like mysql, sqlite etc. Visit their <a href="https://docs.gitea.io/en-us/">documentation</a> for more info.</p>
+
+<pre><code class="yaml">version: "2"
+
+services:
+  gitea-app:
+    image: gitea/gitea:latest
+    container_name: gitea-app
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - ROOT_URL=http://gitea:3000
+      - SSH_DOMAIN=mydomain.com
+    restart: always
+    volumes:
+      - ./volumes/gitea_app:/data
+    ports:
+      - "3000:3000"
+      - "22:22"
+    networks:
+      - appnet
+
+  gitea-db:
+    image: postgres:alpine
+    container_name: gitea-db
+    ports:
+      - 5440:5432
+    restart: always
+    volumes:
+      - ./volumes/gitea_db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=gitea
+    networks:
+      - appnet
+
+  drone-server:
+    image: drone/drone:0.8
+    container_name: drone-server
+    ports:
+      - 80:8000
+      - 9000
+    volumes:
+      - ./volumes/drone:/var/lib/drone/
+    restart: always
+    depends_on:
+      - gitea
+    environment:
+      - DRONE_OPEN=true
+      - DRONE_HOST=http://drone-server:8000
+      - DRONE_GITEA=true
+      - DRONE_GITEA_URL=http://gitea:3000
+      - DRONE_SECRET=secret
+      - DRONE_NETWORK=appnet
+    networks:
+      - appnet
+
+  drone-agent:
+    image: drone/agent:0.8
+    container_name: drone-agent
+    command: agent
+    restart: always
+    depends_on:
+      - drone-server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DRONE_SERVER=drone-server:9000
+      - DRONE_SECRET=secret
+    networks:
+      - appnet
+
+volumes:
+  gitea-app:
+  gitea-db:
+
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<p>Create the volumes path:</p>
+
+<pre><code>$ mkdir volumes
+</code></pre>
+
+<p>Create the external network:</p>
+
+<pre><code>$ docker network create appnet
+</code></pre>
+
+<p>Some key configuration,</p>
+
+<p>Our <code>SSH_DOMAIN</code> will be the domain that gets used for things like cloning a repository. When you register your gitea account, you will use the same credentials to logon to drone.</p>
+
+<p>Deploy your stack:</p>
+
+<pre><code>$ docker-compose up -d
+</code></pre>
+
+<h2>Register on Gitea</h2>
+
+<p>When your deployment is done, access your gitea server which should be available on <code>http://your-docker-ip:3000/</code> complete the registration, if you decide to go with postgres your username/password will be <code>postgres</code> and your host will be <code>gitea-db:5432</code>.</p>
+
+<p>Make sure to complete the administrator account to get your admin credentials.</p>
+
+<h2>Setup SSH Key and Repo</h2>
+
+<p>Generate a ssh key that you will use for communicating to git over ssh. If you have already have an ssh key you can skip this step.</p>
+
+<pre><code class="bash">$ ssh-keygen -t rsa
+# use the defaults
+</code></pre>
+
+<p>Login on gitea, once you are logged in, head over to profile / settings / ssh keys: <code>http://your-docker-ip:3000/user/settings/keys</code>.</p>
+
+<p>Add a new ssh key, go back to your terminal and copy the public key which we will provide to gitea:</p>
+
+<pre><code>$ cat ~/.ssh/id_rsa.pub
+&lt;copy the contents to your clipboard&gt;
+</code></pre>
+
+<p>Paste your public key and provide a descriptive title.</p>
+
+<p>Head back to your dashboard and create your first repository:</p>
+
+<p><img width="1277" alt="image" src="https://user-images.githubusercontent.com/567298/55589336-49388b80-5730-11e9-8ae5-2589fea7e2b2.png"></p>
+
+<p>It should look more or less like this:</p>
+
+<p><img width="1007" alt="image" src="https://user-images.githubusercontent.com/567298/55589473-9583cb80-5730-11e9-8124-3bdedc221a70.png"></p>
+
+<h2>Enable Repo on Drone</h2>
+
+<p>Head over to drone and select the repositores on the right hand side <a href="http://">http://</a><your-docker-ip>:80/account/repos and enable your repository by toggline the selector, it should look more or less like this:</p>
+
+<p><img width="1275" alt="image" src="https://user-images.githubusercontent.com/567298/55589614-f3b0ae80-5730-11e9-9358-54a6be611198.png"></p>
+
+<p>Once its enabled head back to gitea.</p>
+
+<h2>Clone the repository</h2>
+
+<p>On your repository select ssh and copy the ssh link for your repository:</p>
+
+<p><img width="974" alt="image" src="https://user-images.githubusercontent.com/567298/55589710-3b373a80-5731-11e9-956b-c921c42e6a2d.png"></p>
+
+<p>Then from your terminal add your private ssh key to your ssh agent and clone the repository:</p>
+
+<pre><code>$ eval $(ssh-agent)
+$ ssh-add ~/.ssh/id_rsa
+$ git clone git@your-docker-ip:your-user/your-repo.git
+</code></pre>
+
+<h2>Add Example Python Flask app to git</h2>
+
+<p>I will use a basic python flask application with some tests.</p>
+
+<p>Let&rsquo;s first add our pipeline definition for drone, so that drone understands how the pipeline should be run when gitea receives a commit:</p>
+
+<pre><code class="bash">$ touch .drone.yml
+</code></pre>
+
+<p>Our pipeline:</p>
+
+<pre><code class="yaml .drone.yml">pipeline:
+  build:
+    image: python:3.5.1-alpine
+    commands:
+      - pip install --upgrade pip setuptools wheel
+      - pip wheel -r requirements.txt --wheel-dir=wheeldir --find-links=wheeldir
+      - pip install --no-index --find-links=wheeldir -r requirements.txt
+      - flake8 app
+      - mkdir -p coverage
+      - nosetests -v tests/ 
+</code></pre>
+
+<p>Lets add that to git:</p>
+
+<pre><code>$ git add .drone.yml
+$ git commit -m "initial add of our pipeline"
+$ git push origin master
+</code></pre>
+
+<p>Our drone file should be in git, now our requirements dependency file for python:</p>
+
+<pre><code class="bash requirements.txt">flask
+nose
+flake8
+</code></pre>
+
+<p>Our blank file to make our application a module:</p>
+
+<pre><code>$ mkdir app
+$ touch app/__init__.py
+</code></pre>
+
+<p>And our flask app:</p>
+
+<pre><code class="python app/app.py">from flask import Flask
+app = Flask(__name__)
+
+
+@app.route("/")
+def hello():
+    return "Hello, World!"
+</code></pre>
+
+<p>Our tests directory and our python init file:</p>
+
+<pre><code>$ mkdir tests
+$ touch tests/__init__.py
+</code></pre>
+
+<p>Now that we have all our files ready, commit and push to git:</p>
+
+<pre><code class="bash">$ git add .
+$ git commit -m "add python app"
+$ git push origin master
+</code></pre>
+
+<h2>Look at Drone Running</h2>
+
+<p>Head over to drone and look at the builds, you should see your build running at <code>http://&lt;docker-ip&gt;:80/&lt;user&gt;/&lt;repo-name&gt;</code>:</p>
+
+<p><img width="1269" alt="image" src="https://user-images.githubusercontent.com/567298/55590369-f8766200-5732-11e9-82fb-2bda2c8ad40a.png"></p>
+
+<p>If everything ran as expected you should see that it passed.</p>
+
+<h2>Build Status Badges</h2>
+
+<p>You can also include the build status badges from drone which will look like:</p>
+
+<p><img width="1032" alt="image" src="https://user-images.githubusercontent.com/567298/55590552-82bec600-5733-11e9-91f2-a65c5a94fac5.png"></p>
+
+<p>You can use the drone api: <code>http://drone-ip:80/api/badges/&lt;your-user&gt;/&lt;your-repo&gt;/status.svg</code></p>
+
+<pre><code>[![Build Status](http://your-ip/api/badges/your-user/your-repo/status.svg)
+[![](https://images.microbadger.com/badges/image/gitea/gitea.svg)](https://microbadger.com/images/gitea/gitea "Get your own image badge on microbadger.com")
+[![GitHub release](https://img.shields.io/github/release/go-gitea/gitea.svg)](https://github.com/go-gitea/gitea/releases/latest)
+[![Help Contribute to Open Source](https://www.codetriage.com/go-gitea/gitea/badges/users.svg)](https://www.codetriage.com/go-gitea/gitea)
+[![Become a backer/sponsor of gitea](https://opencollective.com/gitea/tiers/backer/badge.svg?label=backer&amp;color=brightgreen)](https://opencollective.com/gitea)
+</code></pre>
+
+<p>Overall gitea and drone is really amazing and quite impressed with it, especially from the low memory footprint and that its so easy to work with.</p>
+
+<h2>Resources</h2>
+
+<p>Have a look at this for more resources:</p>
+
+<p><strong>Docs:</strong></p>
+
+<ul>
+<li><a href="https://github.com/drone/drone">https://github.com/drone/drone</a></li>
+<li><a href="http://plugins.drone.io/drone-plugins/drone-docker/">http://plugins.drone.io/drone-plugins/drone-docker/</a></li>
+<li><a href="https://docs.drone.io/reference/server/drone-user-create/">https://docs.drone.io/reference/server/drone-user-create/</a></li>
+<li><a href="https://docs.gitea.io/en-us/install-with-docker/">https://docs.gitea.io/en-us/install-with-docker/</a></li>
+</ul>
+
+
+<p><strong>Examples:</strong></p>
+
+<ul>
+<li><a href="https://hackernoon.com/build-your-own-ci-cd-pipeline-with-drone-e43d7190989b">https://hackernoon.com/build-your-own-ci-cd-pipeline-with-drone-e43d7190989b</a></li>
+<li><a href="https://github.com/drone-demos/drone-with-python">https://github.com/drone-demos/drone-with-python</a></li>
+<li><a href="https://github.com/drone/awesome-drone">https://github.com/drone/awesome-drone</a></li>
+<li><a href="https://github.com/juliantellez/drone-ci-pipeline">https://github.com/juliantellez/drone-ci-pipeline</a></li>
+<li><a href="https://github.com/sguter90/docker-compose-gitea">https://github.com/sguter90/docker-compose-gitea</a></li>
+<li><a href="https://gist.github.com/joffilyfe/1a99250cb74bb75e29cbe8d6ca8ceedb">https://gist.github.com/joffilyfe/1a99250cb74bb75e29cbe8d6ca8ceedb</a></li>
+<li><a href="https://florian-latifi.at/2018/02/21/using-drone-to-build-and-deploy-a-jekyll-site/">https://florian-latifi.at/2018/02/21/using-drone-to-build-and-deploy-a-jekyll-site/</a></li>
+<li><a href="https://angristan.xyz/host-your-own-ci-cd-server-with-drone/">https://angristan.xyz/host-your-own-ci-cd-server-with-drone/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Build Small Golang Docker Containers]]></title>
@@ -495,96 +808,6 @@ sys   0m0.023s
 <li><a href="https://www.lifewire.com/command-return-time-command-4054237">https://www.lifewire.com/command-return-time-command-4054237</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Golang: Reading From Files and Writing to Disk With Arguments]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/03/02/golang-reading-from-files-and-writing-to-disk-with-arguments/"/>
-    <updated>2018-03-02T07:11:13-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/03/02/golang-reading-from-files-and-writing-to-disk-with-arguments</id>
-    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/VJmUZz.jpg" alt="" /></p>
-
-<p>From our <a href="https://goo.gl/ih43uv">Previous Post</a> we wrote a basic golang app that reads the contents of a file and writes it back to disk, but in a static way as we defined the source and destination filenames in the code.</p>
-
-<p>Today we will use arguments to specify what the source and destination filenames should be instead of hardcoding it.</p>
-
-<h2>Our Golang Application:</h2>
-
-<p>We will be using if statements to determine if the number of arguments provided is as expected, if not, then a usage string should be returned to stdout. Then we will loop through the list of arguments to determine what the values for our source and destination file should be.</p>
-
-<p>Once it completes, it prints out the coice of filenames that was used:</p>
-
-<pre><code class="go app.go">package main
-
-import (
-    "io/ioutil"
-    "os"
-    "fmt"
-)
-
-var (
-    input_filename string
-    output_filename string
-)
-
-func main() {
-
-    if len(os.Args) &lt; 5 {
-        fmt.Printf("Usage: (-i/--input) 'input_filename' (-o/--output) 'output_filename' \n")
-        os.Exit(0)
-    }
-
-    for i, arg := range os.Args {
-        if arg == "-i" || arg == "--input" {
-            input_filename = os.Args[i+1]
-            }
-        if arg == "-o" || arg == "--output" {
-            output_filename = os.Args[i+1]
-            }
-        }
-
-    input_file_content, error := ioutil.ReadFile(input_filename)
-
-    if error != nil {
-        panic(error)
-    }
-
-    fmt.Println("File used for reading:", input_filename)
-
-    ioutil.WriteFile(output_filename, input_file_content, 0644)
-    fmt.Println("File used for writing:", output_filename)
-}
-</code></pre>
-
-<p>Build your application:</p>
-
-<pre><code class="bash">$ go build app.go
-</code></pre>
-
-<p>Run your application with no additional arguments to determine the expected behaviour:</p>
-
-<pre><code class="bash">$ ./app
-Usage: (-i/--input) 'input_filename' (-o/--output) 'output_file-to-write'
-</code></pre>
-
-<p>It works as expected, now create a source file, then run the application:</p>
-
-<pre><code class="bash">$ echo $RANDOM &gt; myfile.txt
-</code></pre>
-
-<p>Run the application, and in this run, we will set the destination file as newfile.txt:</p>
-
-<pre><code class="bash">$ ./app -i myfile.txt -o newfile.txt
-File used for reading: myfile.txt
-File used for writing: newfile.txt
-</code></pre>
-
-<p>Checking out the new file:</p>
-
-<pre><code>$ cat newfile.txt
-8568
-</code></pre>
 ]]></content>
   </entry>
   

@@ -17,7 +17,7 @@ So we thinking lets go with alpine right? Yeah sure lets build a small, app runn
 
 Our application code:
 
-```golang app.go
+```go app.go
 package main
 
 import (

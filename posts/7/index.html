@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="I&rsquo;m testing how to query data in DynamoDB which will always be the retrieval of yesterdays data, without using a Global Secondary Index. This &hellip;">
+  <meta name="description" content="In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -91,6 +91,1062 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-11-11T13:09:18-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>1:09 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-banner.png" alt="" /></p>
+
+<p>In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. If you have not setup the Elastic Stack with / or APM Server, you <a href="https://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">can follow this post</a> to setup the needed.</p>
+
+<p>Then we will make a bunch of HTTP Requests to our Application and will go through the metrics per request type.</p>
+
+<h2>Application Metrics</h2>
+
+<p>Our Application will have the following Request Paths:</p>
+
+<ul>
+<li><code>/</code> - Returns static text</li>
+<li><code>/delay</code> - random delays to simulate increased response latencies</li>
+<li><code>/upstream</code> - get data from a upstream provider, if statements to provide dummy 200, 404 and 502 reponses to visualize</li>
+<li><code>/5xx</code> - request path that will raise an exception so that we can see the error via apm</li>
+<li><code>/sql-write</code> - inserts 5 rows into a sqlite database</li>
+<li><code>/sql-read</code> - executes a select all from the database</li>
+<li><code>/sql-group</code> - sql query to group all the cities and count them</li>
+</ul>
+
+
+<p>This is just simple request paths to demonstrate the metrics via APM (Application Performance Monitoring) on Kibana.</p>
+
+<h2>Install Flask and APM Agent</h2>
+
+<p>Create a virtual environment and install the dependencies:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install python python-setuptools -y
+</span><span class='line'><span class="nv">$ </span>easy_install pip
+</span><span class='line'><span class="nv">$ </span>pip install virtualenv
+</span><span class='line'><span class="nv">$ </span>pip install elastic-apm<span class="o">[</span>flask<span class="o">]</span>
+</span><span class='line'><span class="nv">$ </span>pip install flask
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For more info on <a href="https://www.elastic.co/guide/en/apm/agent/python/current/getting-started.html">APM Configuration</a>.</p>
+
+<h2>Instrument a Bare Bones Python Flask app with APM:</h2>
+
+<p>A Barebones app with APM Configured will look like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.contrib.flask</span> <span class="kn">import</span> <span class="n">ElasticAPM</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.handlers.logging</span> <span class="kn">import</span> <span class="n">LoggingHandler</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'><span class="n">apm</span> <span class="o">=</span> <span class="n">ElasticAPM</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">server_url</span><span class="o">=</span><span class="s">&#39;http://localhost:8200&#39;</span><span class="p">,</span> <span class="n">service_name</span><span class="o">=</span><span class="s">&#39;flask-app-1&#39;</span><span class="p">,</span> <span class="n">logging</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response ok&quot;</span><span class="p">}),</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This will provide metrics on the <code>/</code> request path. In order to trace transaction ids from the metrics, we need to configure the index on Kibana. To do this, head over to Kibana, Management, Index Patterns, Add Index Pattern, <code>apm*</code>, select <code>@timestamp</code> as the time filter field name.</p>
+
+<p>This will allow you to see the data when tracing the transaction id&rsquo;s via the Discover UI.</p>
+
+<h2>Create the Python Flask App</h2>
+
+<p>Create the Flask App with the request paths as mentioned in the beginning:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">sqlite3</span><span class="o">,</span> <span class="nn">requests</span><span class="o">,</span> <span class="nn">time</span><span class="o">,</span> <span class="nn">logging</span><span class="o">,</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.contrib.flask</span> <span class="kn">import</span> <span class="n">ElasticAPM</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.handlers.logging</span> <span class="kn">import</span> <span class="n">LoggingHandler</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;ruan&#39;</span><span class="p">,</span> <span class="s">&#39;stefan&#39;</span><span class="p">,</span> <span class="s">&#39;philip&#39;</span><span class="p">,</span> <span class="s">&#39;norman&#39;</span><span class="p">,</span> <span class="s">&#39;frank&#39;</span><span class="p">,</span> <span class="s">&#39;pete&#39;</span><span class="p">,</span> <span class="s">&#39;johnny&#39;</span><span class="p">,</span> <span class="s">&#39;peter&#39;</span><span class="p">,</span> <span class="s">&#39;adam&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">cities</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;cape town&#39;</span><span class="p">,</span> <span class="s">&#39;johannesburg&#39;</span><span class="p">,</span> <span class="s">&#39;pretoria&#39;</span><span class="p">,</span> <span class="s">&#39;dublin&#39;</span><span class="p">,</span> <span class="s">&#39;kroonstad&#39;</span><span class="p">,</span> <span class="s">&#39;bloemfontein&#39;</span><span class="p">,</span> <span class="s">&#39;port elizabeth&#39;</span><span class="p">,</span> <span class="s">&#39;auckland&#39;</span><span class="p">,</span> <span class="s">&#39;sydney&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">lastnames</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;smith&#39;</span><span class="p">,</span> <span class="s">&#39;bekker&#39;</span><span class="p">,</span> <span class="s">&#39;admams&#39;</span><span class="p">,</span> <span class="s">&#39;phillips&#39;</span><span class="p">,</span> <span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;adamson&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;CREATE TABLE IF NOT EXISTS people (name STRING, age INTEGER, surname STRING, city STRING)&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="c">#sqlquery_write = conn.execute(&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))</span>
+</span><span class='line'><span class="n">seconds</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.003</span><span class="p">,</span> <span class="mf">0.004</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.009</span><span class="p">,</span> <span class="mf">0.015</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">,</span> <span class="mf">0.009</span><span class="p">,</span> <span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mf">0.030</span><span class="p">,</span> <span class="mf">0.018</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'><span class="n">apm</span> <span class="o">=</span> <span class="n">ElasticAPM</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">server_url</span><span class="o">=</span><span class="s">&#39;http://localhost:8200&#39;</span><span class="p">,</span> <span class="n">service_name</span><span class="o">=</span><span class="s">&#39;my-app-01&#39;</span><span class="p">,</span> <span class="n">logging</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response ok&quot;</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/delay&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">delay</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">seconds</span><span class="p">))</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response delay&quot;</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/upstream&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">upstream</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;https://api.ruanbekker.com/people&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;italy&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Italalia!&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>    <span class="k">elif</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;canada&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Canada!&#39;</span><span class="p">,</span> <span class="mi">502</span>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Not Found&#39;</span><span class="p">,</span> <span class="mi">404</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/5xx&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">fail_with_5xx</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">value</span> <span class="o">=</span> <span class="s">&#39;a&#39;</span> <span class="o">+</span> <span class="mi">1</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="n">value</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-write&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">sqlw</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-read&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">sqlr</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+</span><span class='line'>    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select * from people&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-group&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">slqg</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+</span><span class='line'>    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select count(*) as num, city from people group by city&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the app:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At this point, we wont have any data on APM as we need to make requests to our application. Let&rsquo;s make 10 HTTP GET Requests on the <code>/</code> Request Path:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ count</span><span class="o">=</span><span class="m">0</span> <span class="o">&amp;&amp;</span> <span class="k">while</span> <span class="o">[</span> <span class="nv">$count</span> -lt <span class="m">10</span> <span class="o">]</span><span class="p">;</span> <span class="k">do</span> curl http://application-routable-address:80/<span class="p">;</span> sleep 1<span class="p">;</span> <span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span><span class="p">;</span> <span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Visualize the Root Request Path</h2>
+
+<p>Head over to Kibana, Select APM and you will see something similar like below when selecting the timepicker to 15 minutes at the right top corner. This page will give you the overview of all your configured applications and the average response times over the selected time, transactions per minute, errors per minute etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-home-root.png" alt="" /></p>
+
+<p>When you select your application, you will find the graphs on you response times and requests per minute, also a breakdown per request path:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-1.png" alt="" /></p>
+
+<p>When selecting the request path, in this case <code>GET /</code>, you will find a breakdown of metrics only for that request and also the response time distribution for that request path, if you select frame from the response time distribution, it will filter the focus to that specific transaction.</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-1.png" alt="" /></p>
+
+<p>When you scroll a bit down to the Transaction Sample section, you will find data about the request, response, system etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-transaction-1.png" alt="" /></p>
+
+<p>From the Transaction Sample, you can select the View Transaction in Discover button, which will trace that transaction id on the Discover UI:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-transaction-disc-1.png" alt="" /></p>
+
+<p>Increasing the http curl clients running simultaneously from different servers and increasing the time for 15 minutes to have more metrics will result in the screenshot below, notice the 6ms response time can easily be traced selecting it in the response time distribution, then discovering it in the UI, which will give you the raw data from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-2.png" alt="" /></p>
+
+<h2>Viewing Application Errors in APM</h2>
+
+<p>Make a couple of requests to <code>/5xx</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://application-routable-endpoint:80/5xx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Navigate to the app, select Errors, then you will see the exception details that was returned. Here we can see that in our code we tried to concatenate integers with strings:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-1.png" alt="" /></p>
+
+<p>Furthermore we can select that error and it will provide us a direct view on where in our code the error gets generated:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-details-1.png" alt="" /></p>
+
+<p>Pretty cool right?! You can also further select the library frames, which will take you to the lower level code that raised the exception. If this errors can be drilled down via the discover ui, to group by source address etc.</p>
+
+<h2>Simulate Response Latencies:</h2>
+
+<p>Make a couple of requests to the <code>/delay</code> request path, and you should see the increased response times from earlier:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-delay.png" alt="" /></p>
+
+<h2>Requests where Database Calls are Executed</h2>
+
+<p>The while loop to call random request paths:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">count</span><span class="o">=</span><span class="m">0</span> <span class="o">&amp;&amp;</span> <span class="k">while</span> <span class="o">[</span> <span class="nv">$count</span> -lt <span class="m">1000</span> <span class="o">]</span><span class="p">;</span>
+</span><span class='line'><span class="k">do</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-read<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-us-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-read<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-us-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  <span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span><span class="p">;</span>
+</span><span class='line'><span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When we look at our applications performance monitoring overview, we can see the writes provide more latencies as the group by&rsquo;s:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-view-1.png" alt="" /></p>
+
+<p>The <code>/sql-write</code> request overview:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1.png" alt="" /></p>
+
+<p>When selecting a transaction sample, we can see the timeline of each database call:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1-details.png" alt="" /></p>
+
+<p>When looking at the <code>/sql-group</code> request overview, we can see that the response times increasing overtime, as more data is written to the database, it takes longer to read and group all the data from the database:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1.png" alt="" /></p>
+
+<p>The transaction details shows the timeline of the database query from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-details.png" alt="" /></p>
+
+<p>When you select the database select query on the timeline view, it will take you to the exact database query that was executed:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-span.png" alt="" /></p>
+
+<p>When we include a database call with a external request to a remote http endpoint, we will see something like:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlread-ext.png" alt="" /></p>
+
+<h2>Viewing 4xx and 5xx Response Codes</h2>
+
+<p>From the application code we are returning 2xx, 4xx, and 5xx response codes for this demonstration to visualize them:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-response-codes.png" alt="" /></p>
+
+<h2>Configuring more Applications</h2>
+
+<p>Once more apps are configured, and they start serving traffic, they will start appearing on the APM UI as below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-apps.png" alt="" /></p>
+
+<p>APM is available for other languages as well and provides a getting started snippets from the APM UI. For more information on APM, have a look at their <a href="https://www.elastic.co/solutions/apm">Documentation</a></p>
+
+<p>Hope this was useful.</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-11-11T12:31:43-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>12:31 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
+
+<p>In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive the metric data from the application side, and is then pushed to apm indices on Elasticsearch.</p>
+
+<p>This will be a 2 post blog on APM:</p>
+
+<ul>
+<li>1) <a href="">Setup the Elastic Stack with Elasticsearch, Kibana and APM Server</a> - this post</li>
+<li>2) <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Setup a Python Flask application with the APM Agent</a></li>
+</ul>
+
+
+<h2>What is APM</h2>
+
+<p>From their website APM is described as: &ldquo;Elastic APM is an application performance monitoring system built on the Elastic Stack. It allows you to monitor software services and applications in real time, collecting detailed performance information on response time for incoming requests, database queries, calls to caches, external HTTP requests, etc.&rdquo;</p>
+
+<p>You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred etc.</p>
+
+<ul>
+<li><a href="https://www.elastic.co/solutions/apm">More Info</a></li>
+</ul>
+
+
+<h2>APM Agents:</h2>
+
+<p>The APM Agents will be loaded inside your application, application metrics will then be pushed to the APM Server (which we will setup in this post), which then gets pushed to Elasticsearch and is then consumed by Kibana.</p>
+
+<p>At the time of writing, the APM Agents are supported in the following languages:</p>
+
+<ul>
+<li>Node.js</li>
+<li>Django</li>
+<li>Flask</li>
+<li>Ruby on Rails</li>
+<li>Rack</li>
+<li>RUM</li>
+<li>Golang</li>
+<li>Java</li>
+</ul>
+
+
+<h2>Setup the Elastic Stack</h2>
+
+<p>One thing to note, every service in your Elastic Stack needs to be running on the same version. In this post we will setup Elasticsearch, APM and Kibana all running on version <code>6.4.3</code></p>
+
+<h2>Setup the Pre-Requirements:</h2>
+
+<p>Elasticsearch depends on Java, se we will go ahead and setup the repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch <span class="p">|</span> sudo apt-key add -
+</span><span class='line'><span class="nv">$ </span>apt-get install apt-transport-https -y
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s2">&quot;deb https://artifacts.elastic.co/packages/6.x/apt stable main&quot;</span> <span class="p">|</span> sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+</span><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install openjdk-8-jdk -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that Java is installed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>java -version
+</span><span class='line'>openjdk version <span class="s2">&quot;1.8.0_181&quot;</span>
+</span><span class='line'>OpenJDK Runtime Environment <span class="o">(</span>build 1.8.0_181-8u181-b13-1ubuntu0.16.04.1-b13<span class="o">)</span>
+</span><span class='line'>OpenJDK 64-Bit Server VM <span class="o">(</span>build 25.181-b13, mixed mode<span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup Kernel parameters for Elasticsearch:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sysctl -w vm.max_map_count<span class="o">=</span>262144
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;vm.max_map_count=262144&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup Elasticsearch:</h2>
+
+<p>Search for the latest versions (when already having elasticsearch, either upgrade or install apm on the same version as elasticsearch/kibana):</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-cache madison elasticsearch
+</span><span class='line'>elasticsearch <span class="p">|</span>      6.4.3 <span class="p">|</span> https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
+</span><span class='line'>elasticsearch <span class="p">|</span>      6.4.2 <span class="p">|</span> https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Install Elasticsearch:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get install <span class="nv">elasticsearch</span><span class="o">=</span>6.4.3 -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure Elasticsearch to lock the memory on startup:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#bootstrap.memory_lock: true/bootstrap.memory_lock: true/g&#39;</span> /etc/elasticsearch/elasticsearch.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable Elasticsearch on startup and start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl daemon-reload
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>elasticsearch.service
+</span><span class='line'><span class="nv">$ </span>systemctl start elasticsearch.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install Kibana:</h2>
+
+<p>Install Kibana version <code>6.4.3</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install <span class="nv">kibana</span><span class="o">=</span>6.4.3 -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For demonstration, I will configure Kibana to listen on all interfaces on port <code>5601</code>, but note this will enable access for everyone, you can [follow this blogpost] to setup a Nginx Reverse Proxy to upstream to localhost on port 5601.</p>
+
+<p>Since this demonstration we are using Elasticsearch locally, so if you have a remote cluster, configuration can be applied where needed.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#server.host: &quot;localhost&quot;/server.host: &quot;0.0.0.0&quot;/&#39;</span>g /etc/kibana/kibana.yml
+</span><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#elasticsearch.url: &quot;http:\/\/localhost:9200&quot;/elasticsearch.url: &quot;http:\/\/localhost:9200&quot;/&#39;</span>g /etc/kibana/kibana.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable Kibana on startup and start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>kibana.service
+</span><span class='line'><span class="nv">$ </span>systemctl restart kibana.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install the APM Server</h2>
+
+<p>Install APM Server version <code>6.4.3</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install apm-server<span class="o">=</span>6.4.3 -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since we have everything locally, the configuration can be kept as is, but if you need to configure the elasticsearch or kibana hosts, it can be done via <code>/etc/apm-server/apm-server.yml</code></p>
+
+<p>Then once Kibana and Elasticsearch is started, load the mapping templates, enable and start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apm-server setup
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>apm-server.service
+</span><span class='line'><span class="nv">$ </span>systemctl restart apm-server.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure all the services are running with <code>netstat -tulpn</code> and port <code>9200</code>, <code>9300</code>, <code>5601</code> and <code>8300</code> should be listening</p>
+
+<h2>Access Your Elastic Stack</h2>
+
+<p>Access Kibana on your routable endpoint on port <code>5601</code> and you should see something like this:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-startup.png" alt="" /></p>
+
+<h2>Configuring a Application to push metrics to APM</h2>
+
+<p>In the <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">next post</a> I will setup a Python Flask Application on APM</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/31/benchmark-website-response-times-with-curl/">Benchmark Website Response Times With CURL</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-31T02:17:12-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>2:17 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>We can gain insights when making requests to websites such as:</p>
+
+<ul>
+<li>Lookup time</li>
+<li>Connect time</li>
+<li>AppCon time</li>
+<li>Redirect time</li>
+<li>PreXfer time</li>
+<li>StartXfer time</li>
+</ul>
+
+
+<p>We will make a request to a website that has caching enabled, the first hit will be a MISS:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -s -w <span class="s1">&#39;\nLookup time:\t%{time_namelookup}\nConnect time:\t%{time_connect}\nAppCon time:\t%{time_appconnect}\nRedirect time:\t%{time_redirect}\nPreXfer time:\t%{time_pretransfer}\nStartXfer time:\t%{time_starttransfer}\n\nTotal time:\t%{time_total}\n&#39;</span> -o /dev/null https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg
+</span><span class='line'>
+</span><span class='line'>Lookup <span class="nb">time</span>:  1.524465
+</span><span class='line'>Connect <span class="nb">time</span>: 1.707561
+</span><span class='line'>AppCon <span class="nb">time</span>:  0.000000
+</span><span class='line'>Redirect <span class="nb">time</span>:    0.000000
+</span><span class='line'>PreXfer <span class="nb">time</span>: 1.707656
+</span><span class='line'>StartXfer <span class="nb">time</span>:   1.897660
+</span><span class='line'>
+</span><span class='line'>Total <span class="nb">time</span>:   2.451824
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The next hit will be a HIT:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -s -w <span class="s1">&#39;\nLookup time:\t%{time_namelookup}\nConnect time:\t%{time_connect}\nAppCon time:\t%{time_appconnect}\nRedirect time:\t%{time_redirect}\nPreXfer time:\t%{time_pretransfer}\nStartXfer time:\t%{time_starttransfer}\n\nTotal time:\t%{time_total}\n&#39;</span> -o /dev/null https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg
+</span><span class='line'>
+</span><span class='line'>Lookup <span class="nb">time</span>:  0.004441
+</span><span class='line'>Connect <span class="nb">time</span>: 0.188065
+</span><span class='line'>AppCon <span class="nb">time</span>:  0.000000
+</span><span class='line'>Redirect <span class="nb">time</span>:    0.000000
+</span><span class='line'>PreXfer <span class="nb">time</span>: 0.188160
+</span><span class='line'>StartXfer <span class="nb">time</span>:   0.381344
+</span><span class='line'>
+</span><span class='line'>Total <span class="nb">time</span>:   0.926420
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Similar Posts:</p>
+
+<ul>
+<li><a href="https://blog.josephscott.org/2011/10/14/timing-details-with-curl/">https://blog.josephscott.org/2011/10/14/timing-details-with-curl/</a></li>
+<li><a href="https://ops.tips/gists/measuring-http-response-times-curl/">https://ops.tips/gists/measuring-http-response-times-curl/</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/31/how-to-bootstrap-nodes-with-python-using-ansible/">How to Bootstrap Nodes With Python Using Ansible</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-31T01:48:15-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>1:48 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://res.cloudinary.com/rbekker/image/upload/v1531083331/ansible_tojf8l.png" alt="" /></p>
+
+<p>As Ansible depends on Python, therefore we can bootstrap our nodes with Python using a Ansible Playbook</p>
+
+<h2>Inventory</h2>
+
+<p>The nodes we want to bootstrap:</p>
+
+<figure class='code'><figcaption><span>inventory.ini</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>new<span class="o">]</span>
+</span><span class='line'>node-1
+</span><span class='line'>node-2
+</span><span class='line'>node-3
+</span><span class='line'>
+</span><span class='line'><span class="o">[</span>new:vars<span class="o">]</span>
+</span><span class='line'><span class="nv">ansible_python_interpreter</span><span class="o">=</span>/usr/bin/python3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Playbook</h2>
+
+<p>Our playbook with what we want to do:</p>
+
+<figure class='code'><figcaption><span>bootstrap-python.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">hosts</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">all</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">gather_facts</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">False</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">tasks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">install python</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">raw</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">test -e /usr/bin/python || ( apt update &amp;&amp; apt install python -y )</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy</h2>
+
+<p>Deploy with Ansible:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ansible-playbook -i inventory.ini bootstrap-python.yml
+</span><span class='line'>
+</span><span class='line'>PLAY <span class="o">[</span>all<span class="o">]</span> ***********************************************************************************************************************************************************************************************
+</span><span class='line'>
+</span><span class='line'>TASK <span class="o">[</span>install python<span class="o">]</span> ************************************************************************************************************************************************************************************
+</span><span class='line'>changed: <span class="o">[</span>node-1<span class="o">]</span>
+</span><span class='line'>changed: <span class="o">[</span>node-2<span class="o">]</span>
+</span><span class='line'>changed: <span class="o">[</span>node-3<span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>PLAY RECAP ***********************************************************************************************************************************************************************************************
+</span><span class='line'>node-1                     : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">2</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>node-2                     : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">2</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>node-3                     : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">2</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This is it for this post, all posts for this tutorial will be posted under <a href="http://blog.ruanbekker.com/blog/categories/ansible-tutorial">#ansible-tutorial</a></p>
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/31/how-to-install-packages-on-remote-systems-with-ansible/">How to Install Packages on Remote Systems With Ansible</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-31T01:28:18-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>1:28 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://res.cloudinary.com/rbekker/image/upload/v1531083331/ansible_tojf8l.png" alt="" /></p>
+
+<p>We will use Ansible to deploy packages to remote systems and in this case all the remote systems are running Debian, therefore we will be using the APT package manager.</p>
+
+<h2>Pre-Requisites:</h2>
+
+<p>Ensure that you have installed Ansible and setup the SSH Config for your remote systems, how to do that can be found under the post: <a href="https://blog.ruanbekker.com/blog/2018/07/08/getting-started-with-ansible-on-ubuntu/">setting up ansible</a></p>
+
+<h2>Our Inventory</h2>
+
+<p>The inventory file that describes our hosts:</p>
+
+<figure class='code'><figcaption><span>inventory.ini</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>scaleway<span class="o">]</span>
+</span><span class='line'>cluster-node-1
+</span><span class='line'>cluster-node-2
+</span><span class='line'>
+</span><span class='line'><span class="o">[</span>hetzner<span class="o">]</span>
+</span><span class='line'>docker-node-1
+</span><span class='line'>docker-node-2
+</span><span class='line'>docker-node-3
+</span><span class='line'>glusterfs-node-1
+</span><span class='line'>glusterfs-node-2
+</span><span class='line'>elasticsearch-node-1
+</span><span class='line'>elasticsearch-node-2
+</span><span class='line'>
+</span><span class='line'><span class="o">[</span>scaleway:vars<span class="o">]</span>
+</span><span class='line'><span class="nv">ansible_python_interpreter</span><span class="o">=</span>/usr/bin/python3
+</span><span class='line'><span class="nv">location</span><span class="o">=</span>france
+</span><span class='line'>
+</span><span class='line'><span class="o">[</span>hetzner:vars<span class="o">]</span>
+</span><span class='line'><span class="nv">ansible_python_interpreter</span><span class="o">=</span>/usr/bin/python3
+</span><span class='line'><span class="nv">location</span><span class="o">=</span>germany
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Playbook</h2>
+
+<p>Our playbook that we will define that we want to deploy packages using apt to all hosts:</p>
+
+<figure class='code'><figcaption><span>packages.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">hosts</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">all</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">tasks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Install Packages</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">apt</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">name= state=latest update_cache=yes</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">with_items</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">ntp</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">python</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">tcpdump</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">wget</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">openssl</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">curl</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy</h2>
+
+<p>Running the playbook to deploy the packages to the remote servers:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ansible-playbook -i inventory.ini packages.yml
+</span><span class='line'>
+</span><span class='line'>PLAY <span class="o">[</span>all<span class="o">]</span> ***********************************************************************************************************************************************************************************************
+</span><span class='line'>
+</span><span class='line'>TASK <span class="o">[</span>Gathering Facts<span class="o">]</span> ***********************************************************************************************************************************************************************************
+</span><span class='line'>ok: <span class="o">[</span>glusterfs-node-2<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>glusterfs-node-1<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>docker-node-1<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>docker-node-2<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>docker-node-3<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>elasticsearch-node-1<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>elasticsearch-node-2<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>cluster-node-1<span class="o">]</span>
+</span><span class='line'>ok: <span class="o">[</span>cluster-node-2<span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>TASK <span class="o">[</span>Install Packages<span class="o">]</span> **********************************************************************************************************************************************************************************
+</span><span class='line'>changed: <span class="o">[</span>docker-node-1<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>changed: <span class="o">[</span>docker-node-2<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>changed: <span class="o">[</span>docker-node-3<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>changed: <span class="o">[</span>elasticsearch-node-1<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>changed: <span class="o">[</span>glusterfs-node-1<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>changed: <span class="o">[</span>glusterfs-node-2<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>changed: <span class="o">[</span>elasticsearch-node-2<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>ok: <span class="o">[</span>cluster-node-1<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>ok: <span class="o">[</span>cluster-node-2<span class="o">]</span> <span class="o">=</span>&gt; <span class="o">(</span><span class="nv">item</span><span class="o">=[</span>u<span class="s1">&#39;ntp&#39;</span>, u<span class="s1">&#39;python&#39;</span>, u<span class="s1">&#39;tcpdump&#39;</span>, u<span class="s1">&#39;wget&#39;</span>, u<span class="s1">&#39;openssl&#39;</span>, u<span class="s1">&#39;curl&#39;</span><span class="o">])</span>
+</span><span class='line'>
+</span><span class='line'>PLAY RECAP ***********************************************************************************************************************************************************************************************
+</span><span class='line'>docker-node-1              : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>docker-node-2              : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>docker-node-3              : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>elasticsearch-node-1       : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>elasticsearch-node-2       : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>glusterfs-node-1           : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>glusterfs-node-2           : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">1</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>cluster-node-1             : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">0</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span><span class='line'>cluster-node-2             : <span class="nv">ok</span><span class="o">=</span><span class="m">2</span>    <span class="nv">changed</span><span class="o">=</span><span class="m">0</span>    <span class="nv">unreachable</span><span class="o">=</span><span class="m">0</span>    <span class="nv">failed</span><span class="o">=</span>0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This is it for this post, all posts for this tutorial will be posted under <a href="http://blog.ruanbekker.com/blog/categories/ansible-tutorial">#ansible-tutorials</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2001,1170 +3057,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">Nginx Caching Performance for Static Content on Docker Swarm With RaspberryPi</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-23T16:41:41-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>4:41 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/nginx-logo.png" alt="" /></p>
-
-<h2>The Environment:</h2>
-
-<p>I had my Ghost Blog listening on port 2368 and exposing port 80 on Docker so that the port translation directs port 80 traffic to port 2368 on Ghost directly.</p>
-
-<p>Alex responded on my tweet and introduced Nginx Caching:</p>
-
-<ul>
-<li><a href="https://twitter.com/alexellisuk/status/882347698636165121">https://twitter.com/alexellisuk/status/882347698636165121</a></li>
-</ul>
-
-
-<p><img src="https://objects.ruanbekker.com/assets/images/tweet-alexellis-04072017.png" alt="" /></p>
-
-<p>With this approach benchmarking results was not so great in terms of requests per second, and as this hostname will be only used for a blog, its a great idea to cache the content, this was achieved with the help from Alex&rsquo;s blog: <a href="https://blog.alexellis.io/save-and-boost-with-nginx/">blog.alexellis.io/save-and-boost-with-nginx/</a></p>
-
-<h2>How Nginx was Configured:</h2>
-
-<p>I have a <a href="http://rbkr.ddns.net/building-nginx-on-alpine-image-for-docker-swarm-with-caching-enabled-config/">blogpost</a> on how I setup Nginx on an Alpine Image, where I setup caching and proxy-pass the connections through to my ghost blog.</p>
-
-<h2>Benchmarking: Before Nginx with Caching was Implemented:</h2>
-
-<p>When doing an apache benchmark I got <b>9.31 requests per second</b> performing the test on my LAN:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ab -n <span class="m">500</span> -c <span class="m">10</span> http://rbkr.ddns.net/
-</span><span class='line'>
-</span><span class='line'>This is ApacheBench, Version 2.3 &lt;<span class="nv">$Revision</span>: <span class="m">1706008</span> <span class="nv">$&gt;</span>
-</span><span class='line'>Copyright <span class="m">1996</span> Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
-</span><span class='line'>Licensed to The Apache Software Foundation, http://www.apache.org/
-</span><span class='line'>
-</span><span class='line'>Benchmarking rbkr.ddns.net <span class="o">(</span>be patient<span class="o">)</span>
-</span><span class='line'>Completed <span class="m">100</span> requests
-</span><span class='line'>Completed <span class="m">200</span> requests
-</span><span class='line'>Completed <span class="m">300</span> requests
-</span><span class='line'>Completed <span class="m">400</span> requests
-</span><span class='line'>Completed <span class="m">500</span> requests
-</span><span class='line'>Finished <span class="m">500</span> requests
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Server Software:
-</span><span class='line'>Server Hostname:        blog.pistack.co.za
-</span><span class='line'>Server Port:            80
-</span><span class='line'>
-</span><span class='line'>Document Path:          /
-</span><span class='line'>Document Length:        <span class="m">5470</span> bytes
-</span><span class='line'>
-</span><span class='line'>Concurrency Level:      10
-</span><span class='line'>Time taken <span class="k">for</span> tests:   53.725 seconds
-</span><span class='line'>Complete requests:      500
-</span><span class='line'>Failed requests:        0
-</span><span class='line'>Total transferred:      <span class="m">2863000</span> bytes
-</span><span class='line'>HTML transferred:       <span class="m">2735000</span> bytes
-</span><span class='line'>Requests per second:    9.31 <span class="o">[</span><span class="c">#/sec] (mean)</span>
-</span><span class='line'>Time per request:       1074.501 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean<span class="o">)</span>
-</span><span class='line'>Time per request:       107.450 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean, across all concurrent requests<span class="o">)</span>
-</span><span class='line'>Transfer rate:          52.04 <span class="o">[</span>Kbytes/sec<span class="o">]</span> received
-</span><span class='line'>
-</span><span class='line'>Connection Times <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>              min  mean<span class="o">[</span>+/-sd<span class="o">]</span> median   max
-</span><span class='line'>Connect:        <span class="m">1</span>    <span class="m">2</span>   0.5      <span class="m">2</span>       6
-</span><span class='line'>Processing:   <span class="m">685</span> <span class="m">1068</span>  68.7   <span class="m">1057</span>    1306
-</span><span class='line'>Waiting:      <span class="m">683</span> <span class="m">1067</span>  68.6   <span class="m">1056</span>    1306
-</span><span class='line'>Total:        <span class="m">689</span> <span class="m">1070</span>  68.7   <span class="m">1058</span>    1312
-</span><span class='line'>
-</span><span class='line'>Percentage of the requests served within a certain <span class="nb">time</span> <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>  50%   1058
-</span><span class='line'>  66%   1088
-</span><span class='line'>  75%   1102
-</span><span class='line'>  80%   1110
-</span><span class='line'>  90%   1163
-</span><span class='line'>  95%   1218
-</span><span class='line'>  98%   1240
-</span><span class='line'>  99%   1247
-</span><span class='line'> 100%   <span class="m">1312</span> <span class="o">(</span>longest request<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Benchmarking: After Nginx Caching was Implemented:</h2>
-
-<p>After Nginx Caching was Implemented, I got <b>1067.73 requests per second</b> using apache benchmark over a LAN connection! Absolutely awesome!</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ab -n <span class="m">500</span> -c <span class="m">10</span> http://blog.pistack.co.za/
-</span><span class='line'>This is ApacheBench, Version 2.3 &lt;<span class="nv">$Revision</span>: <span class="m">1706008</span> <span class="nv">$&gt;</span>
-</span><span class='line'>Copyright <span class="m">1996</span> Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
-</span><span class='line'>Licensed to The Apache Software Foundation, http://www.apache.org/
-</span><span class='line'>
-</span><span class='line'>Benchmarking blog.pistack.co.za <span class="o">(</span>be patient<span class="o">)</span>
-</span><span class='line'>Completed <span class="m">100</span> requests
-</span><span class='line'>Completed <span class="m">200</span> requests
-</span><span class='line'>Completed <span class="m">300</span> requests
-</span><span class='line'>Completed <span class="m">400</span> requests
-</span><span class='line'>Completed <span class="m">500</span> requests
-</span><span class='line'>Finished <span class="m">500</span> requests
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Server Software:        nginx
-</span><span class='line'>Server Hostname:        blog.pistack.co.za
-</span><span class='line'>Server Port:            80
-</span><span class='line'>
-</span><span class='line'>Document Path:          /
-</span><span class='line'>Document Length:        <span class="m">5470</span> bytes
-</span><span class='line'>
-</span><span class='line'>Concurrency Level:      10
-</span><span class='line'>Time taken <span class="k">for</span> tests:   0.468 seconds
-</span><span class='line'>Complete requests:      500
-</span><span class='line'>Failed requests:        0
-</span><span class='line'>Total transferred:      <span class="m">2880500</span> bytes
-</span><span class='line'>HTML transferred:       <span class="m">2735000</span> bytes
-</span><span class='line'>Requests per second:    1067.73 <span class="o">[</span><span class="c">#/sec] (mean)</span>
-</span><span class='line'>Time per request:       9.366 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean<span class="o">)</span>
-</span><span class='line'>Time per request:       0.937 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean, across all concurrent requests<span class="o">)</span>
-</span><span class='line'>Transfer rate:          6007.05 <span class="o">[</span>Kbytes/sec<span class="o">]</span> received
-</span><span class='line'>
-</span><span class='line'>Connection Times <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>              min  mean<span class="o">[</span>+/-sd<span class="o">]</span> median   max
-</span><span class='line'>Connect:        <span class="m">3</span>    <span class="m">4</span>   1.4      <span class="m">4</span>      10
-</span><span class='line'>Processing:     <span class="m">3</span>    <span class="m">5</span>   1.6      <span class="m">4</span>      10
-</span><span class='line'>Waiting:        <span class="m">2</span>    <span class="m">4</span>   1.6      <span class="m">4</span>      10
-</span><span class='line'>Total:          <span class="m">6</span>    <span class="m">9</span>   2.7      <span class="m">8</span>      17
-</span><span class='line'>
-</span><span class='line'>Percentage of the requests served within a certain <span class="nb">time</span> <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>  50%      8
-</span><span class='line'>  66%      8
-</span><span class='line'>  75%      9
-</span><span class='line'>  80%      9
-</span><span class='line'>  90%     15
-</span><span class='line'>  95%     15
-</span><span class='line'>  98%     15
-</span><span class='line'>  99%     16
-</span><span class='line'> 100%     <span class="m">17</span> <span class="o">(</span>longest request<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<p>Thanks to Alex Ellis for the suggestion on this, and definitely have a look at <a href="https://blog.alexellis.io/tag/nginx/">blog.alexellis.io</a> as he has some epic content on his blog!</p>
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">Setting Up a Docker Swarm Cluster on 3 RaspberryPi Nodes</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-23T16:24:00-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>4:24 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/rpi-docker-swarm.png" alt="" /></p>
-
-<p>As the curious person that I am, I like to play around with new stuff that I stumble upon, and one of them was having a docker swarm cluster running on 3 Raspberry Pi&rsquo;s on my LAN.</p>
-
-<p>The idea is to have 3 Raspberry Pi&rsquo;s (Model 3 B), a Manager Node, and 2 Worker Nodes, each with a 32 GB SanDisk SD Card, which I will also be part of a 3x Replicated GlusterFS Volume that will come in handy later for some data that needs persistent data.</p>
-
-<p>More Inforamtion on: <a href="https://docs.docker.com/engine/swarm/">Docker Swarm</a></p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>Provision Raspbian on each RaspberryPi</h2>
-
-<p>Grab the <a href="https://downloads.raspberrypi.org/raspbian_lite_latest">Latest Raspbian Lite ISO</a> and the following <a href="https://www.raspberrypi.org/documentation/installation/installing-images/">source</a> will help provisioning your RaspberryPi with Raspbian.</p>
-
-<h2>Installing Docker on Raspberry PI</h2>
-
-<p>On each node, run the following to install docker, and also add your user to the docker group, so that you can run docker commands with a normal user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get update <span class="o">&amp;&amp;</span> sudo apt-get upgrade -y
-</span><span class='line'><span class="nv">$ </span>sudo apt-get remove docker.io
-</span><span class='line'><span class="nv">$ </span>curl https://get.docker.com <span class="p">|</span> sudo bash
-</span><span class='line'><span class="nv">$ </span>sudo usermod -aG docker pi
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you have an internal DNS Server, set an A Record for each node, or for simplicity, set your hosts file on each node so that your hostname for each node responds to it&rsquo;s provisioned IP Address:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/hosts
-</span><span class='line'>192.168.0.2   rpi-01
-</span><span class='line'>192.168.0.3   rpi-02
-</span><span class='line'>192.168.0.4   rpi-03
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Also, to have passwordless SSH, from each node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa
-</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-01
-</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-02
-</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-03
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Initialize the Swarm</h2>
-
-<p>Time to set up our swarm. As we have more than one network interface, we will need to setup our swarm by specifying the IP Address of our network interface that is accessible from our LAN:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ifconfig eth0
-</span><span class='line'>eth0      Link encap:Ethernet  HWaddr a1:12:bc:d3:cd:4d
-</span><span class='line'>          inet addr:192.168.0.2  Bcast:192.168.0.255  Mask:255.255.255.0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have our IP Address, initialize the swarm on the manager node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker swarm init --advertise-addr 192.168.0.2
-</span><span class='line'>Swarm initialized: current node <span class="o">(</span>siqyf3yricsvjkzvej00a9b8h<span class="o">)</span> is now a manager.
-</span><span class='line'>
-</span><span class='line'>To add a worker to this swarm, run the following <span class="nb">command</span>:
-</span><span class='line'>
-</span><span class='line'>    docker swarm join <span class="se">\</span>
-</span><span class='line'>    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 <span class="se">\</span>
-</span><span class='line'>    192.168.0.2:2377
-</span><span class='line'>
-</span><span class='line'>To add a manager to this swarm, run <span class="s1">&#39;docker swarm join-token manager&#39;</span> and follow the instructions.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then from <code>rpi-02</code> join the manager node of the swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then from <code>rpi-03</code> join the manager node of the swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then from the manager node: <code>rpi-01</code>, ensure that the nodes are checked in:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker node ls
-</span><span class='line'>ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-</span><span class='line'>62s7gx1xdm2e3gp5qoca2ru0d     rpi-03              Ready               Active
-</span><span class='line'>6fhyfy9yt761ar9pl84dkxck3 *   rpi-01              Ready               Active              Leader
-</span><span class='line'>pg0nyy9l27mtfc13qnv9kywe7     rpi-02              Ready               Active
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Setting Up a Replicated GlusterFS Volume</h2>
-
-<p>I have decided to setup a replicated glusterfs volume to have data replicated throughout the cluster if I would like to have some persistent data. From each node, install the GlusterFS Client and Server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt install glusterfs-server glusterfs-client -y <span class="o">&amp;&amp;</span> sudo systemctl <span class="nb">enable </span>glusterfs-server
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Probe the other nodes from the manager node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster peer probe rpi-02
-</span><span class='line'>peer probe: success.
-</span><span class='line'>
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster peer probe rpi-03
-</span><span class='line'>peer probe: success.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure that we can see all 3 nodes in our GlusterFS Pool:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster pool list
-</span><span class='line'>UUID                                    Hostname        State
-</span><span class='line'>778c7463-ba48-43de-9f97-83a960bba99e    rpi-02          Connected
-</span><span class='line'>00a20a3c-5902-477e-a8fe-da35aa955b5e    rpi-03          Connected
-</span><span class='line'>d82fb688-c50b-405d-a26f-9cb2922cce75    localhost       Connected
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>From each node, create the directory where GlusterFS will store the data for the bricks that we will specify when creating the volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Next, create a 3 Way Replicated GlusterFS Volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume create rpi-gfs replica <span class="m">3</span> <span class="se">\</span>
-</span><span class='line'>rpi-01:/gluster/brick <span class="se">\</span>
-</span><span class='line'>rpi-02:/gluster/brick <span class="se">\</span>
-</span><span class='line'>rpi-03:/gluster/brick <span class="se">\</span>
-</span><span class='line'>force
-</span><span class='line'>
-</span><span class='line'>volume create: rpi-gfs: success: please start the volume to access data
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Start the GlusterFS Volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume start rpi-gfs
-</span><span class='line'>volume start: rpi-gfs: success
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify the GlusterFS Volume Info, and from the below output you will see that the volume is replicated 3 ways from the 3 bricks that we specified</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume info
-</span><span class='line'>
-</span><span class='line'>Volume Name: rpi-gfs
-</span><span class='line'>Type: Replicate
-</span><span class='line'>Volume ID: b879db15-63e9-44ca-ad76-eeaa3e247623
-</span><span class='line'>Status: Started
-</span><span class='line'>Number of Bricks: <span class="m">1</span> x <span class="nv">3</span> <span class="o">=</span> 3
-</span><span class='line'>Transport-type: tcp
-</span><span class='line'>Bricks:
-</span><span class='line'>Brick1: rpi-01:/gluster/brick
-</span><span class='line'>Brick2: rpi-02:/gluster/brick
-</span><span class='line'>Brick3: rpi-03:/gluster/brick
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Mount the GlusterFS Volume on each Node, first on <code>rpi-01</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo umount /mnt
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then on <code>rpi-02</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo umount /mnt
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And lastly on <code>rpi-03</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo umount /mnt
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then your GlusterFS Volume will be mounted on all the nodes, and when a file is written to the <code>/mnt/</code> partition, data will be replicated to all the nodes in the Cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>df -h
-</span><span class='line'>Filesystem          Size  Used Avail Use% Mounted on
-</span><span class='line'>/dev/root            30G  4.5G   24G  16% /
-</span><span class='line'>localhost:/rpi-gfs   30G  4.5G   24G  16% /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create a Web Service on Docker Swarm:</h2>
-
-<p>Let&rsquo;s create a Web Service in our Swarm, called <code>web</code> and by specifying <code>1</code> replica and publishing the exposed port <code>80</code> to our containers port <code>80</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service create --name web --replicas <span class="m">1</span> --publish 80:80 hypriot/rpi-busybox-httpd
-</span><span class='line'>vsvyanuw6q6yf4jr52m5z7vr1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verifying that our Service is Started and equals to the desired replica count:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ls
-</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
-</span><span class='line'>vsvyanuw6q6y        web                 replicated          1/1                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Inspecting the Service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-<span class='line-number'>80</span>
-<span class='line-number'>81</span>
-<span class='line-number'>82</span>
-<span class='line-number'>83</span>
-<span class='line-number'>84</span>
-<span class='line-number'>85</span>
-<span class='line-number'>86</span>
-<span class='line-number'>87</span>
-<span class='line-number'>88</span>
-<span class='line-number'>89</span>
-<span class='line-number'>90</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service inspect web
-</span><span class='line'><span class="o">[</span>
-</span><span class='line'>    <span class="o">{</span>
-</span><span class='line'>        <span class="s2">&quot;ID&quot;</span>: <span class="s2">&quot;vsvyanuw6q6yf4jr52m5z7vr1&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;Version&quot;</span>: <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;Index&quot;</span>: 2493
-</span><span class='line'>        <span class="o">}</span>,
-</span><span class='line'>        <span class="s2">&quot;CreatedAt&quot;</span>: <span class="s2">&quot;2017-07-16T21:20:00.017836646Z&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;UpdatedAt&quot;</span>: <span class="s2">&quot;2017-07-16T21:20:00.026359794Z&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;Spec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;web&quot;</span>,
-</span><span class='line'>            <span class="s2">&quot;Labels&quot;</span>: <span class="o">{}</span>,
-</span><span class='line'>            <span class="s2">&quot;TaskTemplate&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;ContainerSpec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Image&quot;</span>: <span class="s2">&quot;hypriot/rpi-busybox-httpd:latest@sha256:c00342f952d97628bf5dda457d3b409c37df687c859df82b9424f61264f54cd1&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;StopGracePeriod&quot;</span>: 10000000000,
-</span><span class='line'>                    <span class="s2">&quot;DNSConfig&quot;</span>: <span class="o">{}</span>
-</span><span class='line'>                <span class="o">}</span>,
-</span><span class='line'>                <span class="s2">&quot;Resources&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Limits&quot;</span>: <span class="o">{}</span>,
-</span><span class='line'>                    <span class="s2">&quot;Reservations&quot;</span>: <span class="o">{}</span>
-</span><span class='line'>                <span class="o">}</span>,
-</span><span class='line'>                <span class="s2">&quot;RestartPolicy&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Condition&quot;</span>: <span class="s2">&quot;any&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;Delay&quot;</span>: 5000000000,
-</span><span class='line'>                    <span class="s2">&quot;MaxAttempts&quot;</span>: 0
-</span><span class='line'>                <span class="o">}</span>,
-</span><span class='line'>                <span class="s2">&quot;Placement&quot;</span>: <span class="o">{}</span>,
-</span><span class='line'>                <span class="s2">&quot;ForceUpdate&quot;</span>: 0
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;Mode&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Replicated&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Replicas&quot;</span>: 1
-</span><span class='line'>                <span class="o">}</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;UpdateConfig&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Parallelism&quot;</span>: 1,
-</span><span class='line'>                <span class="s2">&quot;FailureAction&quot;</span>: <span class="s2">&quot;pause&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Monitor&quot;</span>: 5000000000,
-</span><span class='line'>                <span class="s2">&quot;MaxFailureRatio&quot;</span>: 0,
-</span><span class='line'>                <span class="s2">&quot;Order&quot;</span>: <span class="s2">&quot;stop-first&quot;</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;RollbackConfig&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Parallelism&quot;</span>: 1,
-</span><span class='line'>                <span class="s2">&quot;FailureAction&quot;</span>: <span class="s2">&quot;pause&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Monitor&quot;</span>: 5000000000,
-</span><span class='line'>                <span class="s2">&quot;MaxFailureRatio&quot;</span>: 0,
-</span><span class='line'>                <span class="s2">&quot;Order&quot;</span>: <span class="s2">&quot;stop-first&quot;</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;EndpointSpec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;vip&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                    <span class="o">{</span>
-</span><span class='line'>                        <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
-</span><span class='line'>                        <span class="s2">&quot;TargetPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishedPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
-</span><span class='line'>                    <span class="o">}</span>
-</span><span class='line'>                <span class="o">]</span>
-</span><span class='line'>            <span class="o">}</span>
-</span><span class='line'>        <span class="o">}</span>,
-</span><span class='line'>        <span class="s2">&quot;Endpoint&quot;</span>: <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;Spec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;vip&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                    <span class="o">{</span>
-</span><span class='line'>                        <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
-</span><span class='line'>                        <span class="s2">&quot;TargetPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishedPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
-</span><span class='line'>                    <span class="o">}</span>
-</span><span class='line'>                <span class="o">]</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;TargetPort&quot;</span>: 80,
-</span><span class='line'>                    <span class="s2">&quot;PublishedPort&quot;</span>: 80,
-</span><span class='line'>                    <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
-</span><span class='line'>                <span class="o">}</span>
-</span><span class='line'>            <span class="o">]</span>,
-</span><span class='line'>            <span class="s2">&quot;VirtualIPs&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;NetworkID&quot;</span>: <span class="s2">&quot;zjerz0xsw39icnh24enja4cgk&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;Addr&quot;</span>: <span class="s2">&quot;10.255.0.13/16&quot;</span>
-</span><span class='line'>                <span class="o">}</span>
-</span><span class='line'>            <span class="o">]</span>
-</span><span class='line'>        <span class="o">}</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Docker Swarm&rsquo;s Routing mesh takes care of the internal routing, so requests will respond even if the container is not running on the node that you are making the request against.</p>
-
-<p>With that said, verifying on which node our service is running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ps web
-</span><span class='line'>ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
-</span><span class='line'>sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running <span class="m">2</span> minutes ago
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we make a HTTP Request to one of these Nodes IP Addresses, our request will be responded with this awesome static page:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/armed-with-hypriot.jpg" alt="" /></p>
-
-<p>We can see we only have one container in our swarm, let&rsquo;s scale that up to <code>3</code> containers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service scale <span class="nv">web01</span><span class="o">=</span>3
-</span><span class='line'>web01 scaled to 3
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that the service is scaled to 3 containers, requests will be handled using the round-robin algorithm. To ensured that the service scaled, we will see that we will have 3 replicas:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ls
-</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
-</span><span class='line'>vsvyanuw6q6y        web                 replicated          3/3                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verifying where these containers are running on:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ps web01
-</span><span class='line'>ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
-</span><span class='line'>sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running <span class="m">2</span> minutes ago
-</span><span class='line'>ope3ya7hh9j4        web.2               hypriot/rpi-busybox-httpd:latest   rpi-03              Running             Running <span class="m">30</span> seconds ago
-</span><span class='line'>07m1ww7ptxro        web.3               hypriot/rpi-busybox-httpd:latest   rpi-01              Running             Running <span class="m">28</span> seconds ago
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Lastly, removing the service from our swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service rm web01
-</span><span class='line'>web01
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Massive Thanks:</h2>
-
-<p>a Massive thanks to <a href="https://twitter.com/alexellisuk">Alex Ellis</a> for mentioning me on one of his blogposts:</p>
-
-<ul>
-<li><a href="https://blog.alexellis.io/blog-community-inspiration/">https://blog.alexellis.io/blog-community-inspiration/</a></li>
-</ul>
-
-
-<p><img src="https://objects.ruanbekker.com/assets/images/tweet-alexellis-21072017.png" alt="" /></p>
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/23/my-pistack-blog-proudly-hosted-on-my-raspberrypi-swarm-cluster/">My PiStack Blog Proudly Hosted on My RaspberryPi Swarm Cluster</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-23T16:11:19-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>4:11 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>This is a repost of my <a href="http://blog.pistack.co.za/my-blog-proudly-hosted-on-my-raspberrypi-cluster/">first blogpost which is hosted on my Raspberry Pi Cluster (04 July 2017)</a>, that runs Docker Swarm and is served from my Home in South Africa, and can be accessed on <a href="http://blog.pistack.co.za">http://blog.pistack.co.za</a></p>
-
-<h2>Just Look at It!</h2>
-
-<ul>
-<li>3x Raspberry Pi 3 Model B</li>
-<li>Quad Core 1.2GHz Broadcom BCM2837 64bit CPU</li>
-<li>1GB RAM</li>
-<li>BCM43438 wireless LAN and Bluetooth Low Energy (BLE) on board</li>
-<li>3x 32GB Sandisk SD Cards (Replicated GlusterFS Volume for <code>/gluster</code> partition)</li>
-<li>Upgraded switched Micro USB power source up to 2.5A</li>
-</ul>
-
-
-<p><img src="https://objects.ruanbekker.com/assets/images/rpi-cluster.jpg" alt="" /></p>
-
-<h2>My Setup:</h2>
-
-<p>I have 3x <a href="https://www.raspberrypi.org/products/raspberry-pi-3-model-b/">Raspberrypi 3&rsquo;s</a>, each with a <a href="https://www.sandisk.com/home/memory-cards/sd-cards/ultra-sd">32GB SanDisk SD Card</a>, formatted with <a href="https://www.raspberrypi.org/downloads/raspbian/">Raspbian Jessie Lite</a>, powered by a <a href="https://www.pishop.co.za/store/rpi-power/anid%C3%A9es-6-port-50w-high-power-usb-hub-25aport">6 Port USB Hub</a> and networked with a <a href="https://m.takealot.com/#product_1?id=35258721">Totolink 5 Port Gigabit Switch</a>, but note that: <em>the Rpi does not support Gigabit Networking</em></p>
-
-<p>For persistent storage I have setup a Replicated GlusterFS Volume across the 3 nodes.</p>
-
-<p>More details on how I did the setup, can be found from the <a href="https://blog.ruanbekker.com/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">Setting Up a Docker Swarm Cluster on RaspberryPi Nodes</a> blog post.</p>
-
-<h2>Thanks!</h2>
-
-<p>Thanks for the visit, I will blog about awesome Docker and RaspberryPi related stuff as my mind stumble along awesome ideas :)</p>
-
-<p><p>
-<script id="mNCC" language="javascript">
-    medianet_width = &ldquo;728&rdquo;;
-    medianet_height = &ldquo;90&rdquo;;
-    medianet_crid = &ldquo;346651356&rdquo;;
-    medianet_versionId = &ldquo;3111299&rdquo;;
-  </script>
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-<p></p>
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/11/capturing-54-million-passwords-with-a-docker-ssh-honeypot/">Capturing 54 Million Passwords With a Docker SSH Honeypot</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-11T16:38:52-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>4:38 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://res.cloudinary.com/rbekker/image/upload/v1539291851/ssh-docker-honeypot_eyhzc7.png" alt="" /></p>
-
-<p>The last couple of days I picked up on my ELK Stack a couple thousands of SSH Brute Force Attacks, so I decided I will just revisit my SSH Server configuration, and change my SSH Port to something else for the interim. The dashboard that showed me the results at that point in time:</p>
-
-<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1539292443/kibana-failed-ssh-auth_udkxkl.png" alt="" /></p>
-
-<p>Then I decided I actually would like to setup a SSH Honeypot to listen on Port 22 and change my SSH Server to listen on 222 and capture their IP Addresses, Usernames and Passwords that they are trying to use and dump it all in a file so that I can build up my own password dictionary :D</p>
-
-<h2>SSH Configuration:</h2>
-
-<p>Changing the SSH Port:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo vim /etc/ssh/sshd_config
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Change the port to 222:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>Port 222
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Restart the SSH Server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo /etc/init.d/ssh restart
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify that the SSH Server is running on the new port:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo netstat -tulpn <span class="p">|</span> grep sshd
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 0.0.0.0:222            0.0.0.0:*               LISTEN      28838/sshd
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Docker SSH Honeypot:</h2>
-
-<p>Thanks to <a href="https://github.com/random-robbie/docker-ssh-honey">random-robbie</a>, as he had everything I was looking for on Github.</p>
-
-<p>Setup the SSH Honeypot:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>git clone https://github.com/random-robbie/docker-ssh-honey
-</span><span class='line'><span class="nv">$ </span><span class="nb">cd </span>docker-ssh-honey/
-</span><span class='line'><span class="nv">$ </span>docker build . -t <span class="nb">local</span>:ssh-honepot
-</span><span class='line'><span class="nv">$ </span>docker run -itd --name ssh-honeypot -p 22:22 <span class="nb">local</span>:ssh-honepot
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once people attempt to ssh, you will get the output to stdout:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker logs -f <span class="k">$(</span>docker ps -f <span class="nv">name</span><span class="o">=</span>ssh-honeypot -q<span class="k">)</span> <span class="p">|</span> grep -v <span class="s1">&#39;Error exchanging&#39;</span> <span class="p">|</span> head -10
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:13:41 2018<span class="o">]</span> ssh-honeypot 0.0.8 by Daniel Roberson started on port 22. PID 5
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:19:49 2018<span class="o">]</span> 1xx.1xx.1xx.1x gambaa gambaa
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:23:26 2018<span class="o">]</span> 1xx.9x.1xx.1xx root toor
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:25:57 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root Passw0rd1234
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:26:00 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root Qwer1234
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:26:00 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root Abcd1234
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:26:08 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root ubuntu
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:26:09 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root PassWord
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:26:10 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root password321
-</span><span class='line'><span class="o">[</span>Tue Jul <span class="m">31</span> 01:26:15 2018<span class="o">]</span> 1xx.2xx.1xx.1xx root zxcvbnm
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Saving results to disk:</h2>
-
-<p>Redirecting the output to a log file, running in the foreground as a screen session:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>screen -S honeypot
-</span><span class='line'><span class="nv">$ </span>docker logs -f f6cb <span class="p">|</span> grep -v <span class="s1">&#39;Error exchanging&#39;</span> <span class="p">|</span> awk <span class="s1">&#39;{print $6, $7, $8}&#39;</span> &gt;&gt; /var/log/ssh-honeypot.log
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Detach from your screen session:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>Ctrl + a<span class="p">;</span> d
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Checking out the logs</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>head -3 /var/log/ssh-honeypot.log
-</span><span class='line'>2.7.2x.1x root jiefan
-</span><span class='line'>4x.7.2x.1x root HowAreYou
-</span><span class='line'>4x.7.2x.1x root Sqladmin
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Leaving this running for a couple of months, and I have a massive password database:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wc -l /var/log/honeypot/ssh.log
-</span><span class='line'><span class="m">54184260</span> /var/log/honeypot/ssh.log
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That is correct, 54 million password attempts. 5372 Unique IPs, 4082 Unique Usernames, 88829 Unique Passwords.</p>
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/04/splitting-query-string-parameters-from-a-url-in-python/">Splitting Query String Parameters From a URL in Python</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-04T09:58:46-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>9:58 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>I&rsquo;m working on capturing some data that I want to use for analytics, and a big part of that is capturing the query string parameters that is in the request URL.</p>
-
-<p>So essentially I would like to break the data up into key value pairs, using Python and the urllib module, which will then pushed into a database like MongoDB or DynamoDB.</p>
-
-<h2>Our URL:</h2>
-
-<p>So the URL&rsquo;s that we will have, will more or less look like the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>https://surveys.mydomain.com/one/abc123?companyId<span class="o">=</span>178231<span class="p">&amp;</span><span class="nv">group_name</span><span class="o">=</span>abc_12<span class="p">&amp;</span><span class="nv">utm_source</span><span class="o">=</span>survey<span class="p">&amp;</span><span class="nv">utm_medium</span><span class="o">=</span>email<span class="p">&amp;</span><span class="nv">utm_campaign</span><span class="o">=</span>survey-top-1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So we have a couple of utm parameters, company id, group name etc, which will be use for analysis</p>
-
-<h2>Python to Capture the Parameters:</h2>
-
-<p>Using Python, it&rsquo;s quite easy:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">urllib</span> <span class="kn">import</span> <span class="n">parse</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">url</span> <span class="o">=</span> <span class="s">&#39;https://surveys.mydomain.com/one/abc123?companyId=178231&amp;group_name=abc_12&amp;utm_source=survey&amp;utm_medium=email&amp;utm_campaign=survey-top-1&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">parse</span><span class="o">.</span><span class="n">urlsplit</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-</span><span class='line'><span class="n">SplitResult</span><span class="p">(</span><span class="n">scheme</span><span class="o">=</span><span class="s">&#39;https&#39;</span><span class="p">,</span> <span class="n">netloc</span><span class="o">=</span><span class="s">&#39;surveys.mydomain.com&#39;</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s">&#39;/one/abc123&#39;</span><span class="p">,</span> <span class="n">query</span><span class="o">=</span><span class="s">&#39;companyId=178231&amp;group_name=abc_12&amp;utm_source=survey&amp;utm_medium=email&amp;utm_campaign=survey-top-1&#39;</span><span class="p">,</span> <span class="n">fragment</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">parse</span><span class="o">.</span><span class="n">parse_qsl</span><span class="p">(</span><span class="n">parse</span><span class="o">.</span><span class="n">urlsplit</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">query</span><span class="p">)</span>
-</span><span class='line'><span class="p">[(</span><span class="s">&#39;companyId&#39;</span><span class="p">,</span> <span class="s">&#39;178231&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s">&#39;group_name&#39;</span><span class="p">,</span> <span class="s">&#39;abc_12&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s">&#39;utm_source&#39;</span><span class="p">,</span> <span class="s">&#39;survey&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s">&#39;utm_medium&#39;</span><span class="p">,</span> <span class="s">&#39;email&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s">&#39;utm_campaign&#39;</span><span class="p">,</span> <span class="s">&#39;survey-top-1&#39;</span><span class="p">)]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now to get our data in a dictionary, we can just convert it using the <code>dict()</code> function:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="nb">dict</span><span class="p">(</span><span class="n">parse</span><span class="o">.</span><span class="n">parse_qsl</span><span class="p">(</span><span class="n">parse</span><span class="o">.</span><span class="n">urlsplit</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">query</span><span class="p">))</span>
-</span><span class='line'><span class="p">{</span><span class="s">&#39;companyId&#39;</span><span class="p">:</span> <span class="s">&#39;178231&#39;</span><span class="p">,</span> <span class="s">&#39;group_name&#39;</span><span class="p">:</span> <span class="s">&#39;abc_12&#39;</span><span class="p">,</span> <span class="s">&#39;utm_source&#39;</span><span class="p">:</span> <span class="s">&#39;survey&#39;</span><span class="p">,</span> <span class="s">&#39;utm_medium&#39;</span><span class="p">:</span> <span class="s">&#39;email&#39;</span><span class="p">,</span> <span class="s">&#39;utm_campaign&#39;</span><span class="p">:</span> <span class="s">&#39;survey-top-1&#39;</span><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This data can then be used to write to a database, which can then be used for analysis.</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="http://blog.rafflecopter.com/2014/04/utm-parameters-best-practices/">http://blog.rafflecopter.com/2014/04/utm-parameters-best-practices/</a></li>
-<li><a href="https://stackoverflow.com/questions/21584545/url-query-parameters-to-dict-python">https://stackoverflow.com/questions/21584545/url-query-parameters-to-dict-python</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/8">&larr; Older</a>
@@ -3205,23 +3097,23 @@
   <ul id="recent_posts">
     
       <li class="post">
-        <a href="/blog/2019/04/04/self-hosted-git-and-cicd-platform-with-gitea-and-drone-on-docker/">Self Hosted Git and CICD Platform With Gitea and Drone on Docker</a>
+        <a href="/blog/2019/04/06/sql-inner-joins-examples-with-sqlite/">SQL Inner Joins Examples With SQLite</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/03/build-small-golang-docker-containers/">Build Small Golang Docker Containers</a>
+        <a href="/blog/2019/04/06/install-elasticsearch-with-ansible-tutorial/">Install Elasticsearch With Ansible Tutorial</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/">Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt</a>
+        <a href="/blog/2019/04/06/elasticsearch-templates-tutorial/">Elasticsearch Templates Tutorial</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/02/setup-kibana-dashboards-for-nginx-log-data-to-understand-the-behavior/">Setup Kibana Dashboards for Nginx Log Data to Understand the Behavior</a>
+        <a href="/blog/2019/04/06/reindex-your-elasticsearch-indexes-tutorial/">Reindex Your Elasticsearch Indexes Tutorial</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster/">Setup a 5 Node Highly Available Elasticsearch Cluster</a>
+        <a href="/blog/2019/04/06/shrink-your-elasticsearch-index-by-reducing-the-shard-count-with-the-shards-api/">Shrink Your Elasticsearch Index by Reducing the Shard Count With the Shards API</a>
       </li>
     
   </ul>

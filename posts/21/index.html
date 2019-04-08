@@ -9,7 +9,8 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Setup a Development Environment of a MongoDB Replica Set consisting of 3 mongod MongoDB Instances. This is purely aimed for a testing or development &hellip;">
+  <meta name="description" content="Today we will setup a HAProxy Service for our 3 Node MySQL Galera Cluster Our Setup: 3 Node Galera MySQL Cluster
+3 HAProxy Services (Each HAProxy &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -91,6 +92,1186 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/08/31/setup-haproxy-load-balancer-for-mysql-galera-with-ip-whitelisting-and-backup-servers/">Setup HAProxy Load Balancer for MySQL Galera With IP Whitelisting and Backup Servers</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-08-31T19:15:50-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2017</span></span> <span class='time'>7:15 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>Today we will setup a HAProxy Service for our 3 Node MySQL Galera Cluster</p>
+
+<h2>Our Setup:</h2>
+
+<ul>
+<li>3 Node Galera MySQL Cluster</li>
+<li>3 HAProxy Services (Each HAProxy Service Running on the MySQL Nodes)</li>
+<li>MySQL Listens on Port 3307</li>
+<li>HAProxy Listens on Port 3306 and Proxies through to 3307</li>
+</ul>
+
+
+<p>I have setup HAProxy on the same node as the MySQL Servers for my use case, but you can also setup HAProxy on a node outside the MySQL Host.</p>
+
+<p>So essentially our MySQL Galera Cluster is a Multi Master Setup, but for now we will only accept connections from Node-A, and have Node-B and Node-C as Backup servers. Should Node-A go down, HAProxy will route connections to Node-B, and if Node-B also goes down, connections will be routed to Node-C.</p>
+
+<p>If the Primary Node, which is Node-A recovers, connections will be restored to Node-A.</p>
+
+<h2>Security:</h2>
+
+<p>We use iptables to allow traffic between the nodes for port TCP/3307 and allow all traffic for Port TCP/3306, as HAProxy will allow the IP Based Access:</p>
+
+<figure class='code'><figcaption><span>Iptables for Each Node</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>iptables -I INPUT -s <span class="o">{</span>Node-A<span class="o">}</span> -p tcp --dport <span class="m">3307</span> -j ACCEPT
+</span><span class='line'><span class="nv">$ </span>iptables -I INPUT -s <span class="o">{</span>Node-B<span class="o">}</span> -p tcp --dport <span class="m">3307</span> -j ACCEPT
+</span><span class='line'><span class="nv">$ </span>iptables -I INPUT -s <span class="o">{</span>Node-C<span class="o">}</span> -p tcp --dport <span class="m">3307</span> -j ACCEPT
+</span><span class='line'><span class="nv">$ </span>iptables -A INPUT -p tcp --dport <span class="m">3306</span> -j ACCEPT
+</span><span class='line'><span class="nv">$ </span>iptables -A INPUT -p tcp --dport <span class="m">3307</span> -j DROP
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>HAProxy:</h2>
+
+<p>Installing HAProxy on Ubuntu:</p>
+
+<figure class='code'><figcaption><span>Install HAProxy</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt update
+</span><span class='line'><span class="nv">$ </span>sudo apt install haproxy -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure HAProxy with a Port 3306 listener, specify your source addresses that you would like to be authorized to communicate with MySQL and then specify the servers to proxy the connections to our MySQL Galera Cluster, specifying 2 backup servers:</p>
+
+<figure class='code'><figcaption><span>/etc/haproxy/haproxy.cfg</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>global
+</span><span class='line'>  log         127.0.0.1 local2
+</span><span class='line'>  chroot      /var/lib/haproxy
+</span><span class='line'>  pidfile     /var/run/haproxy.pid
+</span><span class='line'>  maxconn     1020
+</span><span class='line'>  user        haproxy
+</span><span class='line'>  group       haproxy
+</span><span class='line'>  daemon
+</span><span class='line'>
+</span><span class='line'>  stats socket /var/lib/haproxy/stats.sock mode <span class="m">600</span> level admin
+</span><span class='line'>  stats timeout 2m
+</span><span class='line'>
+</span><span class='line'>defaults
+</span><span class='line'>  mode    tcp
+</span><span class='line'>  log     global
+</span><span class='line'>  option  dontlognull
+</span><span class='line'>  option  redispatch
+</span><span class='line'>  retries                   3
+</span><span class='line'>  timeout queue             45s
+</span><span class='line'>  timeout connect           5s
+</span><span class='line'>  timeout client            1m
+</span><span class='line'>  timeout server            1m
+</span><span class='line'>  timeout check             10s
+</span><span class='line'>  maxconn                   1020
+</span><span class='line'>
+</span><span class='line'>listen stats
+</span><span class='line'>  <span class="nb">bind</span>    *:80
+</span><span class='line'>  mode    http
+</span><span class='line'>  stats   <span class="nb">enable</span>
+</span><span class='line'><span class="nb">  </span>stats   show-legends
+</span><span class='line'>  stats   refresh           5s
+</span><span class='line'>  stats   uri               /
+</span><span class='line'>  stats   realm             Haproxy<span class="se">\ </span>Statistics
+</span><span class='line'>  stats   auth              admin:secret
+</span><span class='line'>  stats   admin             <span class="k">if</span> TRUE
+</span><span class='line'>
+</span><span class='line'>listen galera-lb
+</span><span class='line'>  <span class="nb">bind</span>    *:3306
+</span><span class='line'>  mode    tcp
+</span><span class='line'>  acl     network_allowed src 10.10.1.0/24 10.32.15.2/32
+</span><span class='line'>  tcp-request               content accept <span class="k">if</span> network_allowed
+</span><span class='line'>  tcp-request               content reject
+</span><span class='line'>  default_backend           galera-cluster
+</span><span class='line'>
+</span><span class='line'>backend galera-cluster
+</span><span class='line'>  balance roundrobin
+</span><span class='line'>  server  scw-mysql-1 10.0.0.2:3307  check
+</span><span class='line'>  server  scw-mysql-2 10.0.0.3:3307  check backup
+</span><span class='line'>  server  scw-mysql-3 10.0.0.4:3307  check backup
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Start HAProxy:</p>
+
+<figure class='code'><figcaption><span>Start HAProxy Service</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>haproxy
+</span><span class='line'><span class="nv">$ </span>sudo systemctl restart haproxy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Authorize HAProxy Hostnames to Connect to MySQL:</h2>
+
+<p>In this case we need to allow the Hostnames to be able to connect to mysql:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">GRANT</span> <span class="k">ALL</span> <span class="k">PRIVILEGES</span> <span class="k">ON</span> <span class="o">*</span><span class="p">.</span><span class="o">*</span> <span class="k">TO</span> <span class="s1">&#39;root&#39;</span><span class="o">@</span><span class="s1">&#39;%&#39;</span> <span class="n">IDENTIFIED</span> <span class="k">BY</span> <span class="s1">&#39;secrets&#39;</span> <span class="k">WITH</span> <span class="k">GRANT</span> <span class="k">OPTION</span><span class="p">;</span>
+</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">FLUSH</span> <span class="k">PRIVILEGES</span><span class="p">;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://raymii.org/s/snippets/haproxy_restrict_specific_urls_to_specific_ip_addresses.html">https://raymii.org/s/snippets/haproxy_restrict_specific_urls_to_specific_ip_addresses.html</a></li>
+</ul>
+
+
+<center>
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>
+
+
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/08/31/secure-your-access-to-kibana-5-and-elasticsearch-5-with-nginx-for-aws/">Secure Your Access to Kibana 5 and Elasticsearch 5 With Nginx for AWS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-08-31T10:40:09-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2017</span></span> <span class='time'>10:40 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>As <del>until now, AWS does not offer VPC Support for Elasticsearch</del>, so this make things a bit difficult authorizing Private IP Ranges.</p>
+
+<p>One workaround would be to setup a Nginx Reverse Proxy on AWS within the your Private VPC, associate a EIP on your Nginx EC2 Instance, then authorize your EIP on your Elasticsearch IP Access Policy.</p>
+
+<p><strong>Update</strong>:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-vpc.html">Elasticsearch Announced VPC Support for Elasticsearch</a></li>
+</ul>
+
+
+<h2>Our Setup:</h2>
+
+<p>In this setup, we will have an Internal ELB (Elastic Load Balancer), which we will associate 1 or more EC2 Nginx Instances behind the ELB, then setup our Nginx to Revere Proxy our connections through to our Elasticsearch Endpoint.</p>
+
+<p>We will also setup Basic HTTP Authentication for our <code>/</code> elasticsearch endpoint, and our <code>/kibana</code> endpoint. But we will keep the authentication seperate from each other, so that credentials for ES and Kibana is not the same, but depending on your use case, you can allow both endpoints to reference the same credential file.</p>
+
+<h2>Install Nginx</h2>
+
+<p>Depending on your Linux Distribution, the package manager may differ, I am using Amazon Linux:</p>
+
+<figure class='code'><figcaption><span>Install Nginx</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo yum update -y
+</span><span class='line'><span class="nv">$ </span>sudo yum install nginx httpd-tools -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Nginx:</h2>
+
+<p>Remove the default configuration and replace the <code>nginx.conf</code> with the following:</p>
+
+<figure class='code'><figcaption><span>Remove Default Nginx Config</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo rm -r /etc/nginx/nginx.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Main Nginx Configuration:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/nginx.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user nginx<span class="p">;</span>
+</span><span class='line'>worker_processes auto<span class="p">;</span>
+</span><span class='line'>pid /run/nginx.pid<span class="p">;</span>
+</span><span class='line'>error_log /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>  worker_connections 1024<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Basic Settings</span>
+</span><span class='line'>  sendfile on<span class="p">;</span>
+</span><span class='line'>  tcp_nopush on<span class="p">;</span>
+</span><span class='line'>  tcp_nodelay on<span class="p">;</span>
+</span><span class='line'>  keepalive_timeout 65<span class="p">;</span>
+</span><span class='line'>  types_hash_max_size 2048<span class="p">;</span>
+</span><span class='line'>  server_names_hash_bucket_size 128<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  include /etc/nginx/mime.types<span class="p">;</span>
+</span><span class='line'>  default_type application/octet-stream<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Logging Settings</span>
+</span><span class='line'>        log_format  main  <span class="s1">&#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  access_log /var/log/nginx/access.log main<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Gzip Settings</span>
+</span><span class='line'>  gzip on<span class="p">;</span>
+</span><span class='line'>  gzip_disable <span class="s2">&quot;msie6&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># Elasticsearch Config</span>
+</span><span class='line'>  include /etc/nginx/conf.d/elasticsearch.conf<span class="p">;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The Reverse Proxy Configuration:</p>
+
+<figure class='code'><figcaption><span>/etc/nginx/conf.d/elasticsearch.conf</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>server <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>  listen 80<span class="p">;</span>
+</span><span class='line'>  server_name elk.mydomain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># error logging</span>
+</span><span class='line'>  error_log /var/log/nginx/elasticsearch_error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># authentication: server wide</span>
+</span><span class='line'>  <span class="c">#auth_basic &quot;Auth&quot;;</span>
+</span><span class='line'>  <span class="c">#auth_basic_user_file /etc/nginx/.secrets;</span>
+</span><span class='line'>
+</span><span class='line'>  location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># authentication: elasticsearch</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;Elasticsearch Auth&quot;</span><span class="p">;</span>
+</span><span class='line'>    auth_basic_user_file /etc/nginx/.secrets_elasticsearch<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host https://search.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="o">{</span>NGINX-EIP<span class="o">}</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Authorization <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass https://search.eu-west-1.es.amazonaws.com/<span class="p">;</span>
+</span><span class='line'>    proxy_redirect https://search.eu-west-1.es.amazonaws.com/ http://<span class="o">{</span>NGINX-EIP<span class="o">}</span>/<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  location /kibana <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c"># authentication: kibana</span>
+</span><span class='line'>    auth_basic <span class="s2">&quot;Kibana Auth&quot;</span><span class="p">;</span>
+</span><span class='line'>    auth_basic_user_file /etc/nginx/.secrets_kibana<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
+</span><span class='line'>    proxy_set_header Host https://search.eu-west-1.es.amazonaws.com<span class="p">;</span>
+</span><span class='line'>    proxy_set_header X-Real-IP <span class="o">{</span>NGINX-EIP<span class="o">}</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
+</span><span class='line'>    proxy_set_header Authorization <span class="s2">&quot;&quot;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_pass https://search.eu-west-1.es.amazonaws.com/_plugin/kibana/<span class="p">;</span>
+</span><span class='line'>    proxy_redirect https://search.eu-west-1.es.amazonaws.com/_plugin/kibana/ http://<span class="o">{</span>NGINX_EIP<span class="o">}</span>/kibana/<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># elb checks</span>
+</span><span class='line'>  location /status <span class="o">{</span>
+</span><span class='line'>    root /usr/share/nginx/html/<span class="p">;</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup Authentication:</h2>
+
+<p>Setup the authentication for elasticsearch and kibana:</p>
+
+<figure class='code'><figcaption><span>Create Auth for Kibana and Elasticsearch</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo htpasswd -c /etc/nginx/.secrets_elasticsearch admin
+</span><span class='line'><span class="nv">$ </span>sudo htpasswd -c /etc/nginx/.secrets_kibana admin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Restart Nginx and Enable on Startup</h2>
+
+<p>Restart the nginx process and enable the process on boot:</p>
+
+<figure class='code'><figcaption><span>Restart Nginx</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo /etc/init.d/nginx restart
+</span><span class='line'><span class="nv">$ </span>sudo chkconfig nginx on
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure ELB:</h2>
+
+<p>Create a New Internal ELB, set the Backend Instances on Port 80, and the healthcheck should point to <code>/status/index.html</code> as this location block does not require authentication and our ELB will be able to get a 200 reponse if all is good.
+Next you can configure your Route 53 Hosted Zone, <code>elk.mydomain.com</code> to map to your ELB.</p>
+
+<h2>End Result</h2>
+
+<p>Now you should be able to access Elasticsearch on <code>http://elk.mydomain.com/</code> and Kibana on <code>http://elk.mydomain.com/kibana</code> after authenticating.</p>
+
+<p><p>
+<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init(&lsquo;Buy Me a Coffee&rsquo;, &lsquo;#46b798&rsquo;, &lsquo;A6423ZIQ&rsquo;);kofiwidget2.draw();</script></p>
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/08/31/reference-credentials-outside-your-main-application-in-python/">Reference Credentials Outside Your Main Application in Python</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-08-31T03:00:58-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2017</span></span> <span class='time'>3:00 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post I will show one way of referencing credentials from your application in Python, without setting them in your applications code. We will create a seperate python file which will hold our credentials, and then call them from our main application.</p>
+
+<h2>Our Main Application</h2>
+
+<p>This app will print our username, just for the sake of this example:</p>
+
+<figure class='code'><figcaption><span>app.py</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">config</span> <span class="kn">import</span> <span class="n">credentials</span> <span class="k">as</span> <span class="n">secrets</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">my_username</span> <span class="o">=</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;APP1&#39;</span><span class="p">][</span><span class="s">&#39;username&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">my_password</span> <span class="o">=</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;APP1&#39;</span><span class="p">][</span><span class="s">&#39;password&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;Hello, your username is: {username}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="n">my_username</span><span class="p">))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Our Credentials File</h2>
+
+<p>Then we have our file which will hold our credentials:</p>
+
+<figure class='code'><figcaption><span>config.py</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">credentials</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;APP1&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;username&#39;</span><span class="p">:</span> <span class="s">&#39;foo&#39;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&#39;password&#39;</span><span class="p">:</span> <span class="s">&#39;bar&#39;</span>
+</span><span class='line'>            <span class="p">}</span>
+</span><span class='line'>        <span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>That is at least one way of doing it, you could also use environment variables using the <code>os</code> module, which is described <a href="https://stackoverflow.com/a/4907053">here</a></p>
+
+<h2>References:</h2>
+
+<ul>
+<li><a href="https://docs.python.org/2/tutorial/inputoutput.html">https://docs.python.org/2/tutorial/inputoutput.html</a></li>
+<li><a href="https://docs.python.org/2/library/os.html#os.environ">https://docs.python.org/2/library/os.html#os.environ</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/08/28/change-iam-username-with-aws-cli/">Change IAM Username With AWS CLI</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-08-28T18:27:21-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>28</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>6:27 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>You may find yourself in a position where you need to rename more than one IAM Username, and one way of doing this is using the AWS CLI tools to rename the username.</p>
+
+<p>The benefit of this is that the user&rsquo;s access keys remains the same, any policies associated to the user, will stay on the user after the username gets renamed.</p>
+
+<p>The only thing that changes, is ofcourse the username that the user will use when logging onto the AWS Management Console:</p>
+
+<h2>Details of our User:</h2>
+
+<p>We will change the IAM User <code>peter</code> to <code>peter.franklin</code>. Currently Peter&rsquo;s ACCESS_KEY will be <code>AKIA123456ABCDEF1234</code> which is configured with the profile name <code>peter</code>.</p>
+
+<p>Lets first get details of our user before changing it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile admin iam get-user --user-name peter
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;User&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;UserName&quot;</span>: <span class="s2">&quot;peter&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;PasswordLastUsed&quot;</span>: <span class="s2">&quot;2017-08-28T13:17:22Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;CreateDate&quot;</span>: <span class="s2">&quot;2017-08-28T13:11:25Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;UserId&quot;</span>: <span class="s2">&quot;ABCDEFGHIJKLMNOPQRST&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Path&quot;</span>: <span class="s2">&quot;/&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Arn&quot;</span>: <span class="s2">&quot;arn:aws:iam::123456789012:user/peter&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Rename the IAM User</h2>
+
+<p>Update user peter to peter.franklin:</p>
+
+<figure class='code'><figcaption><span>Rename the IAM User</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile aws iam update-user --user-name peter --new-user-name peter.franklin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Describe peter&rsquo;s new username:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile aws iam get-user --user-name peter.franklin
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;User&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;UserName&quot;</span>: <span class="s2">&quot;peter.franklin&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;PasswordLastUsed&quot;</span>: <span class="s2">&quot;2017-08-28T13:23:18Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;CreateDate&quot;</span>: <span class="s2">&quot;2017-08-28T13:11:25Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;UserId&quot;</span>: <span class="s2">&quot;ABCDEFGHIJKLNMOPQRST&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Path&quot;</span>: <span class="s2">&quot;/&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Arn&quot;</span>: <span class="s2">&quot;arn:aws:iam::123456789012:user/peter.franklin&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that access keys are the same:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile aws iam list-access-keys --user-name peter.franklin
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;AccessKeyMetadata&quot;</span>: <span class="o">[</span>
+</span><span class='line'>        <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;UserName&quot;</span>: <span class="s2">&quot;peter.franklin&quot;</span>,
+</span><span class='line'>            <span class="s2">&quot;Status&quot;</span>: <span class="s2">&quot;Active&quot;</span>,
+</span><span class='line'>            <span class="s2">&quot;CreateDate&quot;</span>: <span class="s2">&quot;2017-08-28T13:11:27Z&quot;</span>,
+</span><span class='line'>            <span class="s2">&quot;AccessKeyId&quot;</span>: <span class="s2">&quot;AKIA123456ABCDEF1234&quot;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">]</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At this momemnt we can see that Peter&rsquo;s AccessKeyId is still the same, which means he does not have to update his credentials on his end.</p>
+
+<h2>Some Useful CLI Commands:</h2>
+
+<p>Get only the Access Key for a User:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile admin iam list-access-keys --user-name peter.franklin <span class="p">|</span> jq -r <span class="s1">&#39;.[][].AccessKeyId&#39;</span>
+</span><span class='line'>AKIA123456ABCDEF1234
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Determine when the AccessKey was last used, and for which Service:</h2>
+
+<p>For auditing, or verifying if a AccessKeyId is being used, we can call the <code>get-access-key-last-used</code>, which will give us the last time the key was used, and also see for which service in question.</p>
+
+<p>Let Peter create a DynamoDB Table:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile peter dynamodb <span class="se">\</span>
+</span><span class='line'>create-table --table-name test01 <span class="se">\</span>
+</span><span class='line'>--attribute-definitions <span class="s2">&quot;AttributeName=username,AttributeType=S&quot;</span> <span class="se">\</span>
+</span><span class='line'>--key-schema <span class="s2">&quot;AttributeName=username,KeyType=HASH&quot;</span> <span class="se">\</span>
+</span><span class='line'>--provisioned-throughput <span class="s2">&quot;ReadCapacityUnits=1,WriteCapacityUnits=1&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
+</span><span class='line'>    <span class="nt">&quot;TableDescription&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="nt">&quot;TableArn&quot;</span><span class="p">:</span> <span class="s2">&quot;arn:aws:dynamodb:eu-west-1:123456789012:table/test01&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;AttributeDefinitions&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>            <span class="p">{</span>
+</span><span class='line'>                <span class="nt">&quot;AttributeName&quot;</span><span class="p">:</span> <span class="s2">&quot;username&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="nt">&quot;AttributeType&quot;</span><span class="p">:</span> <span class="s2">&quot;S&quot;</span>
+</span><span class='line'>            <span class="p">}</span>
+</span><span class='line'>        <span class="p">],</span>
+</span><span class='line'>        <span class="nt">&quot;ProvisionedThroughput&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="nt">&quot;NumberOfDecreasesToday&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;WriteCapacityUnits&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;ReadCapacityUnits&quot;</span><span class="p">:</span> <span class="mi">1</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="nt">&quot;TableSizeBytes&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;TableName&quot;</span><span class="p">:</span> <span class="s2">&quot;test01&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;TableStatus&quot;</span><span class="p">:</span> <span class="s2">&quot;CREATING&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;KeySchema&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>            <span class="p">{</span>
+</span><span class='line'>                <span class="nt">&quot;KeyType&quot;</span><span class="p">:</span> <span class="s2">&quot;HASH&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="nt">&quot;AttributeName&quot;</span><span class="p">:</span> <span class="s2">&quot;username&quot;</span>
+</span><span class='line'>            <span class="p">}</span>
+</span><span class='line'>        <span class="p">],</span>
+</span><span class='line'>        <span class="nt">&quot;ItemCount&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;CreationDateTime&quot;</span><span class="p">:</span> <span class="mf">1503928537.671</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get Detail on LastUsedDate:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile admin iam get-access-key-last-used  --access-key <span class="k">$(</span>aws --profile aws iam list-access-keys --user-name peter.franklin <span class="p">|</span> jq -r <span class="s1">&#39;.[][].AccessKeyId&#39;</span><span class="k">)</span> <span class="p">|</span> jq -r <span class="s1">&#39;.[]&#39;</span>
+</span><span class='line'>peter.franklin
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>  <span class="s2">&quot;Region&quot;</span>: <span class="s2">&quot;eu-west-1&quot;</span>,
+</span><span class='line'>  <span class="s2">&quot;ServiceName&quot;</span>: <span class="s2">&quot;dynamodb&quot;</span>,
+</span><span class='line'>  <span class="s2">&quot;LastUsedDate&quot;</span>: <span class="s2">&quot;2017-08-28T13:55:00Z&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Only getting the LastUsedDate of the AccessKeyId:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile admin iam get-access-key-last-used  --access-key <span class="k">$(</span>aws --profile aws iam list-access-keys --user-name peter.franklin <span class="p">|</span> jq -r <span class="s1">&#39;.[][].AccessKeyId&#39;</span><span class="k">)</span> <span class="p">|</span> jq <span class="s1">&#39;.AccessKeyLastUsed.LastUsedDate&#39;</span>
+</span><span class='line'><span class="s2">&quot;2017-08-28T13:55:00Z&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><ul>
+<li><a href="http://docs.aws.amazon.com/cli/latest/reference/iam/update-user.html?shortFooter=true">http://docs.aws.amazon.com/cli/latest/reference/iam/update-user.html?shortFooter=true</a></li>
+</ul>
+</li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/08/27/using-the-python-api-for-mongodb-using-pymongo/">Using the Python API for MongoDB Using PyMongo</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-08-27T16:19:48-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>27</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>4:19 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>Using the Python API for MongoDB using Pymongo</p>
+
+<h2>Requirements:</h2>
+
+<p>You will need to install the <code>pymongo</code> driver using pip:</p>
+
+<figure class='code'><figcaption><span>Install Pymongo</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install pymongo
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>A configuration file with your access credentials, which I like to use outside my code:</p>
+
+<figure class='code'><figcaption><span>config.py</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">credentials</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;mongodb&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;HOSTNAME&quot;</span>: <span class="s2">&quot;host.domain.com&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;USERNAME&quot;</span>: <span class="s2">&quot;username&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;PASSWORD&quot;</span>: <span class="s2">&quot;password&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Connecting to MongoDB:</h2>
+
+<p>From the python interpreter, connect to MongoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">pymongo</span> <span class="kn">import</span> <span class="n">MongoClient</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">config</span> <span class="kn">import</span> <span class="n">credentials</span> <span class="k">as</span> <span class="n">secrets</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mongo_host</span> <span class="o">=</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;mongodb&#39;</span><span class="p">][</span><span class="s">&#39;HOSTNAME&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mongo_username</span> <span class="o">=</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;mongodb&#39;</span><span class="p">][</span><span class="s">&#39;USERNAME&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mongo_password</span> <span class="o">=</span> <span class="n">secrets</span><span class="p">[</span><span class="s">&#39;mongodb&#39;</span><span class="p">][</span><span class="s">&#39;PASSWORD&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mongodb_client</span> <span class="o">=</span> <span class="n">MongoClient</span><span class="p">(</span><span class="s">&#39;mongodb://</span><span class="si">%s</span><span class="s">:</span><span class="si">%s</span><span class="s">@</span><span class="si">%s</span><span class="s">:27017/admin?authMechanism=SCRAM-SHA-1&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">mongo_username</span><span class="p">,</span> <span class="n">mongo_password</span><span class="p">,</span> <span class="n">mongo_host</span><span class="p">))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Find the Database that you are connected to:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mongodb_client</span><span class="o">.</span><span class="n">get_database</span><span class="p">()</span><span class="o">.</span><span class="n">name</span>
+</span><span class='line'><span class="s">u&#39;admin&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Find all the databases that is currently on your MongoDB Server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">dbs</span> <span class="o">=</span> <span class="n">mongodb_client</span><span class="o">.</span><span class="n">database_names</span><span class="p">()</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">dbs</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="n">admin</span>
+</span><span class='line'><span class="n">flask_reminders</span>
+</span><span class='line'><span class="n">local</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create a Database, Collection and Write a Document into your Database:</h2>
+
+<p>Let&rsquo;s create a database, in my case it will be <code>ruan-test</code>, and my collection name <code>mycollection</code> and the write one item into it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb</span> <span class="o">=</span> <span class="n">mongodb_client</span><span class="p">[</span><span class="s">&#39;ruan-test&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb_collection</span> <span class="o">=</span> <span class="n">newdb</span><span class="p">[</span><span class="s">&#39;mycollection&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">doc</span> <span class="o">=</span> <span class="p">{</span><span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;frank&quot;</span><span class="p">,</span> <span class="s">&quot;surname&quot;</span><span class="p">:</span> <span class="s">&quot;jeffreys&quot;</span><span class="p">,</span> <span class="s">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s">&quot;person&quot;</span><span class="p">,</span> <span class="s">&quot;name&quot;</span><span class="p">]}</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">doc_id</span> <span class="o">=</span> <span class="n">newdb_collection</span><span class="o">.</span><span class="n">insert_one</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span><span class="o">.</span><span class="n">inserted_id</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">doc_id</span><span class="p">)</span>
+</span><span class='line'><span class="mi">59</span><span class="n">a319ec1f15a5088ba3a339</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note: you can also connect to your collection like the following</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb_collection</span> <span class="o">=</span> <span class="n">mongodb_client</span><span class="p">[</span><span class="s">&#39;ruan-test&#39;</span><span class="p">][</span><span class="s">&#39;mycollection&#39;</span><span class="p">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We have inserted one item into our database, which we can verify with <code>count()</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb_collection</span><span class="o">.</span><span class="n">find</span><span class="p">()</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+</span><span class='line'><span class="mi">1</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see I have the value of the item&rsquo;s id, we can use that to find it from our collection:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb_collection</span><span class="o">.</span><span class="n">find_one</span><span class="p">({</span><span class="s">&quot;_id&quot;</span><span class="p">:</span> <span class="n">doc_id</span><span class="p">})</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;59a319ec1f15a5088ba3a339&#39;</span><span class="p">),</span> <span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;jeffreys&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;frank&#39;</span><span class="p">,</span> <span class="s">u&#39;tags&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s">u&#39;person&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">]}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As we only have one item in our database, we can also use <code>find_one()</code> which will give us the exact same data:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb_collection</span><span class="o">.</span><span class="n">find_one</span><span class="p">()</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;59a319ec1f15a5088ba3a339&#39;</span><span class="p">),</span> <span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;jeffreys&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;frank&#39;</span><span class="p">,</span> <span class="s">u&#39;tags&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s">u&#39;person&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">]}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can write some more data to our database, but this time, lets write to a different collection:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb_collection2</span> <span class="o">=</span> <span class="n">newdb</span><span class="p">[</span><span class="s">&#39;new-collection-2&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">item</span> <span class="o">=</span> <span class="n">newdb_collection2</span><span class="o">.</span><span class="n">insert_one</span><span class="p">({</span><span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;ruby&quot;</span><span class="p">,</span> <span class="s">&quot;surname&quot;</span><span class="p">:</span> <span class="s">&quot;james&quot;</span><span class="p">})</span><span class="o">.</span><span class="n">inserted_id</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">item2</span> <span class="o">=</span> <span class="n">newdb_collection2</span><span class="o">.</span><span class="n">insert_one</span><span class="p">({</span><span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;ruby&quot;</span><span class="p">,</span> <span class="s">&quot;surname&quot;</span><span class="p">:</span> <span class="s">&quot;james&quot;</span><span class="p">})</span><span class="o">.</span><span class="n">inserted_id</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As we captured the items <code>_id</code>, we can view the:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+</span><span class='line'><span class="mi">59</span><span class="n">a31acf1f15a5088ba3a33b</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">print</span><span class="p">(</span><span class="n">item2</span><span class="p">)</span>
+</span><span class='line'><span class="mi">59</span><span class="n">a31a8a1f15a5088ba3a33a</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Query Data from MongoDB:</h2>
+
+<p>We can then query for this data:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb2</span><span class="o">.</span><span class="n">find_one</span><span class="p">({</span><span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;ruby&quot;</span><span class="p">})</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;59a31acf1f15a5088ba3a33b&#39;</span><span class="p">),</span> <span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruby&#39;</span><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb2</span><span class="o">.</span><span class="n">find_one</span><span class="p">({</span><span class="s">&quot;_id&quot;</span><span class="p">:</span> <span class="n">item</span><span class="p">})</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;59a31acf1f15a5088ba3a33b&#39;</span><span class="p">),</span> <span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruby&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Also scan for all items in the collection:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">scan</span> <span class="o">=</span> <span class="n">newdb_collection2</span><span class="o">.</span><span class="n">find</span><span class="p">({})</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">scan</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;59a31a8a1f15a5088ba3a33a&#39;</span><span class="p">),</span> <span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;phillip&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;59a31acf1f15a5088ba3a33b&#39;</span><span class="p">),</span> <span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruby&#39;</span><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb2</span><span class="o">.</span><span class="n">find</span><span class="p">()</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+</span><span class='line'><span class="mi">2</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can now verify that we have 2 collections in our database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">newdb</span><span class="o">.</span><span class="n">collection_names</span><span class="p">()</span>
+</span><span class='line'><span class="p">[</span><span class="s">u&#39;mycollection-2&#39;</span><span class="p">,</span> <span class="s">u&#39;mycollection&#39;</span><span class="p">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Connecting to an existing Database:</h2>
+
+<p>Let&rsquo;s connect to an existing database on our MongoDB Server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">flaskdb</span> <span class="o">=</span> <span class="n">mongodb_client</span><span class="p">[</span><span class="s">&#39;flask_reminders&#39;</span><span class="p">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the collections:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">flaskdb</span><span class="o">.</span><span class="n">collection_names</span><span class="p">()</span>
+</span><span class='line'><span class="p">[</span><span class="s">u&#39;reminders&#39;</span><span class="p">,</span> <span class="s">u&#39;usersessions&#39;</span><span class="p">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Count the number of items in our <code>reminders</code> Collection:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">flaskdb</span><span class="o">.</span><span class="n">reminders</span><span class="o">.</span><span class="n">find</span><span class="p">()</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+</span><span class='line'><span class="mi">624</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Find a Random Item:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">flaskdb</span><span class="o">.</span><span class="n">reminders</span><span class="o">.</span><span class="n">find_one</span><span class="p">()</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;category&#39;</span><span class="p">:</span> <span class="s">u&#39;Python&#39;</span><span class="p">,</span> <span class="s">u&#39;description&#39;</span><span class="p">:</span> <span class="s">u&#39;Chatbot with SQLite&#39;</span><span class="p">,</span> <span class="s">u&#39;link&#39;</span><span class="p">:</span> <span class="s">u&#39;http://rodic.fr/blog/python-chatbot-1/&#39;</span><span class="p">,</span> <span class="s">u&#39;date&#39;</span><span class="p">:</span> <span class="s">u&#39;2017-01-03&#39;</span><span class="p">,</span> <span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;586bb6dd0269103671afce32&#39;</span><span class="p">),</span> <span class="s">u&#39;type&#39;</span><span class="p">:</span> <span class="s">u&#39;Discovered Service&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Find One Item, with a Specific Value, for example the value <code>AWS</code> for our <code>Category key</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">flaskdb</span><span class="o">.</span><span class="n">reminders</span><span class="o">.</span><span class="n">find_one</span><span class="p">({</span><span class="s">&quot;category&quot;</span><span class="p">:</span> <span class="s">&quot;AWS&quot;</span><span class="p">})</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;category&#39;</span><span class="p">:</span> <span class="s">u&#39;AWS&#39;</span><span class="p">,</span> <span class="s">u&#39;description&#39;</span><span class="p">:</span> <span class="s">u&#39;Elasticsearch Documentation Access Policies&#39;</span><span class="p">,</span> <span class="s">u&#39;link&#39;</span><span class="p">:</span> <span class="s">u&#39;http://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-createupdatedomains.html#es-createdomain-configure-access-policies&#39;</span><span class="p">,</span> <span class="s">u&#39;date&#39;</span><span class="p">:</span> <span class="s">u&#39;2017-02-13&#39;</span><span class="p">,</span> <span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;58a1d45202691070616947c3&#39;</span><span class="p">),</span> <span class="s">u&#39;type&#39;</span><span class="p">:</span> <span class="s">u&#39;Documentation&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Find All Items, with a specific value:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">data</span> <span class="o">=</span> <span class="n">flaskdb</span><span class="o">.</span><span class="n">reminders</span><span class="o">.</span><span class="n">find</span><span class="p">({</span><span class="s">&quot;category&quot;</span><span class="p">:</span> <span class="s">&quot;AWS&quot;</span><span class="p">})</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;category&#39;</span><span class="p">:</span> <span class="s">u&#39;Python&#39;</span><span class="p">,</span> <span class="s">u&#39;description&#39;</span><span class="p">:</span> <span class="s">u&#39;Chatbot with SQLite&#39;</span><span class="p">,</span> <span class="s">u&#39;link&#39;</span><span class="p">:</span> <span class="s">u&#39;http://rodic.fr/blog/python-chatbot-1/&#39;</span><span class="p">,</span> <span class="s">u&#39;date&#39;</span><span class="p">:</span> <span class="s">u&#39;2017-01-03&#39;</span><span class="p">,</span> <span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;586bb6dd0269103671afce32&#39;</span><span class="p">),</span> <span class="s">u&#39;type&#39;</span><span class="p">:</span> <span class="s">u&#39;Discovered Service&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;category&#39;</span><span class="p">:</span> <span class="s">u&#39;Python&#39;</span><span class="p">,</span> <span class="s">u&#39;description&#39;</span><span class="p">:</span> <span class="s">u&#39;Boto: Kinesis List&#39;</span><span class="p">,</span> <span class="s">u&#39;link&#39;</span><span class="p">:</span> <span class="s">u&#39;https://gitlab.com/rbekker87/code-examples/blob/master/kinesis/firehose/python/firehose.list.py&#39;</span><span class="p">,</span> <span class="s">u&#39;date&#39;</span><span class="p">:</span> <span class="s">u&#39;2017-01-05&#39;</span><span class="p">,</span> <span class="s">u&#39;_id&#39;</span><span class="p">:</span> <span class="n">ObjectId</span><span class="p">(</span><span class="s">&#39;586dde1e0269103671afce36&#39;</span><span class="p">),</span> <span class="s">u&#39;type&#39;</span><span class="p">:</span> <span class="s">u&#39;Stuff Done&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deleting Databases:</h2>
+
+<p>Cleaning up, deleting the database that we created, when a database is delete, the collections within that database also gets removed.</p>
+
+<p>First list the databases:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">dbs</span> <span class="o">=</span> <span class="n">mongodb_client</span><span class="o">.</span><span class="n">database_names</span><span class="p">()</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">dbs</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="n">admin</span>
+</span><span class='line'><span class="n">flask_reminders</span>
+</span><span class='line'><span class="n">local</span>
+</span><span class='line'><span class="n">ruan</span><span class="o">-</span><span class="n">test</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then delete the database that you want to delete:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mongodb_client</span><span class="o">.</span><span class="n">drop_database</span><span class="p">(</span><span class="s">&quot;ruan-test&quot;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then verify if the database was removed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">dbs</span> <span class="o">=</span> <span class="n">mongodb_client</span><span class="o">.</span><span class="n">database_names</span><span class="p">()</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">dbs</span><span class="p">:</span>
+</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="n">admin</span>
+</span><span class='line'><span class="n">flask_reminders</span>
+</span><span class='line'><span class="n">local</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="http://api.mongodb.com/python/current/tutorial.html">http://api.mongodb.com/python/current/tutorial.html</a></li>
+<li><a href="https://docs.mongodb.com/getting-started/python/client/">https://docs.mongodb.com/getting-started/python/client/</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2751,232 +3932,9 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/08/24/create-a-zfs-raidz1-volume-pool-on-ubuntu-16/">Create a ZFS Raidz1 Volume Pool on Ubuntu 16</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-08-24T09:16:34-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>9:16 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Setting up ZFS Volume Pool on Ubuntu 16.04</p>
-
-<h2>Installation</h2>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo apt-get install zfsutils-linux -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Creating the ZFS Storage Pool</h2>
-
-<p>We will create a RAIDZ(1) Volume which is like Raid5 with Single Parity, so we can lose one of the Physical Disks before Raid failure.</p>
-
-<p>Let&rsquo;s first have a look at our disks that we have on our server:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ lsblk
-</span><span class='line'>NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
-</span><span class='line'>xvda    202:0    0   8G  0 disk
-</span><span class='line'>└─xvda1 202:1    0   8G  0 part /
-</span><span class='line'>xvdf    202:80   0 100G  0 disk 
-</span><span class='line'>xvdg    202:80   0 100G  0 disk </span></code></pre></td></tr></table></div></figure>
-
-
-<p>So we will be creating the volume consisting of <code>/dev/xvdf</code> and <code>/dev/xvdg</code> and we will name our pool: <code>storage-pool</code></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ zpool create storage-pool raidz1 xvdf xvdg -f</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Listing Pools</h2>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ zpool list
-</span><span class='line'>NAME           SIZE  ALLOC   FREE  EXPANDSZ   FRAG    CAP  DEDUP  HEALTH  ALTROOT
-</span><span class='line'>storage-pool   199G   125K   199G         -     0%     0%  1.00x  ONLINE  -</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can also list the volume with <code>zfs</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ zfs list
-</span><span class='line'>NAME            USED  AVAIL  REFER  MOUNTPOINT
-</span><span class='line'>storage-pool    125K  199G   19K    /storage-pool</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Mounting the Volume:</h2>
-
-<p>You will find that the volume is already mounted:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ df -h
-</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
-</span><span class='line'>/dev/xvda1      7.7G  1.1G  6.7G  14% /
-</span><span class='line'>pool            199G  125K  198G   1% /pool</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<p>See how Brett Kelly from 45 Drives tried to break a Storage Cluster with GlusterFS and ZFS:</p>
-
-<center><iframe width="740" height="400" src="https://www.youtube.com/embed/A0wV4k58RIs" frameborder="1" allowfullscreen></iframe></center>
-
-
-<p>Great ZFS Performance Comparison:</p>
-
-<ul>
-<li><a href="https://calomel.org/zfs_raid_speed_capacity.html">https://calomel.org/zfs_raid_speed_capacity.html</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/08/24/setup-mongodb-client-on-centos-6/">Setup MongoDB Client on CentOS 6</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-08-24T08:58:10-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>8:58 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>I have a bastion host that is still running CentOS6 and epel repos provides mongodb-shell version 2.x and Mlab requires version 3.x</p>
-
-<h2>Setup the Repositories</h2>
-
-<p>Create the repository:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat &gt; /etc/yum.repos.d/mongodb.repo &lt;&lt; EOF
-</span><span class='line'>[mongodb-org-3.4]
-</span><span class='line'>name=MongoDB Repository
-</span><span class='line'>baseurl=https://repo.mongodb.org/yum/redhat/\$releasever/mongodb-org/3.4/x86_64/
-</span><span class='line'>gpgcheck=1
-</span><span class='line'>enabled=1
-</span><span class='line'>gpgkey=https://www.mongodb.org/static/pgp/server-3.4.asc
-</span><span class='line'>EOF</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Update the repository index:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo yum update -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Install MongoDB-Shell</h2>
-
-<p>Install the MongoDB Shell Client:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo yum install mongodb-shell -y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Update: Thanks to Rick, when you use CentOS 7, you can install the Shell Client as instructed below:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo yum install mongodb-org-shell -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Connect to your Remote MongoDB Instance:</h2>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mongo remotedb.mlab.com:27017/&lt;dbname&gt; -u &lt;user&gt; -p &lt;pass&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/08/24/hello/">Hello</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-08-24T08:37:21-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>8:37 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Hello everyone, so I decided that I will pusblish anything that catches my curiosity on this blog which is proudly hosted on Github.</p>
-
-<h3>Resources:</h3>
-
-<ul>
-<li><p><a href="http://samwize.com/2012/09/11/how-to-setup-octopress-on-github-pages/">http://samwize.com/2012/09/11/how-to-setup-octopress-on-github-pages/</a></p></li>
-<li><p><a href="http://octopress.org/docs/setup/">http://octopress.org/docs/setup/</a></p></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
+    
+      <a class="prev" href="/posts/22">&larr; Older</a>
     
     <a href="/blog/archives">Blog Archives</a>
     
@@ -3014,23 +3972,23 @@
   <ul id="recent_posts">
     
       <li class="post">
-        <a href="/blog/2019/04/04/self-hosted-git-and-cicd-platform-with-gitea-and-drone-on-docker/">Self Hosted Git and CICD Platform With Gitea and Drone on Docker</a>
+        <a href="/blog/2019/04/06/sql-inner-joins-examples-with-sqlite/">SQL Inner Joins Examples With SQLite</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/03/build-small-golang-docker-containers/">Build Small Golang Docker Containers</a>
+        <a href="/blog/2019/04/06/install-elasticsearch-with-ansible-tutorial/">Install Elasticsearch With Ansible Tutorial</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/">Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt</a>
+        <a href="/blog/2019/04/06/elasticsearch-templates-tutorial/">Elasticsearch Templates Tutorial</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/02/setup-kibana-dashboards-for-nginx-log-data-to-understand-the-behavior/">Setup Kibana Dashboards for Nginx Log Data to Understand the Behavior</a>
+        <a href="/blog/2019/04/06/reindex-your-elasticsearch-indexes-tutorial/">Reindex Your Elasticsearch Indexes Tutorial</a>
       </li>
     
       <li class="post">
-        <a href="/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster/">Setup a 5 Node Highly Available Elasticsearch Cluster</a>
+        <a href="/blog/2019/04/06/shrink-your-elasticsearch-index-by-reducing-the-shard-count-with-the-shards-api/">Shrink Your Elasticsearch Index by Reducing the Shard Count With the Shards API</a>
       </li>
     
   </ul>

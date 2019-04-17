@@ -52,7 +52,7 @@ $ go get go.mongodb.org/mongo-driver
 
 First example will be to connect to your mongodb instance:
 
-```golang
+```go
 package main
 
 import (
@@ -100,7 +100,7 @@ Connected to MongoDB!
 
 Let's insert a single document to MongoDB:
 
-```golang
+```go
 func main() {
     ..
     collection := client.Database("mydb").Collection("persons")
@@ -184,7 +184,7 @@ Matched 1 documents and updated 1 documents.
 
 Reading the data:
 
-```golang
+```go
 funct main() {
     ..
     filter := bson.D{{"name", "Frankie"}}
@@ -210,7 +210,7 @@ Found a single document: {Name:Frankie Age:32 City:Nairobi}
 
 Finding multiple documents and returning the cursor
 
-```golang
+```go
 func main() {
     ..
     var results []*Trainer
@@ -249,7 +249,7 @@ Found multiple documents (array of pointers): [0xc0001215c0 0xc0001215f0]
 
 Deleting our data and closing the connection:
 
-```golang
+```go
 func main(){
     ..
     deleteResult, err := collection.DeleteMany(context.TODO(), bson.D{{}})

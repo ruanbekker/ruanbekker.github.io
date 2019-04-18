@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Golang | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/golang/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-18T06:20:44-04:00</updated>
+  <updated>2019-04-18T13:22:38-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,213 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Drone CICD Environment on Docker With Letsencrypt]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/"/>
+    <updated>2019-04-18T12:53:49-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/56378979-ed313500-620e-11e9-9ac0-4fcd1df803e8.png" alt="drone-ci" /></p>
+
+<h2>What is Drone?</h2>
+
+<p>Drone is a self-service continuous delivery platform which can be used for CICD pipelines, devopsy stuff which is really awesome.</p>
+
+<p>With Configuration as Code, Pipelines are configured with a simple, easy‑to‑read file that you commit to your git repository such as github, gitlab, gogs, gitea etc.</p>
+
+<p>Each Pipeline step is executed inside an isolated Docker container that is automatically downloaded at runtime, if not found in cache.</p>
+
+<h2>Show me pipelines!</h2>
+
+<p>A pipeline can look as easy as:</p>
+
+<pre><code class="yaml">kind: pipeline
+steps:
+- name: test
+  image: node
+  commands:
+  - npm install
+  - npm test
+services:
+- name: database
+  image: mysql
+  ports:
+  - 3306
+</code></pre>
+
+<h2>What are we doing?</h2>
+
+<p>We will deploy a drone server which is responsible for the actual server and 2 drone agents which will receive instructions from the server whenever steps need to be executed. Steps run on agents.</p>
+
+<h2>Deploy the Servers</h2>
+
+<p>I&rsquo;m using VULTR to deploy 3 nodes on coreos, 1 drone server and 2 drone agents as seen below:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56371668-d0403600-61fd-11e9-8396-01c07c136518.png" alt="image" /></p>
+
+<p>Documentation:
+<a href="https://docs.drone.io/installation/github/multi-machine/">https://docs.drone.io/installation/github/multi-machine/</a>
+<a href="https://github.com/settings/developers">https://github.com/settings/developers</a></p>
+
+<p>We will use Github for version control and to delegate auth, therefore we need to register a new application on Github.</p>
+
+<p>Register New Application on Github at <a href="https://github.com/settings/developer">https://github.com/settings/developer</a> :</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56375985-22398980-6207-11e9-911d-9595f8f85db9.png" alt="register-application" /></p>
+
+<p>Get your Drone-Server Host Endpoint, and update the fields:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56374721-287a3680-6204-11e9-837f-a7751651c29a.png" alt="image" /></p>
+
+<p>You will receive a Github Client ID, Secret which we will need later, which will look like this:</p>
+
+<pre><code>Client ID:
+xx
+Client Secret:
+yyy
+</code></pre>
+
+<p>Generate the shared secret which will be used on the server and agent:</p>
+
+<pre><code>$ openssl rand -hex 16
+eb83xxe19a3497f597f53044250df6yy
+</code></pre>
+
+<p>Create the Startup Script for Drone Server, which will just be a docker container running in detached mode. Note that you should use your own domain at <code>SERVER_HOST</code> and if you want to issue an certificate automatically keep <code>DRONE_TLS_AUTOCERT</code> to true.</p>
+
+<pre><code>$ cat &gt; start_drone-server.sh &lt;&lt; EOF
+#!/usr/bin/env bash
+
+set -ex
+
+GITHUB_CLIENT_ID=xx
+GITHUB_CLIENT_SECRET=yyy
+SHARED_SECRET=eb83xxe19a3497f597f53044250df6yy
+SERVER_HOST=drone.yourdomain.com
+SERVER_PROTOCOL=https
+
+docker run \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  --volume=/var/lib/drone:/data \
+  --env=DRONE_GITHUB_SERVER=https://github.com \
+  --env=DRONE_GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID} \
+  --env=DRONE_GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET} \
+  --env=DRONE_AGENTS_ENABLED=true \
+  --env=DRONE_RPC_SECRET=${SHARED_SECRET} \
+  --env=DRONE_SERVER_HOST=${SERVER_HOST} \
+  --env=DRONE_SERVER_PROTO=${SERVER_PROTOCOL} \
+  --env=DRONE_TLS_AUTOCERT=true \
+  --publish=80:80 \
+  --publish=443:443 \
+  --restart=always \
+  --detach=true \
+  --name=drone \
+  drone/drone:1
+EOF
+</code></pre>
+
+<p>Create the startup script for the drone agent, note that this script needs to be placed on the agent nodes:</p>
+
+<pre><code>$ cat &gt; start_drone-agent.sh &lt;&lt; EOF
+#!/usr/bin/env bash
+
+set -ex
+
+SHARED_SECRET=eb83xxe19a3497f597f53044250df6yy
+AGENT_SERVER_HOST=https://drone.yourdomain.com
+SERVER_PROTOCOL=https
+
+docker run \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  --env=DRONE_RPC_SERVER=${AGENT_SERVER_HOST} \
+  --env=DRONE_RPC_SECRET=${SHARED_SECRET} \
+  --env=DRONE_RUNNER_CAPACITY=2 \
+  --env=DRONE_RUNNER_NAME=${HOSTNAME} \
+  --restart=always \
+  --detach=true \
+  --name=drone-agent-02 \
+  drone/agent:1
+EOF
+</code></pre>
+
+<p>Logon to the server node and start the drone server:</p>
+
+<pre><code>$ bash start_drone-agent.sh
+</code></pre>
+
+<p>Login to the agent nodes and start the agents:</p>
+
+<pre><code>$ bash start_drone-agent.sh
+</code></pre>
+
+<p>The server should show that it&rsquo;s listening on port 80 and 443:</p>
+
+<pre><code>$ docker ps
+CONTAINER ID        IMAGE               COMMAND               CREATED             STATUS              PORTS                                      NAMES
+8ea70fc7b967        drone/drone:1       "/bin/drone-server"   12 minutes ago      Up 12 minutes       0.0.0.0:80-&gt;80/tcp, 0.0.0.0:443-&gt;443/tcp   drone
+</code></pre>
+
+<h2>Access Drone</h2>
+
+<p>Access your Drone instance on port 80 eg. <a href="http://drone.yourdomain.com">http://drone.yourdomain.com</a> you should be automatically redirected to port 443, which should direct you to a login page, which will look like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56375632-5eb8b580-6206-11e9-9ae8-92b2cd29abec.png" alt="drone-authorize" /></p>
+
+<p>Login with your github account and allow drone some time to sync your repositories:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56373131-9e7c9e80-6200-11e9-83ce-e486b399468e.png" alt="image" /></p>
+
+<h2>Add drone config to your repository:</h2>
+
+<p>Clone this repository: <a href="https://github.com/ruanbekker/drone-ci-testing">https://github.com/ruanbekker/drone-ci-testing</a> which will contain the <code>.drone.yml</code> config which drone gets its instructions from.</p>
+
+<p>Select a repository to activate, (drone-ci-testing in this case) head over to settings:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56373298-f1565600-6200-11e9-8262-ac3162fed4f2.png" alt="image" /></p>
+
+<p>Adding secret:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56373209-c5d36b80-6200-11e9-90de-68c131480672.png" alt="image" /></p>
+
+<p>Add more secrets:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56373443-3da19600-6201-11e9-85a9-083bfcbd604a.png" alt="image" /></p>
+
+<p>Your build list should be empty:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56373533-6fb2f800-6201-11e9-8fa0-ab05e546c36e.png" alt="image" /></p>
+
+<h2>Trigger a Build</h2>
+
+<p>Edit any of the files in the clone repository and you should see your build running:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56374465-85c1b800-6203-11e9-8542-acd1d5729447.png" alt="image" /></p>
+
+<p>When your build has completed:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56374511-a25df000-6203-11e9-9eb8-d94a777a8b4a.png" alt="image" /></p>
+
+<p>You can also find out where the step ran:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56374667-084a7780-6204-11e9-9c5b-6672f6882411.png" alt="image" /></p>
+
+<p>Run a couple of tests:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56376356-e3f09a00-6207-11e9-8ca0-16e06e7c0379.png" alt="image" /></p>
+
+<p>Get notified via slack:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56376376-eeab2f00-6207-11e9-9af9-194cb5a3023b.png" alt="image" /></p>
+
+<h2>Debugging</h2>
+
+<p>If your build fails, its most likely that you need the <code>slack_webhook</code> secret. You can remove the slack step which shouldhelp you get going with drone.</p>
+
+<h2>More on Drone</h2>
+
+<p>Have a look at <a href="https://github.com/ruanbekker/drone-ci-testing/blob/master/README.md">this document</a> for more examples or have a look at their <a href="https://docs.drone.io/">documentation</a> as well as their extensive list of <a href="http://plugins.drone.io/">plugins</a> and their <a href="https://docs.drone.io/installation/github/multi-machine/">setup documentation</a> to become familiar with their configuration.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[MongoDB Examples With Golang]]></title>
@@ -797,142 +1004,6 @@ func main() {
 <pre><code class="bash">$ ./app
 Hello!
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Golang: Building a Basic Web Server in Go]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/11/21/golang-building-a-basic-web-server-in-go/"/>
-    <updated>2018-11-21T00:57:54-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/11/21/golang-building-a-basic-web-server-in-go</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/golang-web-server.png" alt="" /></p>
-
-<p>Continuing with our <a href="https://blog.ruanbekker.com/blog/categories/golang-tutorial/">#golang-tutorial</a> blog series, in this post we will setup a Basic HTTP Server in Go.</p>
-
-<h2>Our Web Server:</h2>
-
-<p>Our Web Server will respond on 2 Request Paths:</p>
-
-<pre><code>- / -&gt; returns "Hello, Wolrd!"
-- /cheers -&gt; returns "Goodbye!"
-</code></pre>
-
-<h2>Application Code:</h2>
-
-<p>If you have not setup your golang environment, you can do so by visiting <a href="https://medium.com/@AkyunaAkish/setting-up-a-golang-development-environment-mac-os-x-d58e5a7ea24f">@AkyunaAkish&rsquo;s Post on Setting up a Golang Development Enviornment on MacOSX</a>.</p>
-
-<p>Create the <code>server.go</code> or any filename of your choice. Note: I created 2 ways of returning the content of http response for demonstration</p>
-
-<pre><code class="go">package main
-
-import (
-    "io"
-        "log"
-    "net/http"
-)
-
-func hello(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Hello, World!" + "\n")
-    log.Println("hello function handler was executed")
-}
-
-func goodbye(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-    w.WriteHeader(http.StatusOK)
-    io.WriteString(w, "Cheers!" + "\n")
-    log.Println("goodbye function handler was executed")
-}
-
-func main() {
-    http.HandleFunc("/", hello)
-    http.HandleFunc("/cheers", goodbye)
-    http.ListenAndServe(":8000", nil)
-}
-</code></pre>
-
-<p>Explanation of what we are doing:</p>
-
-<ul>
-<li>Programs runs in the package <code>main</code></li>
-<li>We are importing 3 packages: <code>io</code>, <code>log</code> and <code>net/http</code></li>
-<li>HandleFunc registers the handler function for the given pattern in the DefaultServeMux, in this case the HandleFunc registers <code>/</code> to the <code>hello</code> handler function and <code>/cheers</code> to the goodbye handler function.</li>
-<li>In our 2 handler functions, we have two arguments:
-
-<ul>
-<li>The first one is <code>http.ResponseWriter</code> and its corresponding response stream, which is actually an interface type.</li>
-<li>The second is <code>*http.Request</code> and its corresponding HTTP request. <code>io.WriteString</code> is a helper function to let you write a string into a given writable stream, this is named the <code>io.Writer</code> interface in Golang.</li>
-</ul>
-</li>
-<li>ListenAndServe starts an HTTP server with a given address and handler. The handler is usually nil, which means to use DefaultServeMux</li>
-<li>The logging is not a requirement, but used it for debugging/verbosity</li>
-</ul>
-
-
-<h2>Running our Server:</h2>
-
-<p>Run the http server:</p>
-
-<pre><code class="bash">$ go run server.go
-</code></pre>
-
-<h2>Client Side Requests:</h2>
-
-<p>Run client side http requests to your golang web server:</p>
-
-<pre><code class="bash">$ curl -i http://localhost:8000/
-HTTP/1.1 200 OK
-Content-Type: text/plain; charset=utf-8
-Date: Wed, 21 Nov 2018 21:33:42 GMT
-Content-Length: 14
-
-Hello, World!
-</code></pre>
-
-<p>And another request to <code>/cheers</code>:</p>
-
-<pre><code class="bash">$ curl -i http://localhost:8000/cheers
-HTTP/1.1 200 OK
-Content-Type: text/plain; charset=utf-8
-Date: Wed, 21 Nov 2018 21:29:46 GMT
-Content-Length: 8
-
-Cheers!
-</code></pre>
-
-<h2>Server Side Output:</h2>
-
-<p>As we used the log package, the logging gets returned to stdout:</p>
-
-<pre><code class="bash">$ go run server.go
-2018/11/21 23:29:36 hello function handler was executed
-2018/11/21 23:29:46 goodbye function handler was executed
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://golang.org/doc/code.html">https://golang.org/doc/code.html</a></li>
-<li><a href="https://gowalker.org/net/http#HandleFunc">https://gowalker.org/net/http#HandleFunc</a></li>
-<li><a href="https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring">https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring</a></li>
-<li><a href="https://www.alexedwards.net/blog/golang-response-snippets">https://www.alexedwards.net/blog/golang-response-snippets</a></li>
-</ul>
-
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
 ]]></content>
   </entry>
   

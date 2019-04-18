@@ -7,6 +7,9 @@ comments: true
 categories: ["slack", "curl", "notifications", "messages"] 
 ---
 
+![slack](https://user-images.githubusercontent.com/567298/56354543-55165a00-61d4-11e9-9101-f979dcb4cdb3.png)
+
+
 Slack is amazing and I cant live without it. 
 
 We can also use custom webhook integrations to allow applications to notify us via slack in response of events.

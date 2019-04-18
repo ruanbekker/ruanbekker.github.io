@@ -36,6 +36,12 @@ services:
   - 3306
 ```
 
+## Open for Testing!
+
+I have enabled public access, so please go ahead and launch your cicd pipelines on my drone setup as I want to test the stability of it:
+
+==> [https://drone.rbkr.xyz/](https://drone.rbkr.xyz/)
+
 ## What are we doing?
 
 We will deploy a drone server which is responsible for the actual server and 2 drone agents which will receive instructions from the server whenever steps need to be executed. Steps run on agents.

@@ -162,6 +162,36 @@ pipeline:
       event: [push]
 ```
 
+## Notifications?
+
+If you want to be notified about your builds, you can add a slack notification step as the last step. 
+
+To do that, create a new webhook integration, you can [follow this post for a step by step guide](https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/). After you have the webhook, go to secrets and create a `slack_webhook` secret.
+
+Then apply the notification step as shown below:
+
+```
+  notify-via-slack:
+    image: plugins/slack
+    webhook:
+      from_secret: slack_webhook
+    channel: system_events
+    image_url: https://unsplash.it/256/256/?random
+    icon_url: https://unsplash.it/256/256/?random
+    template: >
+      {{#success build.status}}
+        [DRONE CI]: {{ build.status }}: {{ repo.owner }}/{{ repo.name }}
+        ({{ commit.branch }} - {{ truncate commit.sha 8 }})
+      {{else}}
+        [DRONE CI]: {{ build.status }}: {{ repo.owner }}/{{ repo.name }}
+        ({{ commit.branch }} - {{ truncate commit.sha 8 }})
+      {{/success}}
+```
+
+Based on the status, you should get a notification similar like this:
+
+![image](https://user-images.githubusercontent.com/567298/56621683-b18ed480-662d-11e9-96a8-db325490497d.png)
+
 ## Add the Docker Compose
 
 Next we need to declare our docker compose file which is needed to deploy our jekyll service to the swarm:

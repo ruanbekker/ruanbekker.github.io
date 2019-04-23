@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-23T05:44:19-04:00</updated>
+  <updated>2019-04-23T18:43:32-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,347 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using Drone CI to Build a Jekyll Site and Deploy to Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm/"/>
+    <updated>2019-04-23T17:57:02-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/56618556-3de7ca00-6623-11e9-995f-c22792f0ab21.png" alt="image" /></p>
+
+<p>CICD Pipelines! &lt;3</p>
+
+<p>In this post I will show you how to setup a cicd pipeline using drone to build a jekyll site and deploy to docker swarm.</p>
+
+<h2>Environment Overview</h2>
+
+<p><strong>Jekyll&rsquo;s Codebase</strong>: Our code will be hosted on Github (I will demonstrate how to set it up from scratch)</p>
+
+<p><strong>Secret Store</strong>: Our secrets such as ssh key, swarm host address etc will be stored in drones secrets manager</p>
+
+<p><strong>Docker Swarm</strong>: Docker Swarm has Traefik as a HTTP Loadbalancer</p>
+
+<p><strong>Drone Server and Agent</strong>: If you dont have drone, you can setup <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/">drone server and agent on docker</a> or have a look at <a href="https://cloud.drone.io">cloud.drone.io</a></p>
+
+<p><strong>Workflow:</strong></p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>* Whenever a push to master is receive on github, the pipeline will be triggered
+</span><span class='line'>* The content from our github repository will be cloned to the agent on a container
+</span><span class='line'>* Jekyll will build and the output will be transferred to docker swarm using rsync
+</span><span class='line'>* The docker-compose.yml will be transferred to the docker swarm host using scp
+</span><span class='line'>* A docker stack deploy is ran via ssh</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install Jekyll Locally</h2>
+
+<p>Install Jekyll locally, as we will use it to create the initial site. I am using a mac, so I will be using <code>brew</code>. For other operating systems, have a look at <a href="https://jekyllrb.com/docs/installation/">this post</a>.</p>
+
+<p>I will be demonstrating with a weightloss blog as an example.</p>
+
+<p>Install jekyll:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ brew install jekyll</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Go ahead and create a new site which will host the data for your jekyll site:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ jekyll new blog-weightloss</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create a Github Repository</h2>
+
+<p>First we need to create an empty github repository, in my example it was <code>github.com/ruanbekker/blog-weightloss.git</code>. Once you create the repo change into the directory created by the <code>jekyll new</code> command:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cd blog-weightloss</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now initialize git, set the remote, add the jekyll data and push to github:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git init
+</span><span class='line'>$ git remote add origin git@github.com:ruanbekker/blog-weightloss.git # &lt;== change to your repository
+</span><span class='line'>$ git add .
+</span><span class='line'>$ git commit -m "first commit"
+</span><span class='line'>$ git push origin master</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You should see your data on your github repository.</p>
+
+<h2>Create Secrets on Drone</h2>
+
+<p>Logon to the Drone UI, sync repositories, activate the new repository and head over to settings where you will find the secrets section.</p>
+
+<p>Add the following secrets:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>Secret Name: swarm_host
+</span><span class='line'>Secret Value: ip address of your swarm
+</span><span class='line'>
+</span><span class='line'>Secret Name: swarm_key
+</span><span class='line'>Secret Value: contents of your private ssh key
+</span><span class='line'>
+</span><span class='line'>Secret Name: swarm_user
+</span><span class='line'>Secret Value: the user that is allowed to ssh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You should see the following:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56619871-5c4fc480-6627-11e9-8820-c9d4ddff698c.png" alt="image" /></p>
+
+<h2>Add the Drone Config</h2>
+
+<p>Drone looks from a <code>.drone.yml</code> file in the root directory for instructions on how to do its tasks. Lets go ahead and declare our pipeline:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim .drone.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And populate the drone config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>pipeline:
+</span><span class='line'>  jekyll-build:
+</span><span class='line'>    image: jekyll/jekyll:latest
+</span><span class='line'>    commands:
+</span><span class='line'>      - touch Gemfile.lock
+</span><span class='line'>      - chmod a+w Gemfile.lock
+</span><span class='line'>      - chown -R jekyll:jekyll /drone
+</span><span class='line'>      - gem update --system
+</span><span class='line'>      - gem install bundler
+</span><span class='line'>      - bundle install
+</span><span class='line'>      - bundle exec jekyll build
+</span><span class='line'>
+</span><span class='line'>  transfer-build:
+</span><span class='line'>    image: drillster/drone-rsync
+</span><span class='line'>    hosts:
+</span><span class='line'>      from_secret: swarm_host
+</span><span class='line'>    key:
+</span><span class='line'>      from_secret: swarm_key
+</span><span class='line'>    user:
+</span><span class='line'>      from_secret: swarm_user
+</span><span class='line'>    source: ./*
+</span><span class='line'>    target: ~/my-weightloss-blog.com
+</span><span class='line'>    recursive: true
+</span><span class='line'>    delete: true
+</span><span class='line'>    when:
+</span><span class='line'>      branch: [master]
+</span><span class='line'>      event: [push]
+</span><span class='line'>
+</span><span class='line'>  transfer-compose:
+</span><span class='line'>    image: appleboy/drone-scp
+</span><span class='line'>    host:
+</span><span class='line'>      from_secret: swarm_host
+</span><span class='line'>    username:
+</span><span class='line'>      from_secret: swarm_user
+</span><span class='line'>    key:
+</span><span class='line'>      from_secret: swarm_key
+</span><span class='line'>    target: /root/my-weightloss-blog.com
+</span><span class='line'>    source:
+</span><span class='line'>      - docker-compose.yml
+</span><span class='line'>    when:
+</span><span class='line'>      branch: [master]
+</span><span class='line'>      event: [push]
+</span><span class='line'>
+</span><span class='line'>  deploy-jekyll-to-swarm:
+</span><span class='line'>    image: appleboy/drone-ssh
+</span><span class='line'>    host:
+</span><span class='line'>      from_secret: swarm_host
+</span><span class='line'>    username:
+</span><span class='line'>      from_secret: swarm_user
+</span><span class='line'>    key:
+</span><span class='line'>      from_secret: swarm_key
+</span><span class='line'>    port: 22
+</span><span class='line'>    script:
+</span><span class='line'>      - docker stack deploy --prune -c /root/my-weightloss-blog.com/docker-compose.yml apps
+</span><span class='line'>    when:
+</span><span class='line'>      branch: [master]
+</span><span class='line'>      event: [push]</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Add the Docker Compose</h2>
+
+<p>Next we need to declare our docker compose file which is needed to deploy our jekyll service to the swarm:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim docker-compose.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And populate this info (just change the values for your own environment/settings):</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.5&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">myweightlossblog</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ruanbekker/jekyll:contrast</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">jekyll serve --watch --force_polling --verbose</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">appnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/root/my-weightloss-blog.com:/srv/jekyll</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">mode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">replicated</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend.loadbalancer.sticky=false&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend.loadbalancer.swarm=true&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend=myweightlossblog&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.docker.network=appnet&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.entrypoints=https&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.frontend.passHostHeader=true&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.frontend.rule=Host:www.my-weightloss-blog.com,my-weightloss-blog.com&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.port=4000&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">update_config</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">parallelism</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">2</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">delay</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">10s</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">restart_policy</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">condition</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">on-failure</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">placement</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">constraints</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">node.role == manager</span>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">appnet</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">external</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Push to Github</h2>
+
+<p>Now we need to push our <code>.drone.yml</code> and <code>docker-compose.yml</code> to github. Since the repository is activated on drone, any push to master will trigger the pipeline, so after this push we should go to drone to look at our pipeline running.</p>
+
+<p>Add the untracked files and push to github:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ git add .drone.yml</span>
+</span><span class='line'><span class="l-Scalar-Plain">$ git add docker-compose.yml</span>
+</span><span class='line'><span class="l-Scalar-Plain">$ git commit -m &quot;add drone and docker config&quot;</span>
+</span><span class='line'><span class="l-Scalar-Plain">$ git push origin master</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you head over to your drone ui, you should see your pipeline output which will look more or less like this (just look how pretty it is! :D )</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56620236-91a8e200-6628-11e9-9278-38e3305fdcd7.png" alt="image" /></p>
+
+<h2>Test Jekyll</h2>
+
+<p>If your deployment has completed you should be able to access your application on the configured domain. A screenshot of my response when accessing Jekyll:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56620280-af764700-6628-11e9-9d4f-c2592e6cf561.png" alt="image" /></p>
+
+<p>Absolutely Amazingness! I really love drone!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Blog With Hugo]]></title>
@@ -7182,93 +7523,6 @@ Finally, it recovers the target index as though it were a closed index which had
 
 
 <p>For more info on <a href="https://www.scaleway.com">Scaleway</a> please do check them out: <a href="https://www.scaleway.com">https://www.scaleway.com</a>}</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup NRPE Client and Server for Monitoring Remote Services in Nagios]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/03/18/setup-nrpe-client-and-server-for-monitoring-remote-services-in-nagios/"/>
-    <updated>2019-03-18T12:49:59-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/03/18/setup-nrpe-client-and-server-for-monitoring-remote-services-in-nagios</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/54547916-65f26680-49af-11e9-8d42-e27c57ef8e2e.png" alt="" /></p>
-
-<p>If you have not setup the <a href="https://blog.ruanbekker.com/blog/2019/03/13/how-to-setup-a-nagios-monitoring-server/">Nagios Server</a> have a look at that link to setup the Nagios server.</p>
-
-<h2>Nagios NRPE</h2>
-
-<p>Nagios Remote Plugin Executor (NRPE) allows you to remotely execute Nagios plugins on other linux systems. This allows you to monitor remote machine metrics (disk usage, CPU, local listening services, etc.).</p>
-
-<p>NRPE has 2 sections:</p>
-
-<ul>
-<li>The nagios server side.</li>
-<li>The client side.</li>
-</ul>
-
-
-<p>For nagios to execute remote plugins, the client configuration needs to allow the nrpe server which will be nagios.</p>
-
-<p>Download, extract, configure and install NRPE server:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget 'https://github.com/NagiosEnterprises/nrpe/releases/download/nrpe-3.2.1/nrpe-3.2.1.tar.gz'
-</span><span class='line'>$ tar -xvf nrpe-3.2.1.tar.gz
-</span><span class='line'>$ cd nrpe-3.2.1
-</span><span class='line'>$ ./configure --enable-command-args --with-nagios-user=nagios --with-nagios-group=nagcmd --with-ssl=/usr/bin/openssl --with-ssl-lib=/usr/lib/x86_64-linux-gnu
-</span><span class='line'>$ make all
-</span><span class='line'>$ make install
-</span><span class='line'>$ make install-init
-</span><span class='line'>$ make install-config
-</span><span class='line'>$ systemctl enable nrpe.service</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Installing NRPE on the client side:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install nagios-nrpe-server -y
-</span><span class='line'>$ systemctl enable nagios-nrpe-server
-</span><span class='line'>$ systemctl start nagios-nrpe-server</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Allow your nagios server ip in <code>/etc/nagios/nrpe.cfg</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>allowed_hosts=nagios.ip.in.here</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Restart NRPE on the client:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart nagios-nrpe-server</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure that the <code>check_nrpe</code> plugin is configured and available in the commands.cfg configuration for the nagios server:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ vi /usr/local/nagios/etc/objects/commands.cfg
-</span><span class='line'>
-</span><span class='line'>define command {
-</span><span class='line'>    command_name check_nrpe
-</span><span class='line'>    command_line $USER1$/check_nrpe -H $HOSTADDRESS$ -c $ARG1$
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Check <a href="">this</a> out how to create a python nrpe nagios plugin to check disk space on the client host</p>
 ]]></content>
   </entry>
   

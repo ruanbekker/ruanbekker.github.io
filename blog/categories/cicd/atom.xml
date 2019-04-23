@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Cicd | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/cicd/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-04-23T05:44:19-04:00</updated>
+  <updated>2019-04-23T18:43:32-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,228 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using Drone CI to Build a Jekyll Site and Deploy to Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm/"/>
+    <updated>2019-04-23T17:57:02-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/56618556-3de7ca00-6623-11e9-995f-c22792f0ab21.png" alt="image" /></p>
+
+<p>CICD Pipelines! &lt;3</p>
+
+<p>In this post I will show you how to setup a cicd pipeline using drone to build a jekyll site and deploy to docker swarm.</p>
+
+<h2>Environment Overview</h2>
+
+<p><strong>Jekyll&rsquo;s Codebase</strong>: Our code will be hosted on Github (I will demonstrate how to set it up from scratch)</p>
+
+<p><strong>Secret Store</strong>: Our secrets such as ssh key, swarm host address etc will be stored in drones secrets manager</p>
+
+<p><strong>Docker Swarm</strong>: Docker Swarm has Traefik as a HTTP Loadbalancer</p>
+
+<p><strong>Drone Server and Agent</strong>: If you dont have drone, you can setup <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/">drone server and agent on docker</a> or have a look at <a href="https://cloud.drone.io">cloud.drone.io</a></p>
+
+<p><strong>Workflow:</strong></p>
+
+<pre><code>* Whenever a push to master is receive on github, the pipeline will be triggered
+* The content from our github repository will be cloned to the agent on a container
+* Jekyll will build and the output will be transferred to docker swarm using rsync
+* The docker-compose.yml will be transferred to the docker swarm host using scp
+* A docker stack deploy is ran via ssh
+</code></pre>
+
+<h2>Install Jekyll Locally</h2>
+
+<p>Install Jekyll locally, as we will use it to create the initial site. I am using a mac, so I will be using <code>brew</code>. For other operating systems, have a look at <a href="https://jekyllrb.com/docs/installation/">this post</a>.</p>
+
+<p>I will be demonstrating with a weightloss blog as an example.</p>
+
+<p>Install jekyll:</p>
+
+<pre><code>$ brew install jekyll
+</code></pre>
+
+<p>Go ahead and create a new site which will host the data for your jekyll site:</p>
+
+<pre><code>$ jekyll new blog-weightloss
+</code></pre>
+
+<h2>Create a Github Repository</h2>
+
+<p>First we need to create an empty github repository, in my example it was <code>github.com/ruanbekker/blog-weightloss.git</code>. Once you create the repo change into the directory created by the <code>jekyll new</code> command:</p>
+
+<pre><code>$ cd blog-weightloss
+</code></pre>
+
+<p>Now initialize git, set the remote, add the jekyll data and push to github:</p>
+
+<pre><code>$ git init
+$ git remote add origin git@github.com:ruanbekker/blog-weightloss.git # &lt;== change to your repository
+$ git add .
+$ git commit -m "first commit"
+$ git push origin master
+</code></pre>
+
+<p>You should see your data on your github repository.</p>
+
+<h2>Create Secrets on Drone</h2>
+
+<p>Logon to the Drone UI, sync repositories, activate the new repository and head over to settings where you will find the secrets section.</p>
+
+<p>Add the following secrets:</p>
+
+<pre><code>Secret Name: swarm_host
+Secret Value: ip address of your swarm
+
+Secret Name: swarm_key
+Secret Value: contents of your private ssh key
+
+Secret Name: swarm_user
+Secret Value: the user that is allowed to ssh
+</code></pre>
+
+<p>You should see the following:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56619871-5c4fc480-6627-11e9-8820-c9d4ddff698c.png" alt="image" /></p>
+
+<h2>Add the Drone Config</h2>
+
+<p>Drone looks from a <code>.drone.yml</code> file in the root directory for instructions on how to do its tasks. Lets go ahead and declare our pipeline:</p>
+
+<pre><code>$ vim .drone.yml
+</code></pre>
+
+<p>And populate the drone config:</p>
+
+<pre><code>pipeline:
+  jekyll-build:
+    image: jekyll/jekyll:latest
+    commands:
+      - touch Gemfile.lock
+      - chmod a+w Gemfile.lock
+      - chown -R jekyll:jekyll /drone
+      - gem update --system
+      - gem install bundler
+      - bundle install
+      - bundle exec jekyll build
+
+  transfer-build:
+    image: drillster/drone-rsync
+    hosts:
+      from_secret: swarm_host
+    key:
+      from_secret: swarm_key
+    user:
+      from_secret: swarm_user
+    source: ./*
+    target: ~/my-weightloss-blog.com
+    recursive: true
+    delete: true
+    when:
+      branch: [master]
+      event: [push]
+
+  transfer-compose:
+    image: appleboy/drone-scp
+    host:
+      from_secret: swarm_host
+    username:
+      from_secret: swarm_user
+    key:
+      from_secret: swarm_key
+    target: /root/my-weightloss-blog.com
+    source:
+      - docker-compose.yml
+    when:
+      branch: [master]
+      event: [push]
+
+  deploy-jekyll-to-swarm:
+    image: appleboy/drone-ssh
+    host:
+      from_secret: swarm_host
+    username:
+      from_secret: swarm_user
+    key:
+      from_secret: swarm_key
+    port: 22
+    script:
+      - docker stack deploy --prune -c /root/my-weightloss-blog.com/docker-compose.yml apps
+    when:
+      branch: [master]
+      event: [push]
+</code></pre>
+
+<h2>Add the Docker Compose</h2>
+
+<p>Next we need to declare our docker compose file which is needed to deploy our jekyll service to the swarm:</p>
+
+<pre><code>$ vim docker-compose.yml
+</code></pre>
+
+<p>And populate this info (just change the values for your own environment/settings):</p>
+
+<pre><code class="yaml">version: '3.5'
+
+services:
+  myweightlossblog:
+    image: ruanbekker/jekyll:contrast
+    command: jekyll serve --watch --force_polling --verbose
+    networks:
+      - appnet
+    volumes:
+      - /root/my-weightloss-blog.com:/srv/jekyll
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.backend.loadbalancer.sticky=false"
+        - "traefik.backend.loadbalancer.swarm=true"
+        - "traefik.backend=myweightlossblog"
+        - "traefik.docker.network=appnet"
+        - "traefik.entrypoints=https"
+        - "traefik.frontend.passHostHeader=true"
+        - "traefik.frontend.rule=Host:www.my-weightloss-blog.com,my-weightloss-blog.com"
+        - "traefik.port=4000"
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.role == manager
+networks:
+  appnet:
+    external: true
+</code></pre>
+
+<h2>Push to Github</h2>
+
+<p>Now we need to push our <code>.drone.yml</code> and <code>docker-compose.yml</code> to github. Since the repository is activated on drone, any push to master will trigger the pipeline, so after this push we should go to drone to look at our pipeline running.</p>
+
+<p>Add the untracked files and push to github:</p>
+
+<pre><code>$ git add .drone.yml
+$ git add docker-compose.yml
+$ git commit -m "add drone and docker config"
+$ git push origin master
+</code></pre>
+
+<p>As you head over to your drone ui, you should see your pipeline output which will look more or less like this (just look how pretty it is! :D )</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56620236-91a8e200-6628-11e9-9278-38e3305fdcd7.png" alt="image" /></p>
+
+<h2>Test Jekyll</h2>
+
+<p>If your deployment has completed you should be able to access your application on the configured domain. A screenshot of my response when accessing Jekyll:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/56620280-af764700-6628-11e9-9d4f-c2592e6cf561.png" alt="image" /></p>
+
+<p>Absolutely Amazingness! I really love drone!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Drone CICD Environment on Docker With Letsencrypt]]></title>

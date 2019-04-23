@@ -176,21 +176,20 @@ Then apply the notification step as shown below:
     webhook:
       from_secret: slack_webhook
     channel: system_events
-    image_url: https://unsplash.it/256/256/?random
-    icon_url: https://unsplash.it/256/256/?random
     template: >
       {{#success build.status}}
-        [DRONE CI]: {{ build.status }}: {{ repo.owner }}/{{ repo.name }}
-        ({{ commit.branch }} - {{ truncate commit.sha 8 }})
+        [DRONE CI]: *{{ uppercase build.status }}* : {{ repo.owner }}/{{ repo.name }}
+        ({{ build.branch }} - {{ truncate build.sha 8 }} | {{ build.link }})
+
       {{else}}
-        [DRONE CI]: {{ build.status }}: {{ repo.owner }}/{{ repo.name }}
-        ({{ commit.branch }} - {{ truncate commit.sha 8 }})
+        [DRONE CI]: *{{ uppercase build.status }}* : {{ repo.owner }}/{{ repo.name }}
+        ({{ build.branch }} - {{ truncate build.sha 8 }} | {{ build.link }})
       {{/success}}
 ```
 
 Based on the status, you should get a notification similar like this:
 
-![image](https://user-images.githubusercontent.com/567298/56621683-b18ed480-662d-11e9-96a8-db325490497d.png)
+![image](https://user-images.githubusercontent.com/567298/56622206-6e356580-662f-11e9-8d93-286c9c126d24.png)
 
 ## Add the Docker Compose
 

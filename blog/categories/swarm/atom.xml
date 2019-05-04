@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Swarm | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/swarm/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-04T15:42:16-04:00</updated>
+  <updated>2019-05-04T18:24:33-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,355 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using Concourse CI to Deploy to Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/04/using-concourse-ci-to-deploy-to-docker-swarm/"/>
+    <updated>2019-05-04T17:11:17-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/04/using-concourse-ci-to-deploy-to-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
+
+<p>In this tutorial we will use Concourse to Deploy our application to Docker Swarm.</p>
+
+<h2>The Flow</h2>
+
+<ul>
+<li>Our application code resides on Github</li>
+<li>The pipeline triggers when a commit is pushed to the master branch</li>
+<li>The pipeline will automatically deploy to the staging environment</li>
+<li>The pipeline requires a manual trigger to deploy to prod</li>
+<li>Note: Staging and Prod on the same swarm for demonstration</li>
+</ul>
+
+
+<p>The code for this tutorial is available on my <strong><a href="https://github.com/ruanbekker/concourse-swarm-app-demo">github repository</a></strong></p>
+
+<h2>Application Structure</h2>
+
+<p>The application structure for our code looks like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57184912-1d412f00-6ec3-11e9-85e9-6517d83e96e8.png" alt="" /></p>
+
+<h2>Pipeline Walktrough</h2>
+
+<p>Our <code>ci/pipeline.yml</code></p>
+
+<pre><code class="yaml">resources:
+  - name: main-repo
+    type: git
+    source:
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      branch: master
+      private_key: ((github_private_key))
+
+  - name: main-repo-staging
+    type: git
+    source:
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      branch: master
+      private_key: ((github_private_key))
+      paths:
+        - config/staging/*
+
+  - name: main-repo-prod
+    type: git
+    source:
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      branch: master
+      private_key: ((github_private_key))
+      paths:
+        - config/prod/*
+
+  - name: slack-alert
+    type: slack-notification
+    source:
+      url: ((slack_notification_url))
+
+  - name: version-staging
+    type: semver
+    source:
+      driver: git
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      private_key: ((github_private_key))
+      file: version-staging
+      branch: version-staging
+
+  - name: version-prod
+    type: semver
+    source:
+      driver: git
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      private_key: ((github_private_key))
+      file: version-prod
+      branch: version-prod
+
+resource_types:
+  - name: slack-notification
+    type: docker-image
+    source:
+      repository: cfcommunity/slack-notification-resource
+      tag: v1.3.0
+
+jobs:
+  - name: bump-staging-version
+    plan:
+    - get: main-repo-staging
+      trigger: true
+    - get: version-staging
+    - put: version-staging
+      params:
+        bump: major
+
+  - name: bump-prod-version
+    plan:
+    - get: main-repo-prod
+      trigger: true
+    - get: version-prod
+    - put: version-prod
+      params:
+        bump: major
+
+  - name: deploy-staging
+    plan:
+    - get: main-repo-staging
+    - get: main-repo
+    - get: version-staging
+      passed:
+      - bump-staging-version
+      trigger: true
+    - task: deploy-staging
+      params:
+        DOCKER_SWARM_HOSTNAME: ((docker_swarm_staging_host))
+        DOCKER_SWARM_KEY: ((docker_swarm_key))
+        DOCKER_HUB_USER: ((docker_hub_user))
+        DOCKER_HUB_PASSWORD: ((docker_hub_password))
+        SERVICE_NAME: app-staging
+        SWARM: staging
+        ENVIRONMENT: staging
+        AWS_ACCESS_KEY_ID: ((aws_access_key_id))
+        AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
+        AWS_DEFAULT_REGION: ((aws_region))
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: rbekker87/build-tools
+            tag: latest
+            username: ((docker_hub_user))
+            password: ((docker_hub_password))
+        inputs:
+        - name: main-repo-staging
+        - name: main-repo
+        - name: version-staging
+        run:
+          path: /bin/sh
+          args:
+            - -c
+            - |
+              ./main-repo/ci/scripts/deploy.sh
+      on_failure:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED :rage: - TestApp Deploy to staging-swarm failed
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+      on_success:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS :aww_yeah: - TestApp Deploy to staging-swarm succeeded
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+
+  - name: deploy-prod
+    plan:
+    - get: main-repo-prod
+    - get: main-repo
+    - get: version-prod
+      passed:
+      - bump-prod-version
+    - task: deploy-prod
+      params:
+        DOCKER_SWARM_HOSTNAME: ((docker_swarm_prod_host))
+        DOCKER_SWARM_KEY: ((docker_swarm_key))
+        DOCKER_HUB_USER: ((docker_hub_user))
+        DOCKER_HUB_PASSWORD: ((docker_hub_password))
+        SERVICE_NAME: app-prod
+        SWARM: prod
+        ENVIRONMENT: production
+        AWS_ACCESS_KEY_ID: ((aws_access_key_id))
+        AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
+        AWS_DEFAULT_REGION: ((aws_region))
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: rbekker87/build-tools
+            tag: latest
+            username: ((docker_hub_user))
+            password: ((docker_hub_password))
+        inputs:
+        - name: main-repo-prod
+        - name: main-repo
+        - name: version-prod
+        run:
+          path: /bin/sh
+          args:
+            - -c
+            - |
+              ./main-repo/ci/scripts/deploy.sh
+      on_failure:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED :rage: - TestApp Deploy to prod-swarm failed
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+      on_success:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS :aww_yeah: - TestApp Deploy to prod-swarm succeeded
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+</code></pre>
+
+<p>Our <code>ci/credentials.yml</code> which will hold all our secret info, which will remain local:</p>
+
+<pre><code>username: yourdockerusername
+password: yourdockerpassword
+docker_swarm_prod_host: 10.20.30.40
+...
+</code></pre>
+
+<p>The first step of our deploy will invoke a shell script that will establish a ssh tunnel to the docker host, mounting the docker socket to a tcp local port, then exporting the docker host port to the tunneled port, <code>ci/scripts/deploy.sh</code>:</p>
+
+<pre><code>#!/usr/bin/env sh
+
+export DOCKER_HOST="localhost:2376"
+
+echo "${DOCKER_SWARM_KEY}" | sed -e 's/\(KEY-----\)\s/\1\n/g; s/\s\(-----END\)/\n\1/g' | sed -e '2s/\s\+/\n/g' &gt; key.pem
+chmod 600 key.pem
+
+screen -S \
+  sshtunnel -m -d sh -c \
+  "ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -i ./key.pem -NL localhost:2376:/var/run/docker.sock root@$DOCKER_SWARM_HOSTNAME"
+
+sleep 5
+docker login -u "${DOCKER_HUB_USER}" -p "${DOCKER_HUB_PASSWORD}"
+docker stack deploy --prune -c ./main-repo/ci/docker/docker-compose.${ENVIRONMENT}.yml $SERVICE_NAME --with-registry-auth
+
+if [ $? != "0" ]
+  then
+    echo "deploy failure for: $SERVICE_NAME"
+    screen -S sshtunnel -X quit
+    exit 1
+  else
+    set -x
+    echo "deploy success for: $SERVICE_NAME"
+    screen -S sshtunnel -X quit
+fi
+</code></pre>
+
+<p>The deploy script references the docker-compose files, first our <code>ci/docker/docker-compose.staging.yml</code>:</p>
+
+<pre><code>version: "3.4"
+
+services:
+  web:
+    image: ruanbekker/web-center-name
+    environment:
+      - APP_ENVIRONMENT=Staging
+    ports:
+      - 81:5000
+    networks:
+      - web_net
+    deploy:
+      mode: replicated
+      replicas: 2
+
+networks:
+  web_net: {}
+</code></pre>
+
+<p>Also, our docker-compose for production, <code>ci/docker/docker-compose.production.yml</code>:</p>
+
+<pre><code>version: "3.4"
+
+services:
+  web:
+    image: ruanbekker/web-center-name
+    environment:
+      - APP_ENVIRONMENT=Production
+    ports:
+      - 80:5000
+    networks:
+      - web_net
+    deploy:
+      mode: replicated
+      replicas: 10
+
+networks:
+  web_net: {}
+</code></pre>
+
+<h2>Set the Pipeline in Concourse</h2>
+
+<p>Create 2 branches in your github repository for versioning: <code>version-staging</code> and <code>version-prod</code>, then logon to concourse and save the target:</p>
+
+<pre><code>$ fly -t ci login -n main -c http://&lt;concourse-ip&gt;
+</code></pre>
+
+<p>Set the pipeline, point the config, local variables definition and name the pipeline:</p>
+
+<pre><code>$ fly -t ci sp -n main -c ci/pipeline.yml -p &lt;pipeline-name&gt; -l ci/&lt;variables&gt;.yml
+</code></pre>
+
+<p>You will find that the pipeline will look like below and that it will be in a paused state:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/54060759-96dfd800-4206-11e9-9236-e3b86783417c.png" alt="" /></p>
+
+<p>Unpause the pipeline:</p>
+
+<pre><code>$ fly -t ci up -p swarm-demo
+</code></pre>
+
+<p>The pipeline should kick-off automatically due to the trigger that is set to true:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/54060811-cbec2a80-4206-11e9-8de7-a0b308f20cef.png" alt="" /></p>
+
+<p>Deployed automatically to staging, prod is a manual trigger:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/54060991-8e3bd180-4207-11e9-9726-2c01ca10d24a.png" alt="" /></p>
+
+<h2>Testing our Application</h2>
+
+<p>For demonstration purposes we have deployed staging on port 81 and production on port 80.</p>
+
+<p>Testing Staging on <a href="http://">http://</a><swarm-ip>:81/</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57185377-73fe3700-6eca-11e9-91d3-953e754cbde9.png" alt="" /></p>
+
+<p>Testing Production on <a href="http://">http://</a><swarm-ip>:80/</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57185383-8d06e800-6eca-11e9-8cff-c3a665f9f377.png" alt="" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Using Drone CI to Build a Jekyll Site and Deploy to Docker Swarm]]></title>
@@ -1119,275 +1468,6 @@ Accept-Ranges: bytes
 <h2>Resources:</h2>
 
 <p>For more information on docker swarm configs have a look at <a href="https://docs.docker.com/engine/swarm/configs/#example-rotate-a-config">docker&rsquo;s documentation</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup a 3 Node Docker Swarm Cluster on Ubuntu 16.04]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/01/10/setup-a-3-node-docker-swarm-cluster-on-ubuntu-16-dot-04/"/>
-    <updated>2019-01-10T09:52:07-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/01/10/setup-a-3-node-docker-swarm-cluster-on-ubuntu-16-dot-04</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg" alt="" /></p>
-
-<p>Docker Swarm is a Clustering and Orchestration Framework for the Docker ecosystem. Have a look at their <a href="https://docs.docker.com/engine/swarm/">official documentation</a> for detailed information.</p>
-
-<p>In this Tutorial we will Setup a 3 Node Docker Swarm Cluster and to Demonstrate How Easy it is to Deploy a Web Application with 2 Replicas from a Docker Image.</p>
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-<p><br></p>
-
-<h2>Overview of What we will be Doing</h2>
-
-<ul>
-<li>Install Docker on 3 Servers with Ubuntu 16.04</li>
-<li>Initialize the Swarm and Join the Worker Nodes</li>
-<li>Create a Nginx Service with 2 Replicas</li>
-<li>Do some Inspection: View some info on the Service</li>
-</ul>
-
-
-<h2>Prerequisites</h2>
-
-<p>3 Fresh Deployed Ubuntu 16.04 Servers. ( 1GB Memory Servers will be good for development )</p>
-
-<h2>What is Docker</h2>
-
-<p>Docker is a Open Source Technology that allows you to create lightweight, isolated, reproducible application instances which is called Containers. Docker is built on top of the LXC technology, so it uses Linux Containers and as mentioned, it&rsquo;s lightweight compared to a traditional VM.</p>
-
-<p>A Container is isolated and uses the Kernel of the Docker host, it also utilizes Kernel features such as cgroups and namespaces in order to make them isolated.</p>
-
-<h2>Installing Docker Community Edition</h2>
-
-<p>Remove any older versions of Docker that might be present and install the dependencies:</p>
-
-<pre><code class="bash">$ sudo apt remove docker docker-engine -y
-$ sudo apt install linux-image-extra-$(uname -r) linux-image-extra-virtual python-setuptools -y
-$ sudo apt install apt-transport-https ca-certificates curl software-properties-common -y
-</code></pre>
-
-<p>Get the needed repository to setup Docker Community Edition:</p>
-
-<pre><code class="bash">$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-$ sudo apt-key fingerprint 0EBFCD88
-$ sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-</code></pre>
-
-<p>Update the repository index and Install Docker Community Edition:</p>
-
-<pre><code class="bash">$ sudo apt update
-$ sudo apt install docker-ce -y
-$ sudo easy_install pip
-$ sudo pip install docker-compose
-</code></pre>
-
-<p>Enable Docker on Startup and Start the Docker Engine:</p>
-
-<pre><code class="bash">$ sudo systemctl enable docker
-$ sudo systemctl restart docker
-</code></pre>
-
-<p>If you would like to execute your docker commands without sudo, add your user to the docker group:</p>
-
-<pre><code class="bash">$ sudo usermod -aG docker $(whoami)
-</code></pre>
-
-<p>Test your Setup by Running a Hello World Container. You will see that if the image is not in the local docker image cache, it will pull the image from docker hub (or the respective docker registry), then once the image is saved locally, docker will then instantiate the container from that image:</p>
-
-<pre><code class="bash">$ docker run hello-world
-Unable to find image 'hello-world:latest' locally
-latest: Pulling from library/hello-world
-78445dd45222: Pull complete
-Digest: sha256:c5515758d4c5e1e838e9cd307f6c6a0d620b5e07e6f927b07d05f6d12a1ac8d7
-Status: Downloaded newer image for hello-world:latest
-
-Hello from Docker!
-This message shows that your installation appears to be working correctly.
-</code></pre>
-
-<h2>DNS Configuration</h2>
-
-<p>If you have a DNS Server you can configure the A Records for these hosts on DNS, but for simplicity, I will add the noted IP Addresses from the previous step into my <code>/etc/hosts</code> file so we can resolve names to IP&rsquo;s</p>
-
-<p>Open up the the hosts file:</p>
-
-<pre><code class="bash">$ sudo vim /etc/hosts
-</code></pre>
-
-<p>In my example, my IP Addresses:</p>
-
-<pre><code>192.0.2.41  manager
-192.0.2.42  worker-1
-192.0.2.43  worker-2
-</code></pre>
-
-<p>Repeat the above steps on the other 2 Servers and make note of the IP Addresses of each node. You should be able to ping and reach the nodes that was configured. Make sure to allow all traffic between these nodes.</p>
-
-<h2>Initialize the Swarm:</h2>
-
-<p>Now we will initialize the swarm on the manager node and as we have more than one network interface, we will specify the &ndash;advertise-addr option:</p>
-
-<pre><code class="bash">$ docker swarm init --advertise-addr 192.0.2.41
-Swarm initialized: current node (siqyf3yricsvjkzvej00a9b8h) is now a manager.
-
-    To add a worker to this swarm, run the following command:
-
-    docker swarm join \
-    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 \
-    192.0.2.41:2377
-
-    To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
-</code></pre>
-
-<p>From the response above, we received the join token that allows the workers to register with the manager node. If its a scenario where you want to have more than one manager node, you can run <code>docker swarm join-token manager</code> to receive the join token for additional manager.</p>
-
-<p>Let&rsquo;s add the two worker nodes to the manager:</p>
-
-<pre><code class="bash">$ [worker-1] docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.0.2.41:2377
-This node joined a swarm as a worker.
-</code></pre>
-
-<pre><code class="bash">$ [worker-2] docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.0.2.41:2377
-This node joined a swarm as a worker.
-</code></pre>
-
-<p>To see the node status, so that we can determine if the nodes are active/available etc, from the manager node, list all the nodes in the swarm:</p>
-
-<pre><code class="bash">[manager] $ docker node ls
-ID                           HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS
-j14mte3v1jhtbm3pb2qrpgwp6    worker-1  Ready   Active 
-siqyf3yricsvjkzvej00a9b8h *  master    Ready   Active        Leader
-srl5yzme5hxnzxal2t1efmwje    worker-2  Ready   Active
-</code></pre>
-
-<h2>Reobtaining the Join Tokens</h2>
-
-<p>If at any time, you lost your join token, it can be retrieved by running the following for the manager token:</p>
-
-<pre><code class="bash">$ docker swarm join-token manager -q SWMTKN-1-67chzvi4epx28ii18gizcia8idfar5hokojz660igeavnrltf0-09ijujbnnh4v960b8xel58pmj
-</code></pre>
-
-<p>And the following to retrieve the worker token:</p>
-
-<pre><code class="bash">$ docker swarm join-token worker -q SWMTKN-1-67chzvi4epx28ii18gizcia8idfar5hokojz660igeavnrltf0-acs21nn28v17uwhw0oqg5ibwx
-</code></pre>
-
-<p>Swarm Services in Docker uses a declarative model which means that you define the desired state of the service, and rely on Docker to maintain this state. More information on this can be found on their <a href="https://docs.docker.com/engine/swarm/how-swarm-mode-works/services/">Documentation</a></p>
-
-<p>At this moment, we will see that we have no services running in our swarm:</p>
-
-<pre><code class="bash">[manager] $ docker service ls
-ID  NAME  MODE  REPLICAS  IMAGE
-</code></pre>
-
-<h2>Deploying our First Service</h2>
-
-<p>Now onto the creation of a standard nginx service with 2 replicas, which means that there will be 2 containers of nginx running in our swarm.</p>
-
-<p>But first, we need to create a overlay network, which is a network driver that creates a distributed network among multiple Docker daemon hosts. Swarm takes care of the routing automatically, which is routed via the port mappings. So you can have that your container sits on worker-2, when you hit your manager node on the published port, it will route the request to the desired application that resides on the respective container.</p>
-
-<p>To create a overlay network called mynet:</p>
-
-<pre><code class="bash">[manager] $ docker network create --driver overlay mynet
-</code></pre>
-
-<p>Now onto creating the Service. If any of these containers fail, they will handled by the manager node and will be spawned again to have the desired number that we set on the replica option:</p>
-
-<pre><code class="bash">[manager] $ docker service create --name my-web --publish 8080:80 --replicas 2 --network mynet nginx
-</code></pre>
-
-<p>Let&rsquo;s have a look at our nginx service:</p>
-
-<pre><code class="bash">[manager] $ docker service ls
-ID            NAME    MODE        REPLICAS  IMAGE
-1okycpshfusq  my-web  replicated  2/2       nginx:latest
-</code></pre>
-
-<p>After we see that the replica count is 2/2 our service is ready.</p>
-
-<p>To see on which nodes our containers are running that makes up our service:</p>
-
-<pre><code class="bash">[manager] $ docker service ps my-web
-ID            NAME      IMAGE         NODE      DESIRED STATE  CURRENT STATE           ERROR  PORTS
-k0qqrh8s0c2d  my-web.1  nginx:latest  worker-1  Running        Running 30 seconds ago
-nku9wer6tmll  my-web.2  nginx:latest  worker-2  Running        Running 30 seconds ago
-</code></pre>
-
-<p>From the above output, we can see that worker-1 and worker-2 are serving our containers for our service. We can also retrieve more information of our service by using the inspect option, which will give you a detailed response in json format of the service:</p>
-
-<pre><code class="bash">[manager] $ docker service inspect my-web
-</code></pre>
-
-<p>We can get the Endpoint Port info by using inspect and using the &ndash;format parameter to filter the output:</p>
-
-<pre><code class="bash">[manager] $ docker service inspect --format="" my-web  | python -m json.tool
-</code></pre>
-
-<p>From the output we will find the PublishedPort is the Port that we Expose, which will be the listener. Our TargetPort will be the port that is listening on the container:</p>
-
-<pre><code class="json">[
-    {
-        "Protocol": "tcp",
-        "PublishMode": "ingress",
-        "PublishedPort": 8080,
-        "TargetPort": 80
-    }
-]
-</code></pre>
-
-<p>Now that we went through the inspection of our service, its time to test our base nginx service.</p>
-
-<h2>Testing Nginx in our Swarm</h2>
-
-<p>Make a request against your docker node manager address on the port that was exposed, in this case 8080:</p>
-
-<pre><code class="bash">$ curl -I http://docker-node-manager-ip:8080
-
-HTTP/1.1 200 OK
-Server: nginx/1.15.5
-Date: Thu, 10 Jan 2019 14:48:40 GMT
-Content-Type: text/html
-Content-Length: 612
-Last-Modified: Tue, 02 Oct 2018 14:49:27 GMT
-Connection: keep-alive
-ETag: "5bb38577-264"
-Accept-Ranges: bytes
-</code></pre>
-
-<p>Now we have successfull setup a 3 node docker swarm cluster and deployed a basic nginx service to our swarm. Please have a look at my other <a href="https://blog.ruanbekker.com/blog/categories/docker/">Docker Swarm Tutorials</a> for other content.</p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-
-
-<p><p></p>
-
-<p>Thanks for reading!</p>
 ]]></content>
   </entry>
   

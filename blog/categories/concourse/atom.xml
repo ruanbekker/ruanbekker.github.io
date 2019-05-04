@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Concourse | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/concourse/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-04T15:42:16-04:00</updated>
+  <updated>2019-05-04T18:24:33-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,355 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using Concourse CI to Deploy to Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/04/using-concourse-ci-to-deploy-to-docker-swarm/"/>
+    <updated>2019-05-04T17:11:17-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/04/using-concourse-ci-to-deploy-to-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
+
+<p>In this tutorial we will use Concourse to Deploy our application to Docker Swarm.</p>
+
+<h2>The Flow</h2>
+
+<ul>
+<li>Our application code resides on Github</li>
+<li>The pipeline triggers when a commit is pushed to the master branch</li>
+<li>The pipeline will automatically deploy to the staging environment</li>
+<li>The pipeline requires a manual trigger to deploy to prod</li>
+<li>Note: Staging and Prod on the same swarm for demonstration</li>
+</ul>
+
+
+<p>The code for this tutorial is available on my <strong><a href="https://github.com/ruanbekker/concourse-swarm-app-demo">github repository</a></strong></p>
+
+<h2>Application Structure</h2>
+
+<p>The application structure for our code looks like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57184912-1d412f00-6ec3-11e9-85e9-6517d83e96e8.png" alt="" /></p>
+
+<h2>Pipeline Walktrough</h2>
+
+<p>Our <code>ci/pipeline.yml</code></p>
+
+<pre><code class="yaml">resources:
+  - name: main-repo
+    type: git
+    source:
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      branch: master
+      private_key: ((github_private_key))
+
+  - name: main-repo-staging
+    type: git
+    source:
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      branch: master
+      private_key: ((github_private_key))
+      paths:
+        - config/staging/*
+
+  - name: main-repo-prod
+    type: git
+    source:
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      branch: master
+      private_key: ((github_private_key))
+      paths:
+        - config/prod/*
+
+  - name: slack-alert
+    type: slack-notification
+    source:
+      url: ((slack_notification_url))
+
+  - name: version-staging
+    type: semver
+    source:
+      driver: git
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      private_key: ((github_private_key))
+      file: version-staging
+      branch: version-staging
+
+  - name: version-prod
+    type: semver
+    source:
+      driver: git
+      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
+      private_key: ((github_private_key))
+      file: version-prod
+      branch: version-prod
+
+resource_types:
+  - name: slack-notification
+    type: docker-image
+    source:
+      repository: cfcommunity/slack-notification-resource
+      tag: v1.3.0
+
+jobs:
+  - name: bump-staging-version
+    plan:
+    - get: main-repo-staging
+      trigger: true
+    - get: version-staging
+    - put: version-staging
+      params:
+        bump: major
+
+  - name: bump-prod-version
+    plan:
+    - get: main-repo-prod
+      trigger: true
+    - get: version-prod
+    - put: version-prod
+      params:
+        bump: major
+
+  - name: deploy-staging
+    plan:
+    - get: main-repo-staging
+    - get: main-repo
+    - get: version-staging
+      passed:
+      - bump-staging-version
+      trigger: true
+    - task: deploy-staging
+      params:
+        DOCKER_SWARM_HOSTNAME: ((docker_swarm_staging_host))
+        DOCKER_SWARM_KEY: ((docker_swarm_key))
+        DOCKER_HUB_USER: ((docker_hub_user))
+        DOCKER_HUB_PASSWORD: ((docker_hub_password))
+        SERVICE_NAME: app-staging
+        SWARM: staging
+        ENVIRONMENT: staging
+        AWS_ACCESS_KEY_ID: ((aws_access_key_id))
+        AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
+        AWS_DEFAULT_REGION: ((aws_region))
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: rbekker87/build-tools
+            tag: latest
+            username: ((docker_hub_user))
+            password: ((docker_hub_password))
+        inputs:
+        - name: main-repo-staging
+        - name: main-repo
+        - name: version-staging
+        run:
+          path: /bin/sh
+          args:
+            - -c
+            - |
+              ./main-repo/ci/scripts/deploy.sh
+      on_failure:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED :rage: - TestApp Deploy to staging-swarm failed
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+      on_success:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS :aww_yeah: - TestApp Deploy to staging-swarm succeeded
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+
+  - name: deploy-prod
+    plan:
+    - get: main-repo-prod
+    - get: main-repo
+    - get: version-prod
+      passed:
+      - bump-prod-version
+    - task: deploy-prod
+      params:
+        DOCKER_SWARM_HOSTNAME: ((docker_swarm_prod_host))
+        DOCKER_SWARM_KEY: ((docker_swarm_key))
+        DOCKER_HUB_USER: ((docker_hub_user))
+        DOCKER_HUB_PASSWORD: ((docker_hub_password))
+        SERVICE_NAME: app-prod
+        SWARM: prod
+        ENVIRONMENT: production
+        AWS_ACCESS_KEY_ID: ((aws_access_key_id))
+        AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
+        AWS_DEFAULT_REGION: ((aws_region))
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: rbekker87/build-tools
+            tag: latest
+            username: ((docker_hub_user))
+            password: ((docker_hub_password))
+        inputs:
+        - name: main-repo-prod
+        - name: main-repo
+        - name: version-prod
+        run:
+          path: /bin/sh
+          args:
+            - -c
+            - |
+              ./main-repo/ci/scripts/deploy.sh
+      on_failure:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED :rage: - TestApp Deploy to prod-swarm failed
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+      on_success:
+        put: slack-alert
+        params:
+          channel: '#system_events'
+          username: 'concourse'
+          icon_emoji: ':concourse:'
+          silent: true
+          text: |
+            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS :aww_yeah: - TestApp Deploy to prod-swarm succeeded
+            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
+</code></pre>
+
+<p>Our <code>ci/credentials.yml</code> which will hold all our secret info, which will remain local:</p>
+
+<pre><code>username: yourdockerusername
+password: yourdockerpassword
+docker_swarm_prod_host: 10.20.30.40
+...
+</code></pre>
+
+<p>The first step of our deploy will invoke a shell script that will establish a ssh tunnel to the docker host, mounting the docker socket to a tcp local port, then exporting the docker host port to the tunneled port, <code>ci/scripts/deploy.sh</code>:</p>
+
+<pre><code>#!/usr/bin/env sh
+
+export DOCKER_HOST="localhost:2376"
+
+echo "${DOCKER_SWARM_KEY}" | sed -e 's/\(KEY-----\)\s/\1\n/g; s/\s\(-----END\)/\n\1/g' | sed -e '2s/\s\+/\n/g' &gt; key.pem
+chmod 600 key.pem
+
+screen -S \
+  sshtunnel -m -d sh -c \
+  "ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -i ./key.pem -NL localhost:2376:/var/run/docker.sock root@$DOCKER_SWARM_HOSTNAME"
+
+sleep 5
+docker login -u "${DOCKER_HUB_USER}" -p "${DOCKER_HUB_PASSWORD}"
+docker stack deploy --prune -c ./main-repo/ci/docker/docker-compose.${ENVIRONMENT}.yml $SERVICE_NAME --with-registry-auth
+
+if [ $? != "0" ]
+  then
+    echo "deploy failure for: $SERVICE_NAME"
+    screen -S sshtunnel -X quit
+    exit 1
+  else
+    set -x
+    echo "deploy success for: $SERVICE_NAME"
+    screen -S sshtunnel -X quit
+fi
+</code></pre>
+
+<p>The deploy script references the docker-compose files, first our <code>ci/docker/docker-compose.staging.yml</code>:</p>
+
+<pre><code>version: "3.4"
+
+services:
+  web:
+    image: ruanbekker/web-center-name
+    environment:
+      - APP_ENVIRONMENT=Staging
+    ports:
+      - 81:5000
+    networks:
+      - web_net
+    deploy:
+      mode: replicated
+      replicas: 2
+
+networks:
+  web_net: {}
+</code></pre>
+
+<p>Also, our docker-compose for production, <code>ci/docker/docker-compose.production.yml</code>:</p>
+
+<pre><code>version: "3.4"
+
+services:
+  web:
+    image: ruanbekker/web-center-name
+    environment:
+      - APP_ENVIRONMENT=Production
+    ports:
+      - 80:5000
+    networks:
+      - web_net
+    deploy:
+      mode: replicated
+      replicas: 10
+
+networks:
+  web_net: {}
+</code></pre>
+
+<h2>Set the Pipeline in Concourse</h2>
+
+<p>Create 2 branches in your github repository for versioning: <code>version-staging</code> and <code>version-prod</code>, then logon to concourse and save the target:</p>
+
+<pre><code>$ fly -t ci login -n main -c http://&lt;concourse-ip&gt;
+</code></pre>
+
+<p>Set the pipeline, point the config, local variables definition and name the pipeline:</p>
+
+<pre><code>$ fly -t ci sp -n main -c ci/pipeline.yml -p &lt;pipeline-name&gt; -l ci/&lt;variables&gt;.yml
+</code></pre>
+
+<p>You will find that the pipeline will look like below and that it will be in a paused state:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/54060759-96dfd800-4206-11e9-9236-e3b86783417c.png" alt="" /></p>
+
+<p>Unpause the pipeline:</p>
+
+<pre><code>$ fly -t ci up -p swarm-demo
+</code></pre>
+
+<p>The pipeline should kick-off automatically due to the trigger that is set to true:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/54060811-cbec2a80-4206-11e9-8de7-a0b308f20cef.png" alt="" /></p>
+
+<p>Deployed automatically to staging, prod is a manual trigger:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/54060991-8e3bd180-4207-11e9-9726-2c01ca10d24a.png" alt="" /></p>
+
+<h2>Testing our Application</h2>
+
+<p>For demonstration purposes we have deployed staging on port 81 and production on port 80.</p>
+
+<p>Testing Staging on <a href="http://">http://</a><swarm-ip>:81/</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57185377-73fe3700-6eca-11e9-91d3-953e754cbde9.png" alt="" /></p>
+
+<p>Testing Production on <a href="http://">http://</a><swarm-ip>:80/</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57185383-8d06e800-6eca-11e9-8cff-c3a665f9f377.png" alt="" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Concourse Pipeline to Build a Docker Image Automatically on Git Commit]]></title>
@@ -592,212 +941,6 @@ succeeded
 </code></pre>
 
 <p>This was all done through the command line, but you can also accessed it from the web ui</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Basic Concourse Pipeline With Bash and Golang Jobs]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/11/24/basic-concourse-pipeline-with-bash-and-golang-jobs/"/>
-    <updated>2017-11-24T18:38:15-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/11/24/basic-concourse-pipeline-with-bash-and-golang-jobs</id>
-    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
-
-<p>From one of my previous posts, we went through the steps to setup a <a href="http://blog.ruanbekker.com/blog/2017/11/07/setup-a-concourse-ci-server-on-ubuntu-16/">Concourse CI Server on Ubuntu</a> .</p>
-
-<h2>What are we doing today?</h2>
-
-<p>Today we will setup a basic pipeline that executes 2 jobs, one using a alpine container that runs a couple of shell commands, and the other job will be using a Golang container to build and execute a golang app. I will also be experimenting with auto trigger, that will trigger the pipeline to run its jobs every 60 seconds.</p>
-
-<p>Our Pipeline will look like the following:</p>
-
-<p><img src="https://i.snag.gy/D0oO4M.jpg" alt="" /></p>
-
-<h2>Our Pipeline Definition:</h2>
-
-<pre><code class="yml bash-and-golang.yml">resources:
-- name: container-resource
-  type: time
-  source:
-    interval: 60m
-
-jobs:
-- name: my-alpine-job
-  plan:
-  - get: container-resource
-    trigger: true
-  - task: vanilla-alpine-tasks
-    params:
-      OWNER: ruan
-    config:
-      platform: linux
-      image_resource:
-        type: docker-image
-        source:
-          repository: alpine
-          tag: edge
-      run:
-        path: /bin/sh
-        args:
-        - -c
-        - |
-          apk update &gt; /dev/null
-          apk upgrade &gt; /dev/null
-          apk add curl &gt; /dev/null
-          echo "Public IP is: `curl -s http://ip.ruanbekker.com`"
-          echo "Hostname is: $HOSTNAME"
-          echo "Owner is: $OWNER"
-          echo foo &gt; /tmp/word.txt
-          export MAGIC_WORD=`cat /tmp/word.txt`
-          echo "Magic word is $MAGIC_WORD"
-          cat &gt; app.sh &lt;&lt; EOF
-          #!/usr/bin/env sh
-          echo "Hello, World!"
-          EOF
-          chmod +x app.sh
-          echo "Shell Script Executing:"
-          ./app.sh
-
-- name: my-golang-job
-  plan:
-  - get: container-resource
-    trigger: true
-  - task: golang-tasks
-    params:
-      OWNER: james
-    config:
-      platform: linux
-      image_resource:
-        type: docker-image
-        source:
-          repository: golang
-          tag: '1.6'
-      run:
-        path: /bin/sh
-        args:
-        - -c
-        - |
-          echo "User: `whoami`"
-          echo "Go Version: `go version`"
-          echo "Hostname is: $HOSTNAME"
-          echo "Owner is: $OWNER"
-          echo bar &gt; /tmp/word.txt
-          export MAGIC_WORD=`cat /tmp/word.txt`
-          echo "Magic word is $MAGIC_WORD"
-          cat &gt; app.go &lt;&lt; EOF
-          package main
-
-          import "fmt"
-
-          func main() {
-            fmt.Println("Hello, World!")
-          }
-          EOF
-          go build app.go
-          echo "Go App Executing:"
-          ./app
-</code></pre>
-
-<h2>Login to Concourse:</h2>
-
-<p>Logon to concourse and set your target:</p>
-
-<pre><code class="bash">$ fly -t ci login --concourse-url=http://10.20.30.40:8080
-logging in to team 'main'
-
-username: admin
-password:
-
-target saved
-</code></pre>
-
-<p>List your targets:</p>
-
-<pre><code class="bash">$ fly targets
-name      url                       team  expiry
-ci        http://10.20.30.40:8080   main  Sat, 25 Nov 2017 23:30:55 UTC
-</code></pre>
-
-<h2>Apply Configuration</h2>
-
-<p>Apply your Configuration:</p>
-
-<pre><code class="bash">$ fly -t ci set-pipeline -p bash-and-golang -c bash-and-golang.yml
-
-apply configuration? [yN]: y
-pipeline created!
-you can view your pipeline here: http://10.20.30.40:8080/teams/main/pipelines/bash-and-golang
-
-the pipeline is currently paused. to unpause, either:
-  - run the unpause-pipeline command
-  - click play next to the pipeline in the web ui
-</code></pre>
-
-<h2>Unpause</h2>
-
-<p>Unpause your Pipeline:</p>
-
-<pre><code class="bash">$ fly -t ci unpause-pipeline -p bash-and-golang
-unpaused 'bash-and-golang'
-</code></pre>
-
-<h2>Trigger</h2>
-
-<p>Trigger your first job, which will be the Alpine job:</p>
-
-<pre><code class="bash">$ fly -t ci trigger-job --job bash-and-golang/my-alpine-job
-started bash-and-golang/my-alpine-job #2
-</code></pre>
-
-<p><img src="https://i.snag.gy/x7ksQO.jpg?nocache=1511567544851" alt="" /></p>
-
-<p>Trigger your second job, which will be the Golang job:</p>
-
-<pre><code class="bash">$ fly -t ci trigger-job --job bash-and-golang/my-golang-job
-started bash-and-golang/my-golang-job #2
-</code></pre>
-
-<p><img src="https://i.snag.gy/07nDiZ.jpg" alt="" /></p>
-
-<p>Remember, we can also monitor the output from the shell:</p>
-
-<pre><code class="bash">$ fly -t ci trigger-job --job bash-and-golang/my-golang-job --watch
-started bash-and-golang/my-golang-job #3
-
-initializing
-running /bin/sh -c echo "User: `whoami`"
-echo "Go Version: `go version`"
-echo "Hostname is: $HOSTNAME"
-echo "Owner is: $OWNER"
-echo bar &gt; /tmp/word.txt
-export MAGIC_WORD=`cat /tmp/word.txt`
-echo "Magic word is $MAGIC_WORD"
-cat &gt; app.go &lt;&lt; EOF
-package main
-
-import "fmt"
-
-func main() {
-  fmt.Println("Hello, World!")
-}
-EOF
-go build app.go
-echo "Go App Executing:"
-./app
-
-User: root
-Go Version: go version go1.6.4 linux/amd64
-Hostname is:
-Owner is: james
-Magic word is bar
-Go App Executing:
-Hello, World!
-succeeded
-</code></pre>
-
-<p>And you can also debug the job by dropping yourself into the container by using hijack:</p>
-
-<pre><code>$ fly -t ci hijack --job bash-and-golang/my-golang-job
-</code></pre>
 ]]></content>
   </entry>
   

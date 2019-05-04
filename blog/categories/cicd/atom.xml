@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Cicd | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/cicd/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-04T14:49:33-04:00</updated>
+  <updated>2019-05-04T15:42:16-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,151 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Using MongoDB Inside Drone CI Services for Unit Testing]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/04/using-mongodb-inside-drone-ci-services-for-unit-testing/"/>
+    <updated>2019-05-04T14:52:37-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/04/using-mongodb-inside-drone-ci-services-for-unit-testing</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57184017-4b1f7700-6eb5-11e9-886d-4b811687221a.png" alt="" /></p>
+
+<p>Another nice thing about Drone CI is the &ldquo;Services&rdquo; configuration within your pipeline. At times your unit or integration testing steps might be dependent of a database such as MongoDB, MySQL etc.</p>
+
+<p>Drone allows you to spin up a ephemeral database service such as MongoDB using a Docker container as the fist step within your pipeline, defined in the services section. This step will always run first.</p>
+
+<p>The service container will be reachable via the configured container name as its hostname. Keep note that if you run multiple paralel jobs that the service container will only be reachable from the container where the mongodb container is running.</p>
+
+<h2>What are we doing today</h2>
+
+<p>We will setup a really basic (and a bit useless) pipeline that will spin up a mongodb service container, use a step to write random data to mongodb and a step that reads data from mongodb.</p>
+
+<p>For demonstration purposes, the data is really random but more focused on the service section.</p>
+
+<p>All the source code for this demonstration is available on my <strong><a href="https://github.com/ruanbekker/demo-drone-mongodb-tests">github repository</a></strong></p>
+
+<h2>Our Drone Pipeline</h2>
+
+<p>First we define our service, mongodb. Once the mongodb service is running, we will have our build step, our step that runs the mongodb version against our database, write data into our mongodb database, then read the data from mongodb, then the last step running a shell command with the date.</p>
+
+<p>Our <code>.drone.yml</code> pipeline definition:</p>
+
+<pre><code class="yaml">---
+kind: pipeline
+name: mongotests
+
+services:
+- name: mongo
+  image: mongo:4
+  command: [ --smallfiles ]
+  ports:
+  - 27017
+
+steps:
+- name: build-step
+  image: alpine
+  commands:
+  - echo "this should be a step that does something"
+
+- name: mongodb-return-version
+  image: mongo:4
+  commands:
+  - date
+  - mongo --host mongo --eval "db.version()"
+
+- name: mongodb-test-writes
+  image: mongo:4
+  commands:
+  - date
+  - sh scripts/write_mongo.sh
+
+- name: mongodb-test-reads
+  image: mongo:4
+  commands:
+  - date
+  - sh scripts/read_mongo.sh
+
+- name: last-step
+  image: alpine
+  commands:
+  - echo "completed at $(date)"
+</code></pre>
+
+<p>Our scripts referenced in our steps:</p>
+
+<p>The first will be our script that write random data into mongodb, <code>scripts/write_mongo.sh</code>:</p>
+
+<pre><code class="bash">#!/bin/sh
+set -ex
+echo "start writing"
+mongo mongo:27017/mydb scripts/write.js
+echo "done writing"
+</code></pre>
+
+<p>We are referencing a <code>scripts/write.js</code> file which is a function that randomizes data and generates a 1000 documents to write to mongodb:</p>
+
+<pre><code class="javascript">var txs = []
+for (var x = 0; x &lt; 1000 ; x++) {
+ var transaction_types = ["credit card", "cash", "account"];
+ var store_names = ["edgards", "cna", "makro", "picknpay", "checkers"];
+ var random_transaction_type = Math.floor(Math.random() * (2 - 0 + 1)) + 0;
+ var random_store_name = Math.floor(Math.random() * (4 - 0 + 1)) + 0;
+ txs.push({
+   transaction: 'tx_' + x,
+   transaction_price: Math.round(Math.random()*1000),
+   transaction_type: transaction_types[random_transaction_type],
+   store_name: store_names[random_store_name]
+   });
+}
+db.mycollection.insert(txs)
+</code></pre>
+
+<p>Our script that will read data from mongodb, <code>scripts/read_mongo.sh</code>:</p>
+
+<pre><code>#!/bin/sh
+set -ex
+echo "start reading"
+mongo mongo:27017/mydb &lt;&lt;EOF
+db.mycollection.find().count();
+db.mycollection.find({transaction_price: { \$gt: 990}}).forEach( printjson );
+EOF
+echo "done reading"
+</code></pre>
+
+<p>The <code>README.md</code> to include the build status:</p>
+
+<pre><code>## project-name ![](https://cloud.drone.io/api/badges/&lt;user-name&gt;/&lt;project-name&gt;/status.svg?branch=master)
+</code></pre>
+
+<p>Once your source code is set in github, enable the repository on drone and push to github to trigger the build.</p>
+
+<h2>Demo and Screenshots</h2>
+
+<p>After pushing to github to trigger the build, heading over to drone, I can see that mongodb is running and our step has completed that executes the <code>db.version()</code> against mongodb:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57183883-317d3000-6eb3-11e9-9aa0-7dd729514033.png" alt="" /></p>
+
+<p>Next our step executes to write the random data into mongodb:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57183911-989ae480-6eb3-11e9-942a-a9c1af191b7f.png" alt="" /></p>
+
+<p>After the data has been written to mongodb, our next step will read the number of documents from mongodb, and also run a query for transaction prices more than 990:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57183917-bc5e2a80-6eb3-11e9-802d-87e268b2fc43.png" alt="" /></p>
+
+<p>Once that has completed, we will have a shell command returning the time when the last step completed:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57183934-fa5b4e80-6eb3-11e9-9eb3-e58248e2286c.png" alt="" /></p>
+
+<h2>Resources</h2>
+
+<ul>
+<li><a href="https://cloud.drone.io">Drone Hosted Service</a></li>
+<li><a href="https://docs.drone.io/user-guide/pipeline/services/">Drone Services Documentation</a></li>
+<li><a href="https://github.com/ruanbekker/demo-drone-mongodb-tests">Github Repository</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Using Drone CI to Build a Jekyll Site and Deploy to Docker Swarm]]></title>
@@ -1056,225 +1201,6 @@ Scaling dynos... done, now running web at 1:Free
 <p>The code for this demo is available at: <a href="https://gitlab.com/rbekker87/demo-cicd-flask-heroku">gitlab.com/rbekker87/demo-cicd-flask-heroku</a></p>
 
 <p>For more blog posts on Gitlab, have a look at my <a href="https://blog.ruanbekker.com/blog/categories/gitlab/">gitlab</a> category on <a href="https://blog.ruanbekker.com/">blog.ruanbekker.com</a></p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<p>Ad space:</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-
-
-<p><p></p>
-
-<p>Thanks for reading!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup a Basic CI Pipeline on Gitlab]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/12/19/setup-a-basic-ci-pipeline-on-gitlab/"/>
-    <updated>2018-12-19T05:43:00-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/12/19/setup-a-basic-ci-pipeline-on-gitlab</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/50217968-0629f680-0393-11e9-8387-ad69937eb891.png" alt="" /></p>
-
-<p>In this tutorial we will setup a Basic CI (Continuous Integration) Pipeline on Gitlab.</p>
-
-<p>The code for this example is available on <a href="https://gitlab.com/rbekker87/demo-ci-basic-pipeline">gitlab.com/rbekker87/demo-ci-basic-pipeline</a>.</p>
-
-<p>If you would like to read more on <a href="https://www.atlassian.com/continuous-delivery/continuous-integration">Continuous Integration / Continuous Deliver (CI/CD)</a>.</p>
-
-<h2>What will we be doing?</h2>
-
-<p>The aim for this is every time there is a commit made to the master branch, that the jobs defined by the <code>.gitlab-ci.yml</code> will be executed and will only pass if exit code 0 has been returned on the scripts.</p>
-
-<p>The jobs gets executed on <a href="https://docs.gitlab.com/ee/ci/yaml/">gitlab runners</a> which is hosted with Giltab. Important to note is that every job runs independently from each other.</p>
-
-<h2>Our Basic Pipeline</h2>
-
-<p>In this pipeline we will have 2 basic jobs, each job execute a set of scripts:</p>
-
-<p>Build:</p>
-
-<pre><code>$ echo "this is building" 
-$ hostname
-$ mkdir builds
-$ touch builds/data.txt
-$ echo "true" &gt; builds/data.txt
-</code></pre>
-
-<p>Test:</p>
-
-<pre><code>$ echo "this is testing"
-$ hostname
-$ test -f builds/data.txt
-$ grep "true" builds/data.txt
-</code></pre>
-
-<h2>Setup the Pipeline:</h2>
-
-<p>From a newly created repository which i&rsquo;ve cloned to my workspace, create the config:</p>
-
-<pre><code>$ touch .gitlab-ci.yml
-</code></pre>
-
-<p>The config for above yaml file:</p>
-
-<pre><code class="yaml">stages:
-  - build
-  - test
-
-build:
-  stage: build
-  script:
-    - echo "this is building" 
-    - hostname
-    - mkdir builds
-    - touch builds/data.txt
-    - echo "false" &gt; builds/data.txt
-  artifacts:
-    paths:
-      - builds/
-
-test:
-  stage: test
-  script:
-    - echo "this is testing"
-    - hostname
-    - test -f builds/data.txt
-    - grep "true" builds/data.txt
-</code></pre>
-
-<h2>Config Explained</h2>
-
-<ul>
-<li>We define 2 stages for this pipeline: build and test</li>
-<li>We provide context of each job, the stage, the script (commands that will be executed in the lifecycle of the runner) and artifacts (artifacts will be the content that will be transferred, as each job runs in a different runner/container)</li>
-</ul>
-
-
-<p>Note that I deliberately made a mistake so that my pipeline can fail. I populated the content &ldquo;false&rdquo; into the <code>builds/data.txt</code> file from the build job and grep for the word &ldquo;true&rdquo; on the test job, so this job will fail.</p>
-
-<h2>Push to Github</h2>
-
-<p>Save the content to the config file, add, commit and push to master:</p>
-
-<pre><code class="bash">$ git add .gitlab-ci.yml
-$ git commit -m "add gitlab-ci config"
-$ git push origin master
-</code></pre>
-
-<h2>Gitlab Pipelines</h2>
-
-<p>From the Gitlab UI, if you head over to CI/CD -> Pipelines, you should see your pipeline running:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50216548-c103c580-038e-11e9-959b-ffdcf6038305.png" alt="" /></p>
-
-<p>When you select the Pipeline ID, you should be presented with the jobs available in your pipeline:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50216698-2ce62e00-038f-11e9-8cb5-8b67dc6e6e3d.png" alt="" /></p>
-
-<p>Select Jobs, and you should see an overview of your jobs. At this moment we can see that the build job has completed, and that the test job is busy running:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50216644-0922e800-038f-11e9-81d8-d40dd6ff0862.png" alt="" /></p>
-
-<p>Shortly thereafter the status of the test job should change to failed, select the Job ID and you should see the output:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50216833-89e1e400-038f-11e9-896f-9d36aad1c55d.png" alt="" /></p>
-
-<p>From the above output it gives you a link to create a new issue, which is quite handy.</p>
-
-<h2>Fix the Pipeline Config</h2>
-
-<p>Let&rsquo;s go ahead and change the content in the <code>.gitlab-ci.yml</code> config and push to master:</p>
-
-<pre><code class="bash">$ vim .gitlab-ci.yml
-</code></pre>
-
-<p>Change line 12 from <code>- echo "false" &gt; builds/data.txt</code> to <code>- echo "true" &gt; builds/data.txt</code>, the full content of the file:</p>
-
-<pre><code class="yaml">stages:
-  - build
-  - test
-
-build:
-  stage: build
-  script:
-    - echo "this is building" 
-    - hostname
-    - mkdir builds
-    - touch builds/data.txt
-    - echo "true" &gt; builds/data.txt
-  artifacts:
-    paths:
-      - builds/
-
-test:
-  stage: test
-  script:
-    - echo "this is testing"
-    - hostname
-    - test -f builds/data.txt
-    - grep "true" builds/data.txt
-</code></pre>
-
-<p>Commit and push to master:</p>
-
-<pre><code class="bash">$ git add .gitlab-ci.yml
-$ git commit -m "change content in script"
-$ git push origin master
-</code></pre>
-
-<p>When you head over to Pipelines, you will see that the pipeline is busy running, and on the right the commit that we just made:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50217143-91ee5380-0390-11e9-8b08-08626984f176.png" alt="" /></p>
-
-<h2>Great Success</h2>
-
-<p>Select the Pipeline ID, then select Jobs, you should see both jobs succeeded:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50217299-f9a49e80-0390-11e9-871d-78423f0651c7.png" alt="" /></p>
-
-<p>Select the Job ID of the test job, and from the output you will see that the job succeeded:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/50217268-eb568280-0390-11e9-972c-58f23ce39741.png" alt="" /></p>
-
-<p>From this output you can also confirm from both jobs, that each job ran in a different runner as the hostnames that was returned to stdout was different.</p>
-
-<h2>Resources</h2>
-
-<p>This was a really basic example to demonstrate Gitlab CI. Some relevant resources to this post:</p>
-
-<ul>
-<li><a href="https://docs.gitlab.com/ee/ci/">Gitlab CI/CD Docs</a></li>
-<li><a href="https://hackernoon.com/setting-up-ci-cd-on-gitlab-step-by-step-guide-part-1-826385728223">Full CI/CD Example with Gitlab and Heroku</a></li>
-</ul>
-
 
 <h2>Thank You</h2>
 

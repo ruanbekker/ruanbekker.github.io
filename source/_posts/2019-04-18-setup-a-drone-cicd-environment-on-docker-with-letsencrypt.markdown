@@ -108,6 +108,7 @@ docker run \
   --env=DRONE_SERVER_HOST=${SERVER_HOST} \
   --env=DRONE_SERVER_PROTO=${SERVER_PROTOCOL} \
   --env=DRONE_TLS_AUTOCERT=true \
+  --env=DRONE_USER_CREATE=username:<your-github-username>,admin:true \
   --publish=80:80 \
   --publish=443:443 \
   --restart=always \

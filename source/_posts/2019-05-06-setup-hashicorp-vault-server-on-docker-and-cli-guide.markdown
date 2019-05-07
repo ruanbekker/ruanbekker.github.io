@@ -15,7 +15,8 @@ We will setup a Vault Server on Docker and demonstrate a getting started guide w
 
 For related posts:
 
-* [Persist Vault Data with Amazon S3 as a Storage Backend](https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/)
+* [Use the S3 Storage Backend to Persist Data](https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/)
+* [Create Secrets with Vaults Transit Secret Engine](https://blog.ruanbekker.com/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/)
 
 ## Setting up the Vault Server
 

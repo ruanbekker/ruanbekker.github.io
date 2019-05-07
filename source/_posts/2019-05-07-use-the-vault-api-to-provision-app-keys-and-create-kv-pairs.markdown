@@ -15,6 +15,7 @@ Related Posts:
 * [Setup a Vault Server on Docker](https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/)
 * [Getting Started with the Vault CLI](https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/)
 * [Use the S3 Storage Backend to Persist Data](https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/)
+* [Create Secrets with Vaults Transit Secret Engine](https://blog.ruanbekker.com/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/)
 
 ## Credentials / Authentication
 

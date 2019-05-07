@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-07T16:13:12-04:00</updated>
+  <updated>2019-05-07T16:29:43-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,615 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Use the Vault API to Provision App Keys and Create KV Pairs]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/07/use-the-vault-api-to-provision-app-keys-and-create-kv-pairs/"/>
+    <updated>2019-05-07T16:23:10-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/07/use-the-vault-api-to-provision-app-keys-and-create-kv-pairs</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57256060-f1a27e00-7055-11e9-9a05-77d3fdd6c76f.png" alt="" /></p>
+
+<p>In this tutorial we will use Vault API to create a user and allow that user to write/read key/value pairs from a given path.</p>
+
+<p>Related Posts:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">Setup a Vault Server on Docker</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">Getting Started with the Vault CLI</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/">Use the S3 Storage Backend to Persist Data</a></li>
+</ul>
+
+
+<h2>Credentials / Authentication</h2>
+
+<p>Export Vault Root Tokens:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export ROOT_TOKEN="$(cat ~/.vault-token)"
+</span><span class='line'>$ export VAULT_TOKEN=${ROOT_TOKEN}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check the vault status:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/sys/health | jq
+</span><span class='line'>{
+</span><span class='line'>  "initialized": true,
+</span><span class='line'>  "sealed": false,
+</span><span class='line'>  "standby": false,
+</span><span class='line'>  "performance_standby": false,
+</span><span class='line'>  "replication_performance_mode": "disabled",
+</span><span class='line'>  "replication_dr_mode": "disabled",
+</span><span class='line'>  "server_time_utc": 1554652468,
+</span><span class='line'>  "version": "1.1.0",
+</span><span class='line'>  "cluster_name": "vault-cluster-bfb00cd7",
+</span><span class='line'>  "cluster_id": "dc1dc9a6-xx-xx-xx-a2870f475e7a"
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Do a lookup for the root user:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/token/lookup-self | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "69a19f66-5bad-3af2-81a5-81ca24e50b02",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "accessor": "A7Xkik1ebWpUfzqNrvADmQ08",
+</span><span class='line'>    "creation_time": 1554651149,
+</span><span class='line'>    "creation_ttl": 0,
+</span><span class='line'>    "display_name": "root",
+</span><span class='line'>    "entity_id": "",
+</span><span class='line'>    "expire_time": null,
+</span><span class='line'>    "explicit_max_ttl": 0,
+</span><span class='line'>    "id": "s.po8HkMdCnnAerlCAeHGGGszQ",
+</span><span class='line'>    "meta": null,
+</span><span class='line'>    "num_uses": 0,
+</span><span class='line'>    "orphan": true,
+</span><span class='line'>    "path": "auth/token/root",
+</span><span class='line'>    "policies": [
+</span><span class='line'>      "root"
+</span><span class='line'>    ],
+</span><span class='line'>    "ttl": 0,
+</span><span class='line'>    "type": "service"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Roles</h2>
+
+<p>Create the AppRole:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"type": "approle"}' http://127.0.0.1:8200/v1/sys/auth/approle | jq
+</span><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/sys/auth | jq
+</span><span class='line'>{
+</span><span class='line'>  "token/": {
+</span><span class='line'>    "accessor": "auth_token_31f2381e",
+</span><span class='line'>    "config": {
+</span><span class='line'>      "default_lease_ttl": 0,
+</span><span class='line'>      "force_no_cache": false,
+</span><span class='line'>      "max_lease_ttl": 0,
+</span><span class='line'>      "token_type": "default-service"
+</span><span class='line'>    },
+</span><span class='line'>    "description": "token based credentials",
+</span><span class='line'>    "local": false,
+</span><span class='line'>    "options": null,
+</span><span class='line'>    "seal_wrap": false,
+</span><span class='line'>    "type": "token"
+</span><span class='line'>  },
+</span><span class='line'>  "approle/": {
+</span><span class='line'>    "accessor": "auth_approle_d542dcad",
+</span><span class='line'>    "config": {
+</span><span class='line'>      "default_lease_ttl": 0,
+</span><span class='line'>      "force_no_cache": false,
+</span><span class='line'>      "max_lease_ttl": 0,
+</span><span class='line'>      "token_type": "default-service"
+</span><span class='line'>    },
+</span><span class='line'>    "description": "",
+</span><span class='line'>    "local": false,
+</span><span class='line'>    "options": {},
+</span><span class='line'>    "seal_wrap": false,
+</span><span class='line'>    "type": "approle"
+</span><span class='line'>  },
+</span><span class='line'>  "request_id": "20554948-b8e0-4254-f21d-f9ad25f1e5d5",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "approle/": {
+</span><span class='line'>      "accessor": "auth_approle_d542dcad",
+</span><span class='line'>      "config": {
+</span><span class='line'>        "default_lease_ttl": 0,
+</span><span class='line'>        "force_no_cache": false,
+</span><span class='line'>        "max_lease_ttl": 0,
+</span><span class='line'>        "token_type": "default-service"
+</span><span class='line'>      },
+</span><span class='line'>      "description": "",
+</span><span class='line'>      "local": false,
+</span><span class='line'>      "options": {},
+</span><span class='line'>      "seal_wrap": false,
+</span><span class='line'>      "type": "approle"
+</span><span class='line'>    },
+</span><span class='line'>    "token/": {
+</span><span class='line'>      "accessor": "auth_token_31f2381e",
+</span><span class='line'>      "config": {
+</span><span class='line'>        "default_lease_ttl": 0,
+</span><span class='line'>        "force_no_cache": false,
+</span><span class='line'>        "max_lease_ttl": 0,
+</span><span class='line'>        "token_type": "default-service"
+</span><span class='line'>      },
+</span><span class='line'>      "description": "token based credentials",
+</span><span class='line'>      "local": false,
+</span><span class='line'>      "options": null,
+</span><span class='line'>      "seal_wrap": false,
+</span><span class='line'>      "type": "token"
+</span><span class='line'>    }
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the test policy:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"policy": "{\"name\": \"test\", \"path\": {\"secret/*\": {\"policy\": \"write\"}}}"}' http://127.0.0.1:8200/v1/sys/policy/test
+</span><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/sys/policy/test | jq
+</span><span class='line'>{
+</span><span class='line'>  "name": "test",
+</span><span class='line'>  "rules": "{\"name\": \"test\", \"path\": {\"secret/*\": {\"policy\": \"write\"}}}",
+</span><span class='line'>  "request_id": "e4f55dc0-575f-ead9-48f6-43154153889a",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "name": "test",
+</span><span class='line'>    "rules": "{\"name\": \"test\", \"path\": {\"secret/*\": {\"policy\": \"write\"}}}"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Attach the policy to the approle:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"policies": "test"}' http://127.0.0.1:8200/v1/auth/approle/role/app
+</span><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" 'http://127.0.0.1:8200/v1/auth/approle/role?list=true' | jq .
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "e645cad9-9010-4299-0e6b-0baf6d9194b8",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "keys": [
+</span><span class='line'>      "app"
+</span><span class='line'>    ]
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable the kv store:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -H "X-Vault-Token: ${VAULT_TOKEN}" -XPOST --data '{"type": "kv", "description": "my key value store", "config": {"force_no_cache": true}}' http://127.0.0.1:8200/v1/sys/mounts/secret</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the User Credentials</h2>
+
+<p>Get the role_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/approle/role/app/role-id | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "e803a1bf-a492-dad7-68db-bb1506752e03",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "role_id": "3e365c72-7aad-f4e4-521c-d7cf0dd83c0f"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the secret_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/approle/role/app/secret-id | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "b56d20c0-ff8a-a1fe-4d5f-42e57b625b83",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "secret_id": "5eecfe29-d6e1-50e6-7a70-04c6bea42b76",
+</span><span class='line'>    "secret_id_accessor": "2fa80586-32b9-1c6f-fe1d-7c547e5403e5"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the token with the role_id and secret_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -d '{"role_id": "3e365c72-7aad-f4e4-521c-d7cf0dd83c0f","secret_id": "5eecfe29-d6e1-50e6-7a70-04c6bea42b76"}' http://127.0.0.1:8200/v1/auth/approle/login | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "82470940-ef09-bcbb-f7a0-bdf085b4f47b",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": null,
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": {
+</span><span class='line'>    "client_token": "s.7EtwtRGsZWOtkqcMvj3UMLP0",
+</span><span class='line'>    "accessor": "2TPL1vg5IZXgVF6Xf1RRzbmL",
+</span><span class='line'>    "policies": [
+</span><span class='line'>      "default",
+</span><span class='line'>      "test"
+</span><span class='line'>    ],
+</span><span class='line'>    "token_policies": [
+</span><span class='line'>      "default",
+</span><span class='line'>      "test"
+</span><span class='line'>    ],
+</span><span class='line'>    "metadata": {
+</span><span class='line'>      "role_name": "app"
+</span><span class='line'>    },
+</span><span class='line'>    "lease_duration": 2764800,
+</span><span class='line'>    "renewable": true,
+</span><span class='line'>    "entity_id": "d5051b01-b7ce-626c-a9f4-e1663f8c23e8",
+</span><span class='line'>    "token_type": "service",
+</span><span class='line'>    "orphan": true
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create KV Pairs with New User</h2>
+
+<p>Export the user auth with the received token:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export APP_TOKEN=s.7EtwtRGsZWOtkqcMvj3UMLP0
+</span><span class='line'>$ export VAULT_TOKEN=$APP_TOKEN</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify if you can lookup your own info:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/token/lookup-self | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "2e69cd68-8668-3159-6440-c430cb61d2e6",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "accessor": "2TPL1vg5IZXgVF6Xf1RRzbmL",
+</span><span class='line'>    "creation_time": 1554651882,
+</span><span class='line'>    "creation_ttl": 2764800,
+</span><span class='line'>    "display_name": "approle",
+</span><span class='line'>    "entity_id": "d5051b01-b7ce-626c-a9f4-e1663f8c23e8",
+</span><span class='line'>    "expire_time": "2019-05-09T15:44:42.1013993Z",
+</span><span class='line'>    "explicit_max_ttl": 0,
+</span><span class='line'>    "id": "s.7EtwtRGsZWOtkqcMvj3UMLP0",
+</span><span class='line'>    "issue_time": "2019-04-07T15:44:42.1013788Z",
+</span><span class='line'>    "meta": {
+</span><span class='line'>      "role_name": "app"
+</span><span class='line'>    },
+</span><span class='line'>    "num_uses": 0,
+</span><span class='line'>    "orphan": true,
+</span><span class='line'>    "path": "auth/approle/login",
+</span><span class='line'>    "policies": [
+</span><span class='line'>      "default",
+</span><span class='line'>      "test"
+</span><span class='line'>    ],
+</span><span class='line'>    "renewable": true,
+</span><span class='line'>    "ttl": 2764556,
+</span><span class='line'>    "type": "service"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a KV pair:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"app_password": "secret123"}' http://127.0.0.1:8200/v1/secret/app01/app_password</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the secret from KV pair:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/secret/app01/app_password | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "70d5f16d-2abb-fcfd-063f-0e21d9cef8fd",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 2764800,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "app_password": "secret123"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Try to write outside the allowed path:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"app_password": "secret123"}' http://127.0.0.1:8200/v1/secrets/app01/app_password
+</span><span class='line'>{"errors":["1 error occurred:\n\t* permission denied\n\n"]}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.vaultproject.io/api/system/audit.html">https://www.vaultproject.io/api/system/audit.html</a></li>
+<li><a href="https://learn.hashicorp.com/vault/getting-started/apis">https://learn.hashicorp.com/vault/getting-started/apis</a></li>
+<li><a href="https://www.hashicorp.com/resources/getting-vault-enterprise-installed-running">https://www.hashicorp.com/resources/getting-vault-enterprise-installed-running</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Persist Vault Data With Amazon S3 as a Storage Backend]]></title>
@@ -5933,598 +6542,6 @@ Finally, it recovers the target index as though it were a closed index which had
 <p>Source code for this demonstration can be found at <a href="https://github.com/ruanbekker/golang-build-small-images">github.com/ruanbekker/golang-build-small-images</a></p>
 
 <p><img src="https://user-images.githubusercontent.com/567298/55478904-236e9200-561d-11e9-9382-f31b25a9ae03.png" alt="" /></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/"/>
-    <updated>2019-04-02T14:55:58-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
-
-<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
-
-<h2>Install Nginx:</h2>
-
-<p>Install nginx and the dependency package to create basic auth:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install nginx apache2-utils -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Configure Nginx for Reverse Proxy</h2>
-
-<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
-
-<p>Edit the main nginx configuration:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/nginx.conf
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>and populate the information as shown below:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>user www-data<span class="p">;</span>
-</span><span class='line'>worker_processes auto<span class="p">;</span>
-</span><span class='line'>pid /run/nginx.pid<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>events <span class="o">{</span>
-</span><span class='line'>  worker_connections 1024<span class="p">;</span>
-</span><span class='line'>  <span class="c"># multi_accept on;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>http <span class="o">{</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="c"># basic Settings</span>
-</span><span class='line'>  sendfile on<span class="p">;</span>
-</span><span class='line'>  tcp_nopush on<span class="p">;</span>
-</span><span class='line'>  tcp_nodelay on<span class="p">;</span>
-</span><span class='line'>  keepalive_timeout 65<span class="p">;</span>
-</span><span class='line'>  types_hash_max_size 2048<span class="p">;</span>
-</span><span class='line'>  include /etc/nginx/mime.types<span class="p">;</span>
-</span><span class='line'>  default_type application/octet-stream<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="c"># ssl settings</span>
-</span><span class='line'>  ssl_protocols TLSv1 TLSv1.1 TLSv1.2<span class="p">;</span>
-</span><span class='line'>  ssl_prefer_server_ciphers on<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="c"># logging settings</span>
-</span><span class='line'>  access_log /var/log/nginx/access.log<span class="p">;</span>
-</span><span class='line'>  error_log /var/log/nginx/error.log<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="c"># gzip settings</span>
-</span><span class='line'>  gzip on<span class="p">;</span>
-</span><span class='line'>  gzip_disable <span class="s2">&quot;msie6&quot;</span><span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="c"># virtual host configs</span>
-</span><span class='line'>  include /etc/nginx/conf.d/*.conf<span class="p">;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Next, edit the virtual host config:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/conf.d/elasticsearch.conf
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And populate the following config:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c"># https://gist.github.com/sahilsk/b16cb51387847e6c3329</span>
-</span><span class='line'>
-</span><span class='line'>upstream elasticsearch <span class="o">{</span>
-</span><span class='line'>    <span class="c"># define your es nodes</span>
-</span><span class='line'>    server 10.0.0.10:9200<span class="p">;</span>
-</span><span class='line'>    server 10.0.0.11:9200<span class="p">;</span>
-</span><span class='line'>    <span class="c"># persistent http connections</span>
-</span><span class='line'>    <span class="c"># https://www.elastic.co/blog/playing-http-tricks-nginx</span>
-</span><span class='line'>    keepalive 15<span class="p">;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>server <span class="o">{</span>
-</span><span class='line'>  listen 80<span class="p">;</span>
-</span><span class='line'>  server_name elasticsearch.domain.com<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  auth_basic <span class="s2">&quot;server auth&quot;</span><span class="p">;</span>
-</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  location / <span class="o">{</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="c"># deny node shutdown api</span>
-</span><span class='line'>    <span class="k">if</span> <span class="o">(</span><span class="nv">$request_filename</span> ~ <span class="s2">&quot;_shutdown&quot;</span><span class="o">)</span> <span class="o">{</span>
-</span><span class='line'>      <span class="k">return</span> 403<span class="p">;</span>
-</span><span class='line'>      <span class="nb">break</span><span class="p">;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
-</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
-</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_redirect off<span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">location</span> <span class="o">=</span> / <span class="o">{</span>
-</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
-</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
-</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_redirect off<span class="p">;</span>
-</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  location ~* ^<span class="o">(</span>/_cluster/health<span class="p">|</span>/_cat/health<span class="o">)</span> <span class="o">{</span>
-</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
-</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
-</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_redirect off<span class="p">;</span>
-</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Set your username and password to protect your endpoint:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>htpasswd -c /etc/nginx/passwords admin
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Enable nginx on boot and restart the process:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>nginx
-</span><span class='line'><span class="nv">$ </span>systemctl restart nginx
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Test it</h2>
-
-<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -H <span class="s1">&#39;Content-Type: application/json&#39;</span> -u <span class="s1">&#39;admin:admin&#39;</span> http://myproxy.domain.com/_cat/indices?v
-</span><span class='line'>health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-</span><span class='line'>green  open   first-index 1o6yM7tCSqagqoeihKM7_g   <span class="m">5</span>   <span class="m">1</span>          <span class="m">3</span>            <span class="m">0</span>     40.6kb         20.3kb
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Letsencrypt SSL Certificates</h2>
-
-<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get update
-</span><span class='line'><span class="nv">$ </span>apt-get install software-properties-common -y
-</span><span class='line'><span class="nv">$ </span>add-apt-repository universe
-</span><span class='line'><span class="nv">$ </span>add-apt-repository ppa:certbot/certbot
-</span><span class='line'><span class="nv">$ </span>apt-get update
-</span><span class='line'><span class="nv">$ </span>apt-get install certbot python-certbot-nginx -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Request a Certificate for your domain:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
-</span><span class='line'>
-</span><span class='line'>Obtaining a new certificate
-</span><span class='line'>Performing the following challenges:
-</span><span class='line'>dns-01 challenge <span class="k">for</span> myproxy.domain.com
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>Please deploy a DNS TXT record under the name
-</span><span class='line'>_acme-challenge.myproxy.domain.com with the following value:
-</span><span class='line'>
-</span><span class='line'>xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
-</span><span class='line'>
-</span><span class='line'>Before continuing, verify the record is deployed.
-</span><span class='line'>Press Enter to Continue
-</span><span class='line'>Waiting <span class="k">for</span> verification...
-</span><span class='line'>Cleaning up challenges
-</span><span class='line'>
-</span><span class='line'>IMPORTANT NOTES:
-</span><span class='line'> - Congratulations! Your certificate and chain have been saved at:
-</span><span class='line'>   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
-</span><span class='line'>   Your key file has been saved at:
-</span><span class='line'>   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
-</span><span class='line'>   Your cert will expire on 2019-07-01. To obtain a new or tweaked
-</span><span class='line'>   version of this certificate in the future, simply run certbot
-</span><span class='line'>   again. To non-interactively renew *all* of your certificates, run
-</span><span class='line'>   <span class="s2">&quot;certbot renew&quot;</span>
-</span><span class='line'> - If you like Certbot, please consider supporting our work by:
-</span><span class='line'>
-</span><span class='line'>   Donating to ISRG / Let<span class="err">&#39;</span>s Encrypt:   https://letsencrypt.org/donate
-</span><span class='line'>   Donating to EFF:                    https://eff.org/donate-le
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Update Nginx Config</h2>
-
-<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
-
-<p>Open up the virtual host nginx configuration:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim /etc/nginx/conf.d/elasticsearch.conf
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Update the config like the one below:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>upstream elasticsearch <span class="o">{</span>
-</span><span class='line'>    server 10.0.0.10:9200<span class="p">;</span>
-</span><span class='line'>    server 10.0.0.11:9200<span class="p">;</span>
-</span><span class='line'>    keepalive 15<span class="p">;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>server <span class="o">{</span>
-</span><span class='line'>  listen 80<span class="p">;</span>
-</span><span class='line'>  server_name myproxy.domain.com<span class="p">;</span>
-</span><span class='line'>  <span class="k">return</span> <span class="m">301</span> https://<span class="nv">$host$request_uri</span><span class="p">;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>server <span class="o">{</span>
-</span><span class='line'>  listen <span class="m">443</span> ssl<span class="p">;</span>
-</span><span class='line'>  server_name myproxy.domain.com<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem<span class="p">;</span>
-</span><span class='line'>  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  auth_basic <span class="s2">&quot;server auth&quot;</span><span class="p">;</span>
-</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords<span class="p">;</span>
-</span><span class='line'>
-</span><span class='line'>  location ^~ /.well-known/acme-challenge/ <span class="o">{</span>
-</span><span class='line'>    auth_basic off<span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  location / <span class="o">{</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="c"># deny node shutdown api</span>
-</span><span class='line'>    <span class="k">if</span> <span class="o">(</span><span class="nv">$request_filename</span> ~ <span class="s2">&quot;_shutdown&quot;</span><span class="o">)</span> <span class="o">{</span>
-</span><span class='line'>      <span class="k">return</span> 403<span class="p">;</span>
-</span><span class='line'>      <span class="nb">break</span><span class="p">;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
-</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
-</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
-</span><span class='line'>    proxy_redirect off<span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">location</span> <span class="o">=</span> / <span class="o">{</span>
-</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
-</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
-</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
-</span><span class='line'>    proxy_redirect off<span class="p">;</span>
-</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  location ~* ^<span class="o">(</span>/_cluster/health<span class="p">|</span>/_cat/health<span class="o">)</span> <span class="o">{</span>
-</span><span class='line'>    proxy_pass http://elasticsearch<span class="p">;</span>
-</span><span class='line'>    proxy_http_version 1.1<span class="p">;</span>
-</span><span class='line'>    proxy_set_header Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Proxy-Connection <span class="s2">&quot;Keep-Alive&quot;</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Forwarded-Proto <span class="nv">$scheme</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
-</span><span class='line'>    proxy_set_header Host <span class="nv">$http_host</span><span class="p">;</span>
-</span><span class='line'>    proxy_redirect off<span class="p">;</span>
-</span><span class='line'>    auth_basic <span class="s2">&quot;off&quot;</span><span class="p">;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Restart the nginx process:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl restart nginx
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Test the Nginx Proxy with SSL</h2>
-
-<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -iL -u <span class="s1">&#39;admin:admin&#39;</span> http://myproxy.domain.com/_cat/nodes?v
-</span><span class='line'>HTTP/1.1 <span class="m">301</span> Moved Permanently
-</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
-</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:09 GMT
-</span><span class='line'>Content-Type: text/html
-</span><span class='line'>Content-Length: 194
-</span><span class='line'>Connection: keep-alive
-</span><span class='line'>Location: https://myproxy.domain.com/_cat/nodes?v
-</span><span class='line'>
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
-</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:10 GMT
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>UTF-8
-</span><span class='line'>Content-Length: 276
-</span><span class='line'>Connection: keep-alive
-</span><span class='line'>
-</span><span class='line'>ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-</span><span class='line'>10.0.0.10               <span class="m">40</span>          <span class="m">97</span>   <span class="m">3</span>    0.15    0.10     0.08 mdi       -      Lq9P7eP
-</span><span class='line'>10.0.0.11               <span class="m">44</span>          <span class="m">96</span>   <span class="m">3</span>    0.21    0.10     0.09 mdi       *      F5edOwK
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i -u <span class="s1">&#39;admin:admin&#39;</span> https://myproxy.domain.com/_cat/nodes?v
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Server: nginx/1.14.0 <span class="o">(</span>Ubuntu<span class="o">)</span>
-</span><span class='line'>Date: Tue, <span class="m">02</span> Apr <span class="m">2019</span> 21:40:22 GMT
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>UTF-8
-</span><span class='line'>Content-Length: 276
-</span><span class='line'>Connection: keep-alive
-</span><span class='line'>
-</span><span class='line'>ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-</span><span class='line'>10.0.0.10               <span class="m">44</span>          <span class="m">96</span>   <span class="m">4</span>    0.18    0.10     0.09 mdi       *      F5edOwK
-</span><span class='line'>10.0.0.11               <span class="m">39</span>          <span class="m">97</span>   <span class="m">5</span>    0.13    0.09     0.08 mdi       -      Lq9P7eP
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Setup a cronjob to auto renew the certificates:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>crontab -e
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Populate the following line:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="m">6</span> 1,13 * * * /usr/bin/certbot renew --post-hook <span class="s2">&quot;systemctl restart nginx&quot;</span> --quiet
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

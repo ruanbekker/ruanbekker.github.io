@@ -13,6 +13,10 @@ Vault is one of Hashicorp's awesome services, which enables you to centrally sto
 
 We will setup a Vault Server on Docker and demonstrate a getting started guide with the Vault CLI to Initialize the Vault, Create / Use and Manage Secrets.
 
+For related posts:
+
+* [Persist Vault Data with Amazon S3 as a Storage Backend](https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/)
+
 ## Setting up the Vault Server
 
 Create the directory structure:

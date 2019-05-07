@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Node-exporter | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/node-exporter/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2019-05-07T10:32:21-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Setup Prometheus and Node Exporter on Ubuntu for Epic Monitoring]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/"/>
+    <updated>2019-05-07T09:55:37-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="image" /></p>
+
+<p><a href="https://prometheus.io/">Prometheus</a> is one of those awesome open source monitoring services that I simply cannot live without. Prometheus is a Time Series Database that collects metrics from services using it&rsquo;s exporters functionality. Prometheus has its own query language called PromQL and makes graphing epic visualiztions with services such as Grafana a breeze.</p>
+
+<h2>What are we doing today</h2>
+
+<p>We will install the <code>prometheus</code> service and set up <code>node_exporter</code> to consume node related metrics such as cpu, memory, io etc that will be scraped by the exporter configuration on prometheus, which then gets pushed into prometheus&rsquo;s time series database. Which can then be used by services such as Grafana to visualize the data.</p>
+
+<p>Other exporters is also available, such as: <code>haproxy_exporter</code>, <code>blackbox_exporter</code> etc, then you also get <code>pushgateway</code> which is used to push data to, and then your exporter configuration scrapes the data from the pushgateway endpoint. In a later tutorial, we will set up push gateway as well.</p>
+
+<h2>Install Prometheus</h2>
+
+<p>First, let&rsquo;s provision our dedicated system users for prometheus and node exporter:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false prometheus
+$ useradd --no-create-home --shell /bin/false node_exporter
+</code></pre>
+
+<p>Create the directories for it&rsquo;s system files:</p>
+
+<pre><code>$ mkdir /etc/prometheus
+$ mkdir /var/lib/prometheus
+</code></pre>
+
+<p>Apply the permissions:</p>
+
+<pre><code>$ chown prometheus:prometheus /etc/prometheus
+$ chown prometheus:prometheus /var/lib/prometheus
+</code></pre>
+
+<p>Next, update your system:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+</code></pre>
+
+<p>Let&rsquo;s install prometheus, head over to <a href="https://prometheus.io/download/">https://prometheus.io/download/</a> and get the latest version of prometheus:</p>
+
+<pre><code>$ wget https://github.com/prometheus/prometheus/releases/download/v2.8.0/prometheus-2.8.0.linux-amd64.tar.gz
+$ tar -xf prometheus-2.8.0.linux-amd64.tar.gz
+$ cp prometheus-2.8.0.linux-amd64/prometheus /usr/local/bin/
+$ cp prometheus-2.8.0.linux-amd64/promtool /usr/local/bin/
+$ chown prometheus:prometheus /usr/local/bin/prometheus
+$ chown prometheus:prometheus /usr/local/bin/promtool
+$ cp -r prometheus-2.8.0.linux-amd64/consoles /etc/prometheus/
+$ cp -r prometheus-2.8.0.linux-amd64/console_libraries /etc/prometheus/
+$ chown -R prometheus:prometheus /etc/prometheus/consoles
+$ chown -R prometheus:prometheus /etc/prometheus/console_libraries
+$ rm -rf prometheus-2.8.0.linux-amd64*
+</code></pre>
+
+<h2>Configure Prometheus</h2>
+
+<p>We need to tell prometheus to scrape itself in order to get prometheus performance data, edit the prometheus configuration:</p>
+
+<pre><code>$ vim /etc/prometheus/prometheus.yml
+</code></pre>
+
+<p>And add a scrape config: Set the interval on when it needs to scrap, the job name which will be in your metric and the endpoint which it needs to scrape:</p>
+
+<pre><code>global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+</code></pre>
+
+<p>Apply permissions to the configured file:</p>
+
+<pre><code>$ chown prometheus:prometheus /etc/prometheus/prometheus.yml
+</code></pre>
+
+<p>Next, we need to define a systemd unit file so we can control the daemon using systemd:</p>
+
+<pre><code>$ vim /etc/systemd/system/prometheus.service
+</code></pre>
+
+<p>The config:</p>
+
+<pre><code>[Unit]
+Description=Prometheus
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+    --config.file /etc/prometheus/prometheus.yml \
+    --storage.tsdb.path /var/lib/prometheus/ \
+    --web.console.templates=/etc/prometheus/consoles \
+    --web.console.libraries=/etc/prometheus/console_libraries
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Since we created a new systemd unit file, we need to reload the systemd daemon, then start the service:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl start prometheus
+</code></pre>
+
+<p>Let&rsquo;s look at the status to see if everything works as expected:</p>
+
+<pre><code>$ systemctl status prometheus
+prometheus.service - Prometheus
+   Loaded: loaded (/etc/systemd/system/prometheus.service; disabled; vendor preset: enabled)
+   Active: active (running) since Tue 2019-03-26 11:59:10 UTC; 6s ago
+ Main PID: 16374 (prometheus)
+    Tasks: 9 (limit: 4704)
+   CGroup: /system.slice/prometheus.service
+           └─16374 /usr/local/bin/prometheus --config.file /etc/prometheus/prometheus.yml --storage.tsdb.path /var/lib/prometheus/ --web.console.templates=/etc/prometheus/consoles --web.console.libraries=
+
+...
+Mar 26 11:59:10 ip-172-31-41-126 prometheus[16374]: level=info ts=2019-03-26T11:59:10.893770598Z caller=main.go:655 msg="TSDB started"
+</code></pre>
+
+<p>Seems legit! Enable the service on startup:</p>
+
+<pre><code>$ systemctl enable prometheus
+</code></pre>
+
+<h2>Install Node Exporter</h2>
+
+<p>Now since we have prometheus up and running, we can start adding exporters to publish data into our prometheus time series database. As mentioned before, with node exporter, we will allow prometheus to scrape the node exporter endpoint to consume metrics about the node:</p>
+
+<p>You will find the latest version from their website, which I have added at the top of this post.</p>
+
+<pre><code>$ wget https://github.com/prometheus/node_exporter/releases/download/v0.17.0/node_exporter-0.17.0.linux-amd64.tar.gz
+$ tar -xf node_exporter-0.17.0.linux-amd64.tar.gz
+$ cp node_exporter-0.17.0.linux-amd64/node_exporter /usr/local/bin
+$ chown node_exporter:node_exporter /usr/local/bin/node_exporter
+$ rm -rf node_exporter-0.17.0.linux-amd64*
+</code></pre>
+
+<p>Create the systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/node_exporter.service
+</code></pre>
+
+<p>Apply this configuration:</p>
+
+<pre><code>[Unit]
+Description=Node Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Reload the systemd daemon and start node exporter:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl start node_exporter
+</code></pre>
+
+<p>Look at the status:</p>
+
+<pre><code>$ node_exporter.service - Node Exporter
+   Loaded: loaded (/etc/systemd/system/node_exporter.service; disabled; vendor preset: enabled)
+   Active: active (running) since Tue 2019-03-26 12:01:39 UTC; 5s ago
+ Main PID: 16474 (node_exporter)
+    Tasks: 4 (limit: 4704)
+   CGroup: /system.slice/node_exporter.service
+           └─16474 /usr/local/bin/node_exporter
+
+...
+Mar 26 12:01:39 ip-172-31-41-126 node_exporter[16474]: time="2019-03-26T12:01:39Z" level=info msg="Listening on :9100" source="node_exporter.go:111"
+</code></pre>
+
+<p>If everything looks good, enable the service on boot:</p>
+
+<pre><code>$ systemctl enable node_exporter
+</code></pre>
+
+<h2>Configure Node Exporter</h2>
+
+<p>Now that we have node exporter running, we need to tell prometheus how to scrape node exporter, so that the node related metrics can end up into prometheus. Edit the prometheus config:</p>
+
+<pre><code>$ vim /etc/prometheus/prometheus.yml
+</code></pre>
+
+<p>I&rsquo;m providing the full config, but the config is the last section, where you can see the jobname is node_exporter:</p>
+
+<pre><code>global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node_exporter'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9100']
+</code></pre>
+
+<p>Once the config is saved, restart prometheus and have a look at the status if everything is going as expected:</p>
+
+<pre><code>$ systemctl restart prometheus
+$ systemctl status prometheus
+</code></pre>
+
+<h2>Nginx Reverse Proxy</h2>
+
+<p>Let&rsquo;s add a layer of security and front our setup with a nginx reverse proxy, so that we don&rsquo;t have to access prometheus on high ports and we have the option to enable basic http authentication. Install nginx:</p>
+
+<pre><code>$ apt install nginx apache2-utils -y
+</code></pre>
+
+<p>Create the authentication file:</p>
+
+<pre><code>$ htpasswd -c /etc/nginx/.htpasswd admin
+</code></pre>
+
+<p>Create the nginx site configuration, this will tel nginx to route connections on port 80, to reverse proxy to localhost, port 9090, if authenticated:</p>
+
+<pre><code>$ rm /etc/nginx/sites-enabled/default
+$ vim /etc/nginx/sites-enabled/prometheus.conf
+</code></pre>
+
+<p>And this is the config:</p>
+
+<pre><code>server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root /var/www/html;
+    index index.html index.htm index.nginx-debian.html;
+    server_name _;
+
+
+    location / {
+            auth_basic "Prometheus Auth";
+            auth_basic_user_file /etc/nginx/.htpasswd;
+            proxy_pass http://localhost:9090;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+}
+</code></pre>
+
+<p>Reload nginx configuration:</p>
+
+<pre><code>$ systemctl reload nginx
+</code></pre>
+
+<h2>Access the Beauty of Prometheus Land!</h2>
+
+<p>Once you have authenticated, head over to status, here you will see status info such as your targets, this wil be the endpoints that prometheus is scraping:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57307130-4b518980-70e4-11e9-9f16-4665427fba1f.png" alt="image" /></p>
+
+<p>From the main screen, let&rsquo;s dive into some queries using <a href="https://prometheus.io/docs/prometheus/latest/querying/basics/">PromQL</a>. Also see my <a href="https://github.com/ruanbekker/awesome-list/blob/master/cheatsheets/PROMETHEUS.md">Prometheus Cheatsheet</a>.</p>
+
+<p>For the first query, we want to see the available memory of this node in bytes (<code>node_memory_MemAvailable_bytes</code>):</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57307338-aa170300-70e4-11e9-9022-e02a4d1d64cf.png" alt="image" /></p>
+
+<p>Now since the value is in bytes, let&rsquo;s convert the value to MB, (<code>node_memory_MemAvailable_bytes/1024/1024</code>)</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57307421-d468c080-70e4-11e9-8bd3-425803cb805c.png" alt="image" /></p>
+
+<p>Let&rsquo;s say we want to see the average memory available in 5 minute buckets:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57307504-feba7e00-70e4-11e9-952f-a7ba12eba6a8.png" alt="image" /></p>
+
+<p>That&rsquo;s a few basic ones, but feel free to checkout my <a href="https://github.com/ruanbekker/awesome-list/blob/master/cheatsheets/PROMETHEUS.md">Prometheus Cheatsheet</a> for other examples. I update them as I find more queries.</p>
+
+<h2>Thanks</h2>
+
+<p>Hope this was informative. I am planning to publish a post on visualizing prometheus data with Grafana (which is EPIC!) and installing Pushgateway for custom integrations.</p>
+]]></content>
+  </entry>
+  
+</feed>

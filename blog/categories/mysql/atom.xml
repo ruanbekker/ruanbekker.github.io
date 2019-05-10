@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Mysql | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/mysql/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-07T16:48:04-04:00</updated>
+  <updated>2019-05-10T07:24:46-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,252 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Running a HA MySQL Galera Cluster on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/"/>
+    <updated>2019-05-10T07:02:39-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57523982-c904d780-7326-11e9-981a-7a9cb9552c2f.png" alt="image" /></p>
+
+<p>In this post we will setup a highly available mysql galera cluster on docker swarm.</p>
+
+<h2>About</h2>
+
+<p>The service is based of <a href="https://github.com/toughIQ/docker-mariadb-cluster">docker-mariadb-cluster</a> repository and it&rsquo;s designed not to have any persistent data attached to the service, but rely on the &ldquo;nodes&rdquo; to replicate the data.</p>
+
+<p>Note, that however this proof of concept works, I always recommend to use a remote mysql database outside your cluster, such as RDS etc.</p>
+
+<p>Since we don&rsquo;t persist any data on the mysql cluster, I have associated a dbclient service that will run continious backups, which we will persist the path where the backups reside to disk.</p>
+
+<h2>Deploy the MySQL Cluster</h2>
+
+<p>The <a href="https://raw.githubusercontent.com/ruanbekker/dockerfiles/master/mysql-cluster/docker-compose.yml">docker-compose.yml</a> that we will use looks like this:</p>
+
+<pre><code class="yaml">version: '3.5'
+services:
+  dbclient:
+    image: alpine
+    environment:
+      - BACKUP_ENABLED=1
+      - BACKUP_INTERVAL=3600
+      - BACKUP_PATH=/data
+      - BACKUP_FILENAME=db_backup
+    networks:
+      - dbnet
+    entrypoint: |
+      sh -c 'sh -s &lt;&lt; EOF
+      apk add --no-cache mysql-client
+      while true
+        do
+          if [ $$BACKUP_ENABLED == 1 ]
+            then
+              sleep $$BACKUP_INTERVAL
+              mkdir -p $$BACKUP_PATH/$$(date +%F)
+              echo "$$(date +%FT%H.%m) - Making Backup to : $$BACKUP_PATH/$$(date +%F)/$$BACKUP_FILENAME-$$(date +%FT%H.%m).sql.gz"
+              mysqldump -u root -ppassword -h dblb --all-databases | gzip &gt; $$BACKUP_PATH/$$(date +%F)/$$BACKUP_FILENAME-$$(date +%FT%H.%m).sql.gz
+              find $$BACKUP_PATH -mtime 7 -delete
+          fi
+        done
+      EOF'
+    volumes:
+      - vol_dbclient:/data
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  dbcluster:
+    image: toughiq/mariadb-cluster
+    networks:
+      - dbnet
+    environment:
+      - DB_SERVICE_NAME=dbcluster
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=mydb
+      - MYSQL_USER=mydbuser
+      - MYSQL_PASSWORD=mydbpass
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  dblb:
+    image: toughiq/maxscale
+    networks:
+      - dbnet
+    ports:
+      - 3306:3306
+    environment:
+      - DB_SERVICE_NAME=dbcluster
+      - ENABLE_ROOT_USER=1
+    deploy:
+      mode: replicated
+      replicas: 1
+
+volumes:
+  vol_dbclient:
+    driver: local
+
+networks:
+  dbnet:
+    name: dbnet
+    driver: overlay
+</code></pre>
+
+<p>The dbclient is configured to be in the same network as the cluster so it can reach the mysql service. The default behavior is that it will make a backup every hour (3600 seconds) to the <code>/data/{date}/</code> path.</p>
+
+<p>Deploy the stack:</p>
+
+<pre><code>$ docker stack deploy -c docker-compose.yml galera
+Creating network dbnet
+Creating service galera_dbcluster
+Creating service galera_dblb
+Creating service galera_dbclient
+</code></pre>
+
+<p>Have a look to see if all the services is running:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+jm7p70qre72u        galera_dbclient     replicated          1/1                 alpine:latest
+p8kcr5y7szte        galera_dbcluster    replicated          1/1                 toughiq/mariadb-cluster:latest
+1hu3oxhujgfm        galera_dblb         replicated          1/1                 toughiq/maxscale:latest          :3306-&gt;3306/tcp
+</code></pre>
+
+<h2>The Backup Client</h2>
+
+<p>As mentioned the backup client backs up to the <code>/data/</code> path:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) find /data/
+/data/
+/data/2019-05-10
+/data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz
+</code></pre>
+
+<p>Let&rsquo;s go ahead and populate some data into our mysql database:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb
+MySQL [(none)]&gt; create table mydb.foo (name varchar(10));
+MySQL [(none)]&gt; insert into mydb.foo values('ruan');
+MySQL [(none)]&gt; exit
+</code></pre>
+
+<h2>Scale the Cluster</h2>
+
+<p>At the moment we only have 1 replica for our mysql cluster, let&rsquo;s go ahead and scale the cluster to 3 replicas:</p>
+
+<pre><code>$ docker service scale galera_dbcluster=3
+galera_dbcluster scaled to 3
+overall progress: 3 out of 3 tasks
+1/3: running   [==================================================&gt;]
+2/3: running   [==================================================&gt;]
+3/3: running   [==================================================&gt;]
+verify: Service converged
+</code></pre>
+
+<p>Verify that the service has been scaled:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+jm7p70qre72u        galera_dbclient     replicated          1/1                 alpine:latest
+p8kcr5y7szte        galera_dbcluster    replicated          3/3                 toughiq/mariadb-cluster:latest
+1hu3oxhujgfm        galera_dblb         replicated          1/1                 toughiq/maxscale:latest          :3306-&gt;3306/tcp
+</code></pre>
+
+<p>Test, by reading from the database:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+
+<h2>Simulate a Node Failure:</h2>
+
+<p>Simulate a node failure by killing one of the mysql containers:</p>
+
+<pre><code>$ docker kill 9e336032ab52
+</code></pre>
+
+<p>Verify that one container is missing from our service:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+p8kcr5y7szte        galera_dbcluster    replicated          2/3                 toughiq/mariadb-cluster:latest
+</code></pre>
+
+<p>While the container is provisioning, as we have 2 out of 3 running containers, read the data 3 times so test that the round robin queries dont hit the affected container (the dblb wont route traffic to the affected container):</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+
+$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+
+$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+
+<p>Verify that the 3rd container has checked in:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+p8kcr5y7szte        galera_dbcluster    replicated          3/3                 toughiq/mariadb-cluster:latest
+</code></pre>
+
+<h2>How to Restore?</h2>
+
+<p>I&rsquo;m deleting the database to simulate the scenario where we need to restore:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) sh
+&gt; mysql -uroot -ppassword -h dblb -e'drop database mydb;'
+</code></pre>
+
+<p>Ensure the db is not present:</p>
+
+<pre><code>&gt; mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
+ERROR 1146 (42S02) at line 1: Table 'mydb.foo' doesn't exist
+</code></pre>
+
+<p>Find the archive and extract:</p>
+
+<pre><code>&gt; find /data/
+/data/
+/data/2019-05-10
+/data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz
+
+&gt; gunzip /data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz
+</code></pre>
+
+<p>Restore the backed up database to MySQL:</p>
+
+<pre><code>&gt; mysql -uroot -ppassword -h dblb &lt; /data/2019-05-10/db_backup-2019-05-10T10.05.sql
+</code></pre>
+
+<p>Test that we can read our data:</p>
+
+<pre><code>&gt; mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Local Dev Environment for Wordpress Using Docker Compose]]></title>
@@ -531,276 +777,6 @@ Starting MySQL
 | wsrep_cluster_size           | 3                                                 |
 +------------------------------+---------------------------------------------------+
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Use Docker Secrets With MySQL on Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/11/23/use-docker-secrets-with-mysql-on-docker-swarm/"/>
-    <updated>2017-11-23T16:55:15-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/11/23/use-docker-secrets-with-mysql-on-docker-swarm</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg" alt="" /></p>
-
-<p>Today we will use Docker Secrets, more specifically store our MySQL Passwords in Secrets, which will be passed to our containers, so that we don&rsquo;t use clear text passwords in our Compose files.</p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>What is Docker Secrets:</h2>
-
-<p>In Docker, Docker Secrets are encrypted during transit and at rest in a Docker Swarm Cluster. The great thing about Docker Secrets is that you can manage these secrets from a central place, and the fact that it encrypts the data and transfers the data securely to the containers that needs the secrets. So you authorize which containers needs access to these secrets.</p>
-
-<p>So instead of setting the MySQL Root Passwords in clear text, you will create the secrets, then in your docker-compose file, you will reference the secret name.</p>
-
-<h2>Deploy MySQL with Docker Secrets</h2>
-
-<p>We will deploy a Stack that contains MySQL and Adminer (WebUI for MySQL).</p>
-
-<p>We will make the MySQL Service Persistent by setting a constraint to only run on the Manager node, as we will create the volume path on the host, and then map the host to the container so that the container can have persistent data. We will also create secrets for our MySQL Service so that we dont expose any plaintext passwords in our compose file.</p>
-
-<p>Our Docker Compose file:</p>
-
-<pre><code class="yaml docker-compose.yml">version: '3.3'
-
-services:
-  db:
-    image: mysql
-    secrets:
-      - db_root_password
-      - db_dba_password
-    deploy:
-      replicas: 1
-      placement:
-        constraints: [node.role == manager]
-      resources:
-        reservations:
-          memory: 128M
-        limits:
-          memory: 256M
-    ports:
-      - 3306:3306
-    environment:
-      MYSQL_USER: dba
-      MYSQL_DATABASE: mydb
-      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
-      MYSQL_PASSWORD_FILE: /run/secrets/db_dba_password
-    networks:
-      - appnet
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - type: bind
-        source: /opt/docker/volumes/mysql
-        target: /var/lib/mysql
-
-  adminer:
-    image: adminer
-    ports:
-      - 8080:8080
-    networks:
-      - appnet
-
-secrets:
-  db_root_password:
-    external: true
-  db_dba_password:
-    external: true
-
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<h2>Dependencies:</h2>
-
-<p>As we specified our secrets and networks as external resources, it needs to exist before we deploy our stack. We also need to create the directory for our mysql data, as the data will be mapped from our host to our container.</p>
-
-<p>Create the Overlay Network:</p>
-
-<pre><code class="bash">$ docker network create --driver overlay appnet
-</code></pre>
-
-<p>Create the Secrets:</p>
-
-<pre><code class="bash">$ openssl rand -base64 12 | docker secret create db_root_password -
-$ openssl rand -base64 12 | docker secret create db_dba_password -
-</code></pre>
-
-<p>List the Secrets:</p>
-
-<pre><code class="bash">$ docker secret ls
-ID                          NAME                CREATED             UPDATED
-jzhrwyxkiqt8v81ow0xjktqnw   db_root_password    12 seconds ago      12 seconds ago
-plr6rbrqkqy7oplrd21pja3ol   db_dba_password     4 seconds ago       4 seconds ago
-</code></pre>
-
-<p>Inspect the secret, so that we can see that theres not value exposed:</p>
-
-<pre><code class="bash">$ docker secret inspect db_root_password
-[
-    {
-        "ID": "jzhrwyxkiqt8v81ow0xjktqnw",
-        "Version": {
-            "Index": 982811
-        },
-        "CreatedAt": "2017-11-23T14:33:17.005968748Z",
-        "UpdatedAt": "2017-11-23T14:33:17.005968748Z",
-        "Spec": {
-            "Name": "db_root_password",
-            "Labels": {}
-        }
-    }
-]
-</code></pre>
-
-<p>Create the Directory for MySQL:</p>
-
-<pre><code class="bash">$ mkdir -p /opt/docker/volumes/mysql
-</code></pre>
-
-<h2>Deployment Time!</h2>
-
-<p>Deploy the stack:</p>
-
-<pre><code>$ docker stack deploy -c docker-compose.yml apps
-Creating service apps_adminer
-Creating service apps_db
-</code></pre>
-
-<p>As you can see the data of our MySQL container resides on our host, which makes the data persistent for the container:</p>
-
-<pre><code class="bash">$ ls /opt/docker/volumes/mysql/
-auto.cnf  ca-key.pem  ca.pem  client-cert.pem  client-key.pem  ib_buffer_pool  ibdata1  ib_logfile0  ib_logfile1  ibtmp1  mydb  mysql  performance_schema  private_key.pem  public_key.pem  server-cert.pem  server-key.pem  sys
-</code></pre>
-
-<h2>Connect to MySQL</h2>
-
-<p>The value of our secrets will reside under <code>/run/secrets/</code> in our container, as we have mapped it to our mysql container, lets have a look at them:</p>
-
-<pre><code class="bash">$ docker exec -it $(docker ps -f name=apps_db -q) ls /run/secrets/
-db_dba_password  db_root_password
-</code></pre>
-
-<p>View the actual value of the <code>db_root_password</code>:</p>
-
-<pre><code class="bash">$ docker exec -it $(docker ps -f name=apps_db -q) cat /run/secrets/db_root_password
-mRpcY1eY2+wimf10
-</code></pre>
-
-<p>Connecting to MySQL:</p>
-
-<pre><code class="bash">$ docker exec -it $(docker ps -f name=apps_db -q) mysql -u root -p
-Enter password:
-Welcome to the MySQL monitor.  Commands end with ; or \g.
-Your MySQL connection id is 8
-Server version: 5.7.20 MySQL Community Server (GPL)
-
-Copyright (c) 2000, 2017, Oracle and/or its affiliates. All rights reserved.
-
-Oracle is a registered trademark of Oracle Corporation and/or its
-affiliates. Other names may be trademarks of their respective
-owners.
-
-Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
-
-mysql&gt; show databases;
-+--------------------+
-| Database           |
-+--------------------+
-| information_schema |
-| mydb               |
-| mysql              |
-| performance_schema |
-| sys                |
-+--------------------+
-5 rows in set (0.00 sec)
-</code></pre>
-
-<p>As we have deployed adminer, you can access the Adminer WebUI on the Host&rsquo;s IP and the Defined Port.</p>
-
-<h2>Testing Data Persistance:</h2>
-
-<pre><code class="bash">$ docker exec -it $(docker ps -f name=apps_db -q) mysql -u root -p
-Enter password:
-Welcome to the MySQL monitor.  Commands end with ; or \g.
-
-mysql&gt; create database ruan;
-Query OK, 1 row affected (0.00 sec)
-
-mysql&gt; show databases;
-+--------------------+
-| Database           |
-+--------------------+
-| information_schema |
-| mydb               |
-| mysql              |
-| performance_schema |
-| ruan               |
-| sys                |
-+--------------------+
-6 rows in set (0.00 sec)
-
-mysql&gt; exit;
-Bye
-</code></pre>
-
-<p>Verify the hostname of our container, before we kill the container:</p>
-
-<pre><code class="bash">$ docker exec -it $(docker ps -f name=apps_db -q) hostname
-bdedb54bbc2b
-</code></pre>
-
-<p>Kill the container:</p>
-
-<pre><code>$ docker kill $(docker ps -f name=apps_db -q)
-bdedb54bbc2b
-</code></pre>
-
-<p>Verify the status of the MySQL Service, as we can see the service count is 0, so the container was succesfully killed.</p>
-
-<pre><code class="bash">$ docker service ls -f name=apps_db
-ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
-nzf96q05fktm        apps_db             replicated          0/1                 mysql:latest        *:3306-&gt;3306/tcp
-</code></pre>
-
-<p>After waiting for a couple of seconds, we can see the service is in service again, then check the hostname so that we can confirm that its a new container:</p>
-
-<pre><code>$ docker service ls -f name=apps_db
-ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
-nzf96q05fktm        apps_db             replicated          1/1                 mysql:latest        *:3306-&gt;3306/tcp
-
-$ docker exec -it $(docker ps -f name=apps_db -q) hostname
-95c15c89f891
-</code></pre>
-
-<p>Logong to MySQL again and verify if our perviously created database is still there:</p>
-
-<pre><code class="bash">$ docker exec -it $(docker ps -f name=apps_db -q) mysql -u root -p
-Enter password:
-Welcome to the MySQL monitor.  Commands end with ; or \g.
-
-mysql&gt; show databases;
-+--------------------+
-| Database           |
-+--------------------+
-| information_schema |
-| mydb               |
-| mysql              |
-| performance_schema |
-| ruan               |
-| sys                |
-+--------------------+
-6 rows in set (0.01 sec)
-</code></pre>
-
-<p>By design docker is stateless, but as we mapped the host&rsquo;s path to the container our data is persistent. As we have set a constraint so that the container must only spin up on this node, the container will always have access to the data path.</p>
 ]]></content>
   </entry>
   

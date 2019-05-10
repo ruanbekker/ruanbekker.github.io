@@ -1,0 +1,716 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Running a HA MySQL Galera Cluster on Docker Swarm - Ruan Bekker's Blog</title>
+  <meta name="author" content="Ruan">
+
+  
+  <meta name="description" content="In this post we will setup a highly available mysql galera cluster on docker swarm. About The service is based of docker-mariadb-cluster repository &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+  <!-- font awesome --!>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+  <!-- samwize.com/2012/09/24/octopress-table-stylesheet --!>
+  <link href="/stylesheets/data-table.css" media="screen, projection" rel="stylesheet" type="text/css" />
+
+  
+  <link rel="canonical" href="http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Ruan Bekker's Blog" type="application/atom+xml">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-105336110-1']);
+    _gaq.push(['_setDomainName','ruanbekker.com']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Ruan Bekker's Blog</a></h1>
+  
+    <h2>From a Curious mind to Posts on Github</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="https://blog.ruanbekker.com/search/" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="blog.ruanbekker.com">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/blog/categories/aws/">AWS</a></li>
+  <li><a href="/blog/categories/docker/">Docker</a></li>
+  <li><a href="/blog/categories/devops/">DevOps</a></li>
+  <li><a href="/blog/categories/python/">Python</a></li>
+  <li><a target="_blank" href="https://sysadmins.co.za">My Sysadmins Blog</a></li>
+  <li><a href="/awesome-links/">Awesome Links</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Running a HA MySQL Galera Cluster on Docker Swarm</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-05-10T07:02:39-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>7:02 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57523982-c904d780-7326-11e9-981a-7a9cb9552c2f.png" alt="image" /></p>
+
+<p>In this post we will setup a highly available mysql galera cluster on docker swarm.</p>
+
+<h2>About</h2>
+
+<p>The service is based of <a href="https://github.com/toughIQ/docker-mariadb-cluster">docker-mariadb-cluster</a> repository and it&rsquo;s designed not to have any persistent data attached to the service, but rely on the &ldquo;nodes&rdquo; to replicate the data.</p>
+
+<p>Note, that however this proof of concept works, I always recommend to use a remote mysql database outside your cluster, such as RDS etc.</p>
+
+<p>Since we don&rsquo;t persist any data on the mysql cluster, I have associated a dbclient service that will run continious backups, which we will persist the path where the backups reside to disk.</p>
+
+<h2>Deploy the MySQL Cluster</h2>
+
+<p>The <a href="https://raw.githubusercontent.com/ruanbekker/dockerfiles/master/mysql-cluster/docker-compose.yml">docker-compose.yml</a> that we will use looks like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.5&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">dbclient</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">alpine</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">BACKUP_ENABLED=1</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">BACKUP_INTERVAL=3600</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">BACKUP_PATH=/data</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">BACKUP_FILENAME=db_backup</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">dbnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">entrypoint</span><span class="p-Indicator">:</span> <span class="p-Indicator">|</span>
+</span><span class='line'>      <span class="no">sh -c &#39;sh -s &lt;&lt; EOF</span>
+</span><span class='line'>      <span class="no">apk add --no-cache mysql-client</span>
+</span><span class='line'>      <span class="no">while true</span>
+</span><span class='line'>        <span class="no">do</span>
+</span><span class='line'>          <span class="no">if [ $$BACKUP_ENABLED == 1 ]</span>
+</span><span class='line'>            <span class="no">then</span>
+</span><span class='line'>              <span class="no">sleep $$BACKUP_INTERVAL</span>
+</span><span class='line'>              <span class="no">mkdir -p $$BACKUP_PATH/$$(date +%F)</span>
+</span><span class='line'>              <span class="no">echo &quot;$$(date +%FT%H.%m) - Making Backup to : $$BACKUP_PATH/$$(date +%F)/$$BACKUP_FILENAME-$$(date +%FT%H.%m).sql.gz&quot;</span>
+</span><span class='line'>              <span class="no">mysqldump -u root -ppassword -h dblb --all-databases | gzip &gt; $$BACKUP_PATH/$$(date +%F)/$$BACKUP_FILENAME-$$(date +%FT%H.%m).sql.gz</span>
+</span><span class='line'>              <span class="no">find $$BACKUP_PATH -mtime 7 -delete</span>
+</span><span class='line'>          <span class="no">fi</span>
+</span><span class='line'>        <span class="no">done</span>
+</span><span class='line'>      <span class="no">EOF&#39;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">vol_dbclient:/data</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">mode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">replicated</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">dbcluster</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">toughiq/mariadb-cluster</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">dbnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">DB_SERVICE_NAME=dbcluster</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">MYSQL_ROOT_PASSWORD=password</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">MYSQL_DATABASE=mydb</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">MYSQL_USER=mydbuser</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">MYSQL_PASSWORD=mydbpass</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">mode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">replicated</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">dblb</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">toughiq/maxscale</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">dbnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3306:3306</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">DB_SERVICE_NAME=dbcluster</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">ENABLE_ROOT_USER=1</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">mode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">replicated</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">vol_dbclient</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">local</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">dbnet</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">dbnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">overlay</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The dbclient is configured to be in the same network as the cluster so it can reach the mysql service. The default behavior is that it will make a backup every hour (3600 seconds) to the <code>/data/{date}/</code> path.</p>
+
+<p>Deploy the stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker stack deploy -c docker-compose.yml galera</span>
+</span><span class='line'><span class="l-Scalar-Plain">Creating network dbnet</span>
+</span><span class='line'><span class="l-Scalar-Plain">Creating service galera_dbcluster</span>
+</span><span class='line'><span class="l-Scalar-Plain">Creating service galera_dblb</span>
+</span><span class='line'><span class="l-Scalar-Plain">Creating service galera_dbclient</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look to see if all the services is running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker service ls</span>
+</span><span class='line'><span class="l-Scalar-Plain">ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS</span>
+</span><span class='line'><span class="l-Scalar-Plain">jm7p70qre72u        galera_dbclient     replicated          1/1                 alpine:latest</span>
+</span><span class='line'><span class="l-Scalar-Plain">p8kcr5y7szte        galera_dbcluster    replicated          1/1                 toughiq/mariadb-cluster:latest</span>
+</span><span class='line'><span class="l-Scalar-Plain">1hu3oxhujgfm        galera_dblb         replicated          1/1                 toughiq/maxscale:latest          :3306-&gt;3306/tcp</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>The Backup Client</h2>
+
+<p>As mentioned the backup client backs up to the <code>/data/</code> path:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) find /data/</span>
+</span><span class='line'><span class="l-Scalar-Plain">/data/</span>
+</span><span class='line'><span class="l-Scalar-Plain">/data/2019-05-10</span>
+</span><span class='line'><span class="l-Scalar-Plain">/data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s go ahead and populate some data into our mysql database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb</span>
+</span><span class='line'><span class="l-Scalar-Plain">MySQL [(none)]&gt; create table mydb.foo (name varchar(10));</span>
+</span><span class='line'><span class="l-Scalar-Plain">MySQL [(none)]&gt; insert into mydb.foo values(&#39;ruan&#39;);</span>
+</span><span class='line'><span class="l-Scalar-Plain">MySQL [(none)]&gt; exit</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Scale the Cluster</h2>
+
+<p>At the moment we only have 1 replica for our mysql cluster, let&rsquo;s go ahead and scale the cluster to 3 replicas:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker service scale galera_dbcluster=3</span>
+</span><span class='line'><span class="l-Scalar-Plain">galera_dbcluster scaled to 3</span>
+</span><span class='line'><span class="l-Scalar-Plain">overall progress</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">3 out of 3 tasks</span>
+</span><span class='line'><span class="l-Scalar-Plain">1/3</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">running   [==================================================&gt;]</span>
+</span><span class='line'><span class="l-Scalar-Plain">2/3</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">running   [==================================================&gt;]</span>
+</span><span class='line'><span class="l-Scalar-Plain">3/3</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">running   [==================================================&gt;]</span>
+</span><span class='line'><span class="l-Scalar-Plain">verify</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Service converged</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that the service has been scaled:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker service ls</span>
+</span><span class='line'><span class="l-Scalar-Plain">ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS</span>
+</span><span class='line'><span class="l-Scalar-Plain">jm7p70qre72u        galera_dbclient     replicated          1/1                 alpine:latest</span>
+</span><span class='line'><span class="l-Scalar-Plain">p8kcr5y7szte        galera_dbcluster    replicated          3/3                 toughiq/mariadb-cluster:latest</span>
+</span><span class='line'><span class="l-Scalar-Plain">1hu3oxhujgfm        galera_dblb         replicated          1/1                 toughiq/maxscale:latest          :3306-&gt;3306/tcp</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test, by reading from the database:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e&#39;select * from mydb.foo;&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| name |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| ruan |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Simulate a Node Failure:</h2>
+
+<p>Simulate a node failure by killing one of the mysql containers:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker kill 9e336032ab52</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that one container is missing from our service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker service ls</span>
+</span><span class='line'><span class="l-Scalar-Plain">ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS</span>
+</span><span class='line'><span class="l-Scalar-Plain">p8kcr5y7szte        galera_dbcluster    replicated          2/3                 toughiq/mariadb-cluster:latest</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>While the container is provisioning, as we have 2 out of 3 running containers, read the data 3 times so test that the round robin queries dont hit the affected container (the dblb wont route traffic to the affected container):</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e&#39;select * from mydb.foo;&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| name |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| ruan |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e&#39;select * from mydb.foo;&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| name |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| ruan |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e&#39;select * from mydb.foo;&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| name |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| ruan |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that the 3rd container has checked in:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker service ls</span>
+</span><span class='line'><span class="l-Scalar-Plain">ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS</span>
+</span><span class='line'><span class="l-Scalar-Plain">p8kcr5y7szte        galera_dbcluster    replicated          3/3                 toughiq/mariadb-cluster:latest</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>How to Restore?</h2>
+
+<p>I&rsquo;m deleting the database to simulate the scenario where we need to restore:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker exec -it $(docker ps -f name=galera_dbclient -q) sh</span>
+</span><span class='line'><span class="l-Scalar-Plain">&gt; mysql -uroot -ppassword -h dblb -e&#39;drop database mydb;&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure the db is not present:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="p-Indicator">&gt;</span><span class="err"> mysql -uroot -ppassword -h dblb -e&#39;select * from mydb.foo;&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">ERROR 1146 (42S02) at line 1</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Table &#39;mydb.foo&#39; doesn&#39;t exist</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Find the archive and extract:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="p-Indicator">&gt;</span><span class="err"> find /data/</span>
+</span><span class='line'><span class="l-Scalar-Plain">/data/</span>
+</span><span class='line'><span class="l-Scalar-Plain">/data/2019-05-10</span>
+</span><span class='line'><span class="l-Scalar-Plain">/data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">&gt; gunzip /data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restore the backed up database to MySQL:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="p-Indicator">&gt;</span><span class="err"> mysql -uroot -ppassword -h dblb &lt; /data/2019-05-10/db_backup-2019-05-10T10.05.sql</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test that we can read our data:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="p-Indicator">&gt;</span><span class="err"> mysql -uroot -ppassword -h dblb -e&#39;select * from mydb.foo;&#39;</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| name |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span><span class='line'><span class="l-Scalar-Plain">| ruan |</span>
+</span><span class='line'><span class="l-Scalar-Plain">+------+</span>
+</span></code></pre></td></tr></table></div></figure>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Ruan</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2019-05-10T07:02:39-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>7:02 am</span></time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/databases/'>databases</a>, <a class='category' href='/blog/categories/docker/'>docker</a>, <a class='category' href='/blog/categories/galera/'>galera</a>, <a class='category' href='/blog/categories/mysql/'>mysql</a>, <a class='category' href='/blog/categories/swarm/'>swarm</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/" data-via="ruanbekker" data-counturl="http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/" title="Previous Post: Create Secrets with Vaults Transits Secret Engine">&laquo; Create Secrets with Vaults Transits Secret Engine</a>
+      
+      
+    </p>
+  </footer>
+</article>
+    <script async src="//pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({
+        google_ad_client: "ca-pub-1543437721119411",
+        enable_page_level_ads: true
+      });
+    </script>
+
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Subscribe</h1>
+  <!-- Begin MailChimp Signup Form -->
+  <div id="mc_embed_signup">
+  <form action="https://sysadmins.us15.list-manage.com/subscribe/post?u=3dfcff447b6ee598231eeb658&amp;id=3542f323a9" method="post" id="mc-embedded-subscribe-form" name="mc-embedded-subscribe-form" class="validate" target="_blank" novalidate>
+    <div id="mc_embed_signup_scroll">
+      <div class="indicates-required"><span class="asterisk"></span></div>
+      <div class="mc-field-group">
+	<label for="mce-EMAIL">Email Address:  <span class="asterisk"></span>
+        </label>
+	<input type="email" value="" name="EMAIL" class="required email" id="mce-EMAIL">
+        </div>
+	<div id="mce-responses" class="clear">
+	  <div class="response" id="mce-error-response" style="display:none"></div>
+	  <div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+      <div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_3dfcff447b6ee598231eeb658_3542f323a9" tabindex="-1" value=""></div>
+    <div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+    </div>
+  </form>
+</div>
+<!--End mc_embed_signup-->
+</section>
+<section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/">Running a HA MySQL Galera Cluster on Docker Swarm</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/">Create Secrets With Vaults Transits Secret Engine</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/05/07/use-the-vault-api-to-provision-app-keys-and-create-kv-pairs/">Use the Vault API to Provision App Keys and Create KV Pairs</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/">Persist Vault Data With Amazon S3 as a Storage Backend</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Prometheus and Node Exporter on Ubuntu for Epic Monitoring</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2019 - Ruan -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+
+
+  <li>
+    <a href="https://twitter.com/ruanbekker">
+      <i class="fa fa-twitter"></i> Twitter
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://github.com/ruanbekker">
+      <i class="fa fa-github"></i> GitHub
+    </a>
+  </li>
+
+
+
+  <li>
+    <a href="https://sysadmins.co.za">
+      <i class="fa fa-bars"></i> My HowTo Blog
+    </a>
+  </li>
+
+
+</footer>
+  
+
+<script type="text/javascript">
+      var disqus_shortname = 'blog-ruanbekker';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/';
+        var disqus_url = 'http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = '//' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+      <script async src="//pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({
+        google_ad_client: "ca-pub-1543437721119411",
+        enable_page_level_ads: true
+      });
+    </script>
+
+</body>
+</html>

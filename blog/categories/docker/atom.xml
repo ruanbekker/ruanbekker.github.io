@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-07T16:48:04-04:00</updated>
+  <updated>2019-05-10T07:24:46-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,252 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Running a HA MySQL Galera Cluster on Docker Swarm]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/"/>
+    <updated>2019-05-10T07:02:39-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57523982-c904d780-7326-11e9-981a-7a9cb9552c2f.png" alt="image" /></p>
+
+<p>In this post we will setup a highly available mysql galera cluster on docker swarm.</p>
+
+<h2>About</h2>
+
+<p>The service is based of <a href="https://github.com/toughIQ/docker-mariadb-cluster">docker-mariadb-cluster</a> repository and it&rsquo;s designed not to have any persistent data attached to the service, but rely on the &ldquo;nodes&rdquo; to replicate the data.</p>
+
+<p>Note, that however this proof of concept works, I always recommend to use a remote mysql database outside your cluster, such as RDS etc.</p>
+
+<p>Since we don&rsquo;t persist any data on the mysql cluster, I have associated a dbclient service that will run continious backups, which we will persist the path where the backups reside to disk.</p>
+
+<h2>Deploy the MySQL Cluster</h2>
+
+<p>The <a href="https://raw.githubusercontent.com/ruanbekker/dockerfiles/master/mysql-cluster/docker-compose.yml">docker-compose.yml</a> that we will use looks like this:</p>
+
+<pre><code class="yaml">version: '3.5'
+services:
+  dbclient:
+    image: alpine
+    environment:
+      - BACKUP_ENABLED=1
+      - BACKUP_INTERVAL=3600
+      - BACKUP_PATH=/data
+      - BACKUP_FILENAME=db_backup
+    networks:
+      - dbnet
+    entrypoint: |
+      sh -c 'sh -s &lt;&lt; EOF
+      apk add --no-cache mysql-client
+      while true
+        do
+          if [ $$BACKUP_ENABLED == 1 ]
+            then
+              sleep $$BACKUP_INTERVAL
+              mkdir -p $$BACKUP_PATH/$$(date +%F)
+              echo "$$(date +%FT%H.%m) - Making Backup to : $$BACKUP_PATH/$$(date +%F)/$$BACKUP_FILENAME-$$(date +%FT%H.%m).sql.gz"
+              mysqldump -u root -ppassword -h dblb --all-databases | gzip &gt; $$BACKUP_PATH/$$(date +%F)/$$BACKUP_FILENAME-$$(date +%FT%H.%m).sql.gz
+              find $$BACKUP_PATH -mtime 7 -delete
+          fi
+        done
+      EOF'
+    volumes:
+      - vol_dbclient:/data
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  dbcluster:
+    image: toughiq/mariadb-cluster
+    networks:
+      - dbnet
+    environment:
+      - DB_SERVICE_NAME=dbcluster
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=mydb
+      - MYSQL_USER=mydbuser
+      - MYSQL_PASSWORD=mydbpass
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  dblb:
+    image: toughiq/maxscale
+    networks:
+      - dbnet
+    ports:
+      - 3306:3306
+    environment:
+      - DB_SERVICE_NAME=dbcluster
+      - ENABLE_ROOT_USER=1
+    deploy:
+      mode: replicated
+      replicas: 1
+
+volumes:
+  vol_dbclient:
+    driver: local
+
+networks:
+  dbnet:
+    name: dbnet
+    driver: overlay
+</code></pre>
+
+<p>The dbclient is configured to be in the same network as the cluster so it can reach the mysql service. The default behavior is that it will make a backup every hour (3600 seconds) to the <code>/data/{date}/</code> path.</p>
+
+<p>Deploy the stack:</p>
+
+<pre><code>$ docker stack deploy -c docker-compose.yml galera
+Creating network dbnet
+Creating service galera_dbcluster
+Creating service galera_dblb
+Creating service galera_dbclient
+</code></pre>
+
+<p>Have a look to see if all the services is running:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+jm7p70qre72u        galera_dbclient     replicated          1/1                 alpine:latest
+p8kcr5y7szte        galera_dbcluster    replicated          1/1                 toughiq/mariadb-cluster:latest
+1hu3oxhujgfm        galera_dblb         replicated          1/1                 toughiq/maxscale:latest          :3306-&gt;3306/tcp
+</code></pre>
+
+<h2>The Backup Client</h2>
+
+<p>As mentioned the backup client backs up to the <code>/data/</code> path:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) find /data/
+/data/
+/data/2019-05-10
+/data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz
+</code></pre>
+
+<p>Let&rsquo;s go ahead and populate some data into our mysql database:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb
+MySQL [(none)]&gt; create table mydb.foo (name varchar(10));
+MySQL [(none)]&gt; insert into mydb.foo values('ruan');
+MySQL [(none)]&gt; exit
+</code></pre>
+
+<h2>Scale the Cluster</h2>
+
+<p>At the moment we only have 1 replica for our mysql cluster, let&rsquo;s go ahead and scale the cluster to 3 replicas:</p>
+
+<pre><code>$ docker service scale galera_dbcluster=3
+galera_dbcluster scaled to 3
+overall progress: 3 out of 3 tasks
+1/3: running   [==================================================&gt;]
+2/3: running   [==================================================&gt;]
+3/3: running   [==================================================&gt;]
+verify: Service converged
+</code></pre>
+
+<p>Verify that the service has been scaled:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+jm7p70qre72u        galera_dbclient     replicated          1/1                 alpine:latest
+p8kcr5y7szte        galera_dbcluster    replicated          3/3                 toughiq/mariadb-cluster:latest
+1hu3oxhujgfm        galera_dblb         replicated          1/1                 toughiq/maxscale:latest          :3306-&gt;3306/tcp
+</code></pre>
+
+<p>Test, by reading from the database:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+
+<h2>Simulate a Node Failure:</h2>
+
+<p>Simulate a node failure by killing one of the mysql containers:</p>
+
+<pre><code>$ docker kill 9e336032ab52
+</code></pre>
+
+<p>Verify that one container is missing from our service:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+p8kcr5y7szte        galera_dbcluster    replicated          2/3                 toughiq/mariadb-cluster:latest
+</code></pre>
+
+<p>While the container is provisioning, as we have 2 out of 3 running containers, read the data 3 times so test that the round robin queries dont hit the affected container (the dblb wont route traffic to the affected container):</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+
+$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+
+$ docker exec -it $(docker ps -f name=galera_dbclient -q) mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+
+<p>Verify that the 3rd container has checked in:</p>
+
+<pre><code>$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                            PORTS
+p8kcr5y7szte        galera_dbcluster    replicated          3/3                 toughiq/mariadb-cluster:latest
+</code></pre>
+
+<h2>How to Restore?</h2>
+
+<p>I&rsquo;m deleting the database to simulate the scenario where we need to restore:</p>
+
+<pre><code>$ docker exec -it $(docker ps -f name=galera_dbclient -q) sh
+&gt; mysql -uroot -ppassword -h dblb -e'drop database mydb;'
+</code></pre>
+
+<p>Ensure the db is not present:</p>
+
+<pre><code>&gt; mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
+ERROR 1146 (42S02) at line 1: Table 'mydb.foo' doesn't exist
+</code></pre>
+
+<p>Find the archive and extract:</p>
+
+<pre><code>&gt; find /data/
+/data/
+/data/2019-05-10
+/data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz
+
+&gt; gunzip /data/2019-05-10/db_backup-2019-05-10T10.05.sql.gz
+</code></pre>
+
+<p>Restore the backed up database to MySQL:</p>
+
+<pre><code>&gt; mysql -uroot -ppassword -h dblb &lt; /data/2019-05-10/db_backup-2019-05-10T10.05.sql
+</code></pre>
+
+<p>Test that we can read our data:</p>
+
+<pre><code>&gt; mysql -uroot -ppassword -h dblb -e'select * from mydb.foo;'
++------+
+| name |
++------+
+| ruan |
++------+
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Hashicorp Vault Server on Docker and a Getting Started CLI Guide]]></title>
@@ -1115,129 +1361,6 @@ CONTAINER ID        IMAGE               COMMAND               CREATED           
 <h2>More on Drone</h2>
 
 <p>Have a look at <a href="https://github.com/ruanbekker/drone-ci-testing/blob/master/README.md">this document</a> for more examples or have a look at their <a href="https://docs.drone.io/">documentation</a> as well as their extensive list of <a href="http://plugins.drone.io/">plugins</a> and their <a href="https://docs.drone.io/installation/github/multi-machine/">setup documentation</a> to become familiar with their configuration.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Build Small Golang Docker Containers]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/04/03/build-small-golang-docker-containers/"/>
-    <updated>2019-04-03T08:24:08-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/04/03/build-small-golang-docker-containers</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/55478306-aabb0600-561b-11e9-9cc6-730fadb4beeb.png" alt="" /></p>
-
-<p>In this tutorial I will show you how to build really small docker containers for golang applications. And I mean the difference between 310MB down to 2MB</p>
-
-<h2>But Alpine..</h2>
-
-<p>So we thinking lets go with alpine right? Yeah sure lets build a small, app running on go with alpine.</p>
-
-<p>Our application code:</p>
-
-<pre><code class="go app.go">package main
-
-import (
-  "fmt"
-  "math/rand"
-  "time"
-)
-
-func main() {
-  lekkewords := []string{
-    "dog", "cat", "fish", "giraffe",
-    "moo", "spider", "lion", "apple",
-    "tree", "moon", "snake", "mountain lion",
-    "trooper", "burger", "nasa", "yes",
-  }
-
-  rand.Seed(time.Now().UnixNano())
-  var zelength int = len(lekkewords)
-  var indexnum int = rand.Intn(zelength-1)
-  word := lekkewords[indexnum]
-
-  fmt.Println("Number of words:", zelength)
-  fmt.Println("Selected index number:", indexnum)
-  fmt.Println("Selected word is:", word)
-}
-</code></pre>
-
-<p>Our Dockerfile:</p>
-
-<pre><code class="docker Dockerfile">FROM golang:alpine
-
-WORKDIR $GOPATH/src/mylekkepackage/mylekkeapp/
-COPY app.go .
-RUN go build -o /go/app
-
-CMD ["/go/app"]
-</code></pre>
-
-<p>Let&rsquo;s package our app to an image:</p>
-
-<pre><code>❯ docker build -t mygolangapp:using-alpine .
-</code></pre>
-
-<p>Inspect the size of our image, as you can see it being <strong>310MB</strong></p>
-
-<pre><code>❯ docker images "mygolangapp:*"
-REPOSITORY          TAG                 IMAGE ID            CREATED              SIZE
-mygolangapp         using-alpine        eea1d7bde218        About a minute ago   310MB
-</code></pre>
-
-<p>Just make sure it actually works:</p>
-
-<pre><code>❯ docker run mygolangapp:using-alpine
-Number of words: 16
-Selected index number: 11
-Selected word is: mountain lion
-</code></pre>
-
-<p>But for something just returning random selected text, 310MB is a bit crazy.</p>
-
-<h2>Multi Stage Builds</h2>
-
-<p>As Go binaries are self-contained, we can make use of docker&rsquo;s multi stage builds, where we can build our application on alpine and use the binary on a scratch image:</p>
-
-<p>Our multi stage Dockerfile:</p>
-
-<pre><code class="docker Dockerfile.mult">FROM golang:alpine AS builder
-
-WORKDIR $GOPATH/src/mylekkepackage/mylekkeapp/
-COPY app.go .
-RUN go build -o /go/app
-
-FROM scratch
-
-COPY --from=builder /go/app /go/app
-
-CMD ["/go/app"]
-</code></pre>
-
-<p>Build it:</p>
-
-<pre><code>❯ docker build -t mygolangapp:using-multistage -f Dockerfile.multi .
-</code></pre>
-
-<p>Notice that the image is only <strong>2.01MB</strong>, say w000t!</p>
-
-<pre><code>❯ docker images "mygolangapp:*"
-REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
-mygolangapp         using-multistage    31474c61ba5b        15 seconds ago      2.01MB
-mygolangapp         using-alpine        eea1d7bde218        2 minutes ago       310MB
-</code></pre>
-
-<p>Run the app:</p>
-
-<pre><code>❯ docker run mygolangapp:using-multistage
-Number of words: 16
-Selected index number: 5
-Selected word is: spider
-</code></pre>
-
-<h2>Resources</h2>
-
-<p>Source code for this demonstration can be found at <a href="https://github.com/ruanbekker/golang-build-small-images">github.com/ruanbekker/golang-build-small-images</a></p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/55478904-236e9200-561d-11e9-9382-f31b25a9ae03.png" alt="" /></p>
 ]]></content>
   </entry>
   

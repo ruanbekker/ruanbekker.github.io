@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Prometheus | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/prometheus/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-17T12:40:26-04:00</updated>
+  <updated>2019-05-17T14:02:13-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,425 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Install Blackbox Exporter to Monitor Websites With Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/"/>
+    <updated>2019-05-17T12:55:15-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus</id>
+    <content type="html"><![CDATA[<p>Blackbox Exporter by Prometheus allows probing over endpoints such as http, https, icmp, tcp and dns.</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will install the blackbox exporter on linux. Im assuming that you have already <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">set up prometheus</a>.</p>
+
+<h2>Install the Blackbox Exporter</h2>
+
+<p>First create the blackbox exporter user:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false blackbox_exporter
+</code></pre>
+
+<p>Download blackbox exporter and extract:</p>
+
+<pre><code>$ wget https://github.com/prometheus/blackbox_exporter/releases/download/v0.14.0/blackbox_exporter-0.14.0.linux-amd64.tar.gz
+$ tar -xvf blackbox_exporter-0.14.0.linux-amd64.tar.gz
+</code></pre>
+
+<p>Move the binaries in place and change the ownership:</p>
+
+<pre><code>$ cp blackbox_exporter-0.14.0.linux-amd64/blackbox_exporter /usr/local/bin/blackbox_exporter
+$ chown blackbox_exporter:blackbox_exporter /usr/local/bin/blackbox_exporter
+</code></pre>
+
+<p>Remove the downloaded archive:</p>
+
+<pre><code>$ rm -rf blackbox_exporter-0.14.0.linux-amd64*
+</code></pre>
+
+<p>Create the blackbox directory and create the config:</p>
+
+<pre><code>$ mkdir /etc/blackbox_exporter
+$ vim /etc/blackbox_exporter/blackbox.yml
+</code></pre>
+
+<p>Populate this config:</p>
+
+<pre><code>modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: []
+      method: GET
+</code></pre>
+
+<p>Update the permissions of the config so that the user has ownership:</p>
+
+<pre><code>$ chown blackbox_exporter:blackbox_exporter /etc/blackbox_exporter/blackbox.yml
+</code></pre>
+
+<p>Create the systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/blackbox_exporter.service
+</code></pre>
+
+<p>Populate the systemd unit file configuration:</p>
+
+<pre><code>[Unit]
+Description=Blackbox Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=blackbox_exporter
+Group=blackbox_exporter
+Type=simple
+ExecStart=/usr/local/bin/blackbox_exporter --config.file /etc/blackbox_exporter/blackbox.yml
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Reload the systemd daemon and restart the service:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl start blackbox_exporter
+</code></pre>
+
+<p>The service should be started, verify:</p>
+
+<pre><code>$ systemctl status blackbox_exporter
+  blackbox_exporter.service - Blackbox Exporter
+   Loaded: loaded (/etc/systemd/system/blackbox_exporter.service; disabled; vendor preset: enabled)
+   Active: active (running) since Wed 2019-05-08 00:02:40 UTC; 5s ago
+ Main PID: 10084 (blackbox_export)
+    Tasks: 6 (limit: 4704)
+   CGroup: /system.slice/blackbox_exporter.service
+           └─10084 /usr/local/bin/blackbox_exporter --config.file /etc/blackbox_exporter/blackbox.yml
+
+May 08 00:02:40 ip-172-31-41-126 systemd[1]: Started Blackbox Exporter.
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.5229204Z caller=main.go:213 msg="Starting blackbox_exporter" version="(version=0.14.0, branch=HEAD, revision=bb
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.52553523Z caller=main.go:226 msg="Loaded config file"
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.525695324Z caller=main.go:330 msg="Listening on address" address=:9115
+</code></pre>
+
+<p>Enable the service on boot:</p>
+
+<pre><code>$ systemctl enable blackbox_exporter
+</code></pre>
+
+<h2>Configure Prometheus</h2>
+
+<p>Next, we need to provide context to prometheus on what to monitor. We will inform prometheus to monitor a web endpoint on port 8080 using the blackbox exporter (we will create a python simplehttpserver to run on port 8080).</p>
+
+<p>Edit the prometheus config <code>/etc/prometheus/prometheus.yml</code> and append the following:</p>
+
+<pre><code>  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://localhost:8080
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9115
+</code></pre>
+
+<p>Open a new terminal, create a <code>index.html</code>:</p>
+
+<pre><code>$ echo "ok" &gt; index.html
+</code></pre>
+
+<p>Then start a SimpleHTTPServer on port 8080:</p>
+
+<pre><code>$ python -m SimpleHTTPServer 8080
+</code></pre>
+
+<p>Head back to the previous terminal session and restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Configure the Alarm definition:</h2>
+
+<p>Create a alarm definition that desribes that defines when to notify when a endpoint goes down:</p>
+
+<pre><code>$ vim /etc/prometheus/alert.rules.yml
+</code></pre>
+
+<p>And our alert definition:</p>
+
+<pre><code>groups:
+- name: alert.rules
+  rules:
+  - alert: EndpointDown
+    expr: probe_success == 0
+    for: 10s
+    labels:
+      severity: "critical"
+    annotations:
+      summary: "Endpoint  down"
+</code></pre>
+
+<p>Ensure that the permission is set:</p>
+
+<pre><code>$ chown prometheus:prometheus /etc/prometheus/alert.rules.yml
+</code></pre>
+
+<p>Use the <code>promtool</code> to validate that the alert is correctly configured:</p>
+
+<pre><code>$ promtool check rules /etc/prometheus/alert.rules.yml
+Checking /etc/prometheus/alert.rules.yml
+  SUCCESS: 1 rules found
+</code></pre>
+
+<p>If everything is good, restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Blackbox Exporter Dashboard</h2>
+
+<p>To install a blackbox exporter dashboard: <a href="https://grafana.com/dashboards/7587">https://grafana.com/dashboards/7587</a>, create a new dashboard, select import, provide the ID: <code>7587</code>, select the prometheus datasource and select save.</p>
+
+<p>The dashboard should look similar to this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57947217-99357100-78de-11e9-9108-9338c97ca59d.png" alt="blackbox-exporter" /></p>
+
+<h2>Next up, Alertmanager</h2>
+
+<p>In the next tutorial we will setup Alertmanager to alert when our endpoint goes down</p>
+]]></content>
+  </entry>
+  
+  <entry>
+    <title type="html"><![CDATA[Install Alertmanager to Alert Based on Metrics From Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/"/>
+    <updated>2019-05-17T12:49:26-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus</id>
+    <content type="html"><![CDATA[<p>So we are pushing our time series metrics into prometheus, and now we would like to alarm based on certain metric dimensions. That&rsquo;s where alertmanager fits in. We can setup targets and rules, once rules for our targets does not match, we can alarm to destinations suchs as slack, email etc.</p>
+
+<h2>What we will be doing:</h2>
+
+<p>In our previous tutorial we installed blackbox exporter to probe a endpoint. Now we will install Alertmanager and configure an alert to notify us via email and slack when our endpoint goes down. See <a href="">this post</a> if you have not seen the previous tutorial.</p>
+
+<h2>Install Alertmanager</h2>
+
+<p>Create the user for alertmanager:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false alertmanager
+</code></pre>
+
+<p>Download alertmanager and extract:</p>
+
+<pre><code>$ https://github.com/prometheus/alertmanager/releases/download/v0.17.0/alertmanager-0.17.0.linux-amd64.tar.gz
+$ tar -xvf alertmanager-0.17.0.linux-amd64.tar.gz
+</code></pre>
+
+<p>Move alertmanager and amtool birnaries in place:</p>
+
+<pre><code>$ cp alertmanager-0.17.0.linux-amd64/alertmanager /usr/local/bin/
+$ cp alertmanager-0.17.0.linux-amd64/amtool /usr/local/bin/
+</code></pre>
+
+<p>Ensure that the correct permissions are in place:</p>
+
+<pre><code>$ chown alertmanager:alertmanager /usr/local/bin/alertmanager
+$ chown alertmanager:alertmanager /usr/local/bin/amtool
+</code></pre>
+
+<p>Cleanup:</p>
+
+<pre><code>$ rm -rf alertmanager-0.17.0*
+</code></pre>
+
+<h2>Configure Alertmanager:</h2>
+
+<p>Create the alertmanager directory and configure the global alertmanager configuration:</p>
+
+<pre><code>$ mkdir /etc/alertmanager
+$ vim /etc/alertmanager/alertmanager.yml
+</code></pre>
+
+<p>Provide the global config and ensure to populate your personal information. See <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/">this post</a> to create a slack webhook.</p>
+
+<pre><code>global:
+  smtp_smarthost: 'smtp.domain.net:587'
+  smtp_from: 'AlertManager &lt;mailer@domain.com&gt;'
+  smtp_require_tls: true
+  smtp_hello: 'alertmanager'
+  smtp_auth_username: 'username'
+  smtp_auth_password: 'password'
+
+  slack_api_url: 'https://hooks.slack.com/services/x/xx/xxx'
+
+route:
+  group_by: ['instance', 'alert']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 3h
+  receiver: team-1
+
+receivers:
+  - name: 'team-1'
+    email_configs:
+      - to: 'user@domain.com'
+    slack_configs:
+      # https://prometheus.io/docs/alerting/configuration/#slack_config
+      - channel: 'system_events'
+      - username: 'AlertManager'
+      - icon_emoji: ':joy:'
+</code></pre>
+
+<p>Ensure the permissions are in place:</p>
+
+<pre><code>$ chown alertmanager:alertmanager -R /etc/alertmanager
+</code></pre>
+
+<p>Create the alertmanager systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/alertmanager.service
+</code></pre>
+
+<p>And supply the unit file configuration. Note that I am exposing port <code>9093</code> directly as Im not using a reverse proxy.</p>
+
+<pre><code>[Unit]
+Description=Alertmanager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+WorkingDirectory=/etc/alertmanager/
+ExecStart=/usr/local/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.external-url http://0.0.0.0:9093
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Now we need to inform prometheus that we will send alerts to alertmanager to it&rsquo;s exposed port:</p>
+
+<pre><code>$ vim /etc/prometheus/prometheus.yml
+</code></pre>
+
+<p>And supply the alertmanager configuration for prometheus:</p>
+
+<pre><code>...
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - localhost:9093
+...
+</code></pre>
+
+<p>So when we get alerted, our alert will include a link to our alert. We need to provide the base url of that alert. That get&rsquo;s done in our alertmanager systemd unit file: <code>/etc/systemd/system/alertmanager.service</code> under <code>--web.external-url</code> passing the alertmanager base ip address:</p>
+
+<pre><code>[Unit]
+Description=Alertmanager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+WorkingDirectory=/etc/alertmanager/
+ExecStart=/usr/local/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.external-url http://&lt;your.alertmanager.ip.address&gt;:9093
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Then we need to do the same with the prometheus systemd unit file: <code>/etc/systemd/system/prometheus.service</code> under <code>--web.external-url</code> passing the prometheus base ip address:</p>
+
+<pre><code>[Unit]
+Description=Prometheus
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+    --config.file /etc/prometheus/prometheus.yml \
+    --storage.tsdb.path /var/lib/prometheus/ \
+    --web.console.templates=/etc/prometheus/consoles \
+    --web.console.libraries=/etc/prometheus/console_libraries \
+    --web.external-url http://&lt;your.prometheus.ip.address&gt;
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Since we have edited the systemd unit files, we need to reload the systemd daemon:</p>
+
+<pre><code>$ systemctl daemon-reload
+</code></pre>
+
+<p>Then restart prometheus and alertmanager:</p>
+
+<pre><code>$ systemctl restart prometheus
+$ systemctl restart alertmanager
+</code></pre>
+
+<p>Inspect the status of alertmanager and prometheus:</p>
+
+<pre><code>$ systemctl status alertmanager
+$ systemctl status prometheus
+</code></pre>
+
+<p>If everything seems good, enable alertmanager on boot:</p>
+
+<pre><code>$ systemctl enable alertmanager
+</code></pre>
+
+<h2>Access Alertmanager:</h2>
+
+<p>Access alertmanager on your endpoint on port <code>9093</code>:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946361-69856980-78dc-11e9-8c48-ebcc3b0d201e.png" alt="alertmanager" /></p>
+
+<p>From our previous tutorial we started a local web service on port <code>8080</code> that is being monitored by prometheus. Let&rsquo;s stop that service to test out the alerting. You should get a notification via email:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946586-f29ca080-78dc-11e9-983c-6b857ef21bae.png" alt="alertmanager" /></p>
+
+<p>And the notification via slack:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946602-03e5ad00-78dd-11e9-9ecc-c3d58b2ad3ec.png" alt="alertmanager" /></p>
+
+<p>When you start the service again and head over to the prometheus ui under alerts, you will see that the service recovered:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946647-2677c600-78dd-11e9-95a9-b9f4190172bf.png" alt="prometheus" /></p>
+
+<h2>Install Prometheus Alertmanager Plugin</h2>
+
+<p>Install the Prometheus Alertmanager Plugin in Grafana. Head to the instance where grafana is installed and install the plugin:</p>
+
+<pre><code>$ grafana-cli plugins install camptocamp-prometheus-alertmanager-datasource
+</code></pre>
+
+<p>Once the plugin is installed, restart grafana:</p>
+
+<pre><code>$ service grafana-server restart
+</code></pre>
+
+<p>Install the dasboard <a href="https://grafana.com/dashboards/8010">grafana.com/dashboards/8010</a>. Create a new datasource, select the prometheus-alertmanager datasource, configure and save.</p>
+
+<p>Add a new dasboard, select import and provide the ID <code>8010</code>, select the prometheus-alertmanager datasource and save. You should see the following (more or less):</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57947092-3f34ab80-78de-11e9-904b-f42d5ecd7d0a.png" alt="prometheus-alertmanager" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install Grafana to Visualize Your Metrics From Datasources Such as Prometheus on Linux]]></title>

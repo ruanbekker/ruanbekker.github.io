@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Blackbox | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/blackbox/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2019-05-17T14:02:13-04:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Install Blackbox Exporter to Monitor Websites With Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/"/>
+    <updated>2019-05-17T12:55:15-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus</id>
+    <content type="html"><![CDATA[<p>Blackbox Exporter by Prometheus allows probing over endpoints such as http, https, icmp, tcp and dns.</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will install the blackbox exporter on linux. Im assuming that you have already <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">set up prometheus</a>.</p>
+
+<h2>Install the Blackbox Exporter</h2>
+
+<p>First create the blackbox exporter user:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false blackbox_exporter
+</code></pre>
+
+<p>Download blackbox exporter and extract:</p>
+
+<pre><code>$ wget https://github.com/prometheus/blackbox_exporter/releases/download/v0.14.0/blackbox_exporter-0.14.0.linux-amd64.tar.gz
+$ tar -xvf blackbox_exporter-0.14.0.linux-amd64.tar.gz
+</code></pre>
+
+<p>Move the binaries in place and change the ownership:</p>
+
+<pre><code>$ cp blackbox_exporter-0.14.0.linux-amd64/blackbox_exporter /usr/local/bin/blackbox_exporter
+$ chown blackbox_exporter:blackbox_exporter /usr/local/bin/blackbox_exporter
+</code></pre>
+
+<p>Remove the downloaded archive:</p>
+
+<pre><code>$ rm -rf blackbox_exporter-0.14.0.linux-amd64*
+</code></pre>
+
+<p>Create the blackbox directory and create the config:</p>
+
+<pre><code>$ mkdir /etc/blackbox_exporter
+$ vim /etc/blackbox_exporter/blackbox.yml
+</code></pre>
+
+<p>Populate this config:</p>
+
+<pre><code>modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: []
+      method: GET
+</code></pre>
+
+<p>Update the permissions of the config so that the user has ownership:</p>
+
+<pre><code>$ chown blackbox_exporter:blackbox_exporter /etc/blackbox_exporter/blackbox.yml
+</code></pre>
+
+<p>Create the systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/blackbox_exporter.service
+</code></pre>
+
+<p>Populate the systemd unit file configuration:</p>
+
+<pre><code>[Unit]
+Description=Blackbox Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=blackbox_exporter
+Group=blackbox_exporter
+Type=simple
+ExecStart=/usr/local/bin/blackbox_exporter --config.file /etc/blackbox_exporter/blackbox.yml
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Reload the systemd daemon and restart the service:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl start blackbox_exporter
+</code></pre>
+
+<p>The service should be started, verify:</p>
+
+<pre><code>$ systemctl status blackbox_exporter
+  blackbox_exporter.service - Blackbox Exporter
+   Loaded: loaded (/etc/systemd/system/blackbox_exporter.service; disabled; vendor preset: enabled)
+   Active: active (running) since Wed 2019-05-08 00:02:40 UTC; 5s ago
+ Main PID: 10084 (blackbox_export)
+    Tasks: 6 (limit: 4704)
+   CGroup: /system.slice/blackbox_exporter.service
+           └─10084 /usr/local/bin/blackbox_exporter --config.file /etc/blackbox_exporter/blackbox.yml
+
+May 08 00:02:40 ip-172-31-41-126 systemd[1]: Started Blackbox Exporter.
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.5229204Z caller=main.go:213 msg="Starting blackbox_exporter" version="(version=0.14.0, branch=HEAD, revision=bb
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.52553523Z caller=main.go:226 msg="Loaded config file"
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.525695324Z caller=main.go:330 msg="Listening on address" address=:9115
+</code></pre>
+
+<p>Enable the service on boot:</p>
+
+<pre><code>$ systemctl enable blackbox_exporter
+</code></pre>
+
+<h2>Configure Prometheus</h2>
+
+<p>Next, we need to provide context to prometheus on what to monitor. We will inform prometheus to monitor a web endpoint on port 8080 using the blackbox exporter (we will create a python simplehttpserver to run on port 8080).</p>
+
+<p>Edit the prometheus config <code>/etc/prometheus/prometheus.yml</code> and append the following:</p>
+
+<pre><code>  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://localhost:8080
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9115
+</code></pre>
+
+<p>Open a new terminal, create a <code>index.html</code>:</p>
+
+<pre><code>$ echo "ok" &gt; index.html
+</code></pre>
+
+<p>Then start a SimpleHTTPServer on port 8080:</p>
+
+<pre><code>$ python -m SimpleHTTPServer 8080
+</code></pre>
+
+<p>Head back to the previous terminal session and restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Configure the Alarm definition:</h2>
+
+<p>Create a alarm definition that desribes that defines when to notify when a endpoint goes down:</p>
+
+<pre><code>$ vim /etc/prometheus/alert.rules.yml
+</code></pre>
+
+<p>And our alert definition:</p>
+
+<pre><code>groups:
+- name: alert.rules
+  rules:
+  - alert: EndpointDown
+    expr: probe_success == 0
+    for: 10s
+    labels:
+      severity: "critical"
+    annotations:
+      summary: "Endpoint  down"
+</code></pre>
+
+<p>Ensure that the permission is set:</p>
+
+<pre><code>$ chown prometheus:prometheus /etc/prometheus/alert.rules.yml
+</code></pre>
+
+<p>Use the <code>promtool</code> to validate that the alert is correctly configured:</p>
+
+<pre><code>$ promtool check rules /etc/prometheus/alert.rules.yml
+Checking /etc/prometheus/alert.rules.yml
+  SUCCESS: 1 rules found
+</code></pre>
+
+<p>If everything is good, restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Blackbox Exporter Dashboard</h2>
+
+<p>To install a blackbox exporter dashboard: <a href="https://grafana.com/dashboards/7587">https://grafana.com/dashboards/7587</a>, create a new dashboard, select import, provide the ID: <code>7587</code>, select the prometheus datasource and select save.</p>
+
+<p>The dashboard should look similar to this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57947217-99357100-78de-11e9-9108-9338c97ca59d.png" alt="blackbox-exporter" /></p>
+
+<h2>Next up, Alertmanager</h2>
+
+<p>In the next tutorial we will setup Alertmanager to alert when our endpoint goes down</p>
+]]></content>
+  </entry>
+  
+</feed>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Metrics | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/metrics/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-17T12:40:26-04:00</updated>
+  <updated>2019-05-17T14:02:13-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,425 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Install Blackbox Exporter to Monitor Websites With Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/"/>
+    <updated>2019-05-17T12:55:15-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus</id>
+    <content type="html"><![CDATA[<p>Blackbox Exporter by Prometheus allows probing over endpoints such as http, https, icmp, tcp and dns.</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will install the blackbox exporter on linux. Im assuming that you have already <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">set up prometheus</a>.</p>
+
+<h2>Install the Blackbox Exporter</h2>
+
+<p>First create the blackbox exporter user:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false blackbox_exporter
+</code></pre>
+
+<p>Download blackbox exporter and extract:</p>
+
+<pre><code>$ wget https://github.com/prometheus/blackbox_exporter/releases/download/v0.14.0/blackbox_exporter-0.14.0.linux-amd64.tar.gz
+$ tar -xvf blackbox_exporter-0.14.0.linux-amd64.tar.gz
+</code></pre>
+
+<p>Move the binaries in place and change the ownership:</p>
+
+<pre><code>$ cp blackbox_exporter-0.14.0.linux-amd64/blackbox_exporter /usr/local/bin/blackbox_exporter
+$ chown blackbox_exporter:blackbox_exporter /usr/local/bin/blackbox_exporter
+</code></pre>
+
+<p>Remove the downloaded archive:</p>
+
+<pre><code>$ rm -rf blackbox_exporter-0.14.0.linux-amd64*
+</code></pre>
+
+<p>Create the blackbox directory and create the config:</p>
+
+<pre><code>$ mkdir /etc/blackbox_exporter
+$ vim /etc/blackbox_exporter/blackbox.yml
+</code></pre>
+
+<p>Populate this config:</p>
+
+<pre><code>modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: []
+      method: GET
+</code></pre>
+
+<p>Update the permissions of the config so that the user has ownership:</p>
+
+<pre><code>$ chown blackbox_exporter:blackbox_exporter /etc/blackbox_exporter/blackbox.yml
+</code></pre>
+
+<p>Create the systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/blackbox_exporter.service
+</code></pre>
+
+<p>Populate the systemd unit file configuration:</p>
+
+<pre><code>[Unit]
+Description=Blackbox Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=blackbox_exporter
+Group=blackbox_exporter
+Type=simple
+ExecStart=/usr/local/bin/blackbox_exporter --config.file /etc/blackbox_exporter/blackbox.yml
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Reload the systemd daemon and restart the service:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl start blackbox_exporter
+</code></pre>
+
+<p>The service should be started, verify:</p>
+
+<pre><code>$ systemctl status blackbox_exporter
+  blackbox_exporter.service - Blackbox Exporter
+   Loaded: loaded (/etc/systemd/system/blackbox_exporter.service; disabled; vendor preset: enabled)
+   Active: active (running) since Wed 2019-05-08 00:02:40 UTC; 5s ago
+ Main PID: 10084 (blackbox_export)
+    Tasks: 6 (limit: 4704)
+   CGroup: /system.slice/blackbox_exporter.service
+           └─10084 /usr/local/bin/blackbox_exporter --config.file /etc/blackbox_exporter/blackbox.yml
+
+May 08 00:02:40 ip-172-31-41-126 systemd[1]: Started Blackbox Exporter.
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.5229204Z caller=main.go:213 msg="Starting blackbox_exporter" version="(version=0.14.0, branch=HEAD, revision=bb
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.52553523Z caller=main.go:226 msg="Loaded config file"
+May 08 00:02:40 ip-172-31-41-126 blackbox_exporter[10084]: level=info ts=2019-05-08T00:02:40.525695324Z caller=main.go:330 msg="Listening on address" address=:9115
+</code></pre>
+
+<p>Enable the service on boot:</p>
+
+<pre><code>$ systemctl enable blackbox_exporter
+</code></pre>
+
+<h2>Configure Prometheus</h2>
+
+<p>Next, we need to provide context to prometheus on what to monitor. We will inform prometheus to monitor a web endpoint on port 8080 using the blackbox exporter (we will create a python simplehttpserver to run on port 8080).</p>
+
+<p>Edit the prometheus config <code>/etc/prometheus/prometheus.yml</code> and append the following:</p>
+
+<pre><code>  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://localhost:8080
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9115
+</code></pre>
+
+<p>Open a new terminal, create a <code>index.html</code>:</p>
+
+<pre><code>$ echo "ok" &gt; index.html
+</code></pre>
+
+<p>Then start a SimpleHTTPServer on port 8080:</p>
+
+<pre><code>$ python -m SimpleHTTPServer 8080
+</code></pre>
+
+<p>Head back to the previous terminal session and restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Configure the Alarm definition:</h2>
+
+<p>Create a alarm definition that desribes that defines when to notify when a endpoint goes down:</p>
+
+<pre><code>$ vim /etc/prometheus/alert.rules.yml
+</code></pre>
+
+<p>And our alert definition:</p>
+
+<pre><code>groups:
+- name: alert.rules
+  rules:
+  - alert: EndpointDown
+    expr: probe_success == 0
+    for: 10s
+    labels:
+      severity: "critical"
+    annotations:
+      summary: "Endpoint  down"
+</code></pre>
+
+<p>Ensure that the permission is set:</p>
+
+<pre><code>$ chown prometheus:prometheus /etc/prometheus/alert.rules.yml
+</code></pre>
+
+<p>Use the <code>promtool</code> to validate that the alert is correctly configured:</p>
+
+<pre><code>$ promtool check rules /etc/prometheus/alert.rules.yml
+Checking /etc/prometheus/alert.rules.yml
+  SUCCESS: 1 rules found
+</code></pre>
+
+<p>If everything is good, restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Blackbox Exporter Dashboard</h2>
+
+<p>To install a blackbox exporter dashboard: <a href="https://grafana.com/dashboards/7587">https://grafana.com/dashboards/7587</a>, create a new dashboard, select import, provide the ID: <code>7587</code>, select the prometheus datasource and select save.</p>
+
+<p>The dashboard should look similar to this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57947217-99357100-78de-11e9-9108-9338c97ca59d.png" alt="blackbox-exporter" /></p>
+
+<h2>Next up, Alertmanager</h2>
+
+<p>In the next tutorial we will setup Alertmanager to alert when our endpoint goes down</p>
+]]></content>
+  </entry>
+  
+  <entry>
+    <title type="html"><![CDATA[Install Alertmanager to Alert Based on Metrics From Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/"/>
+    <updated>2019-05-17T12:49:26-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus</id>
+    <content type="html"><![CDATA[<p>So we are pushing our time series metrics into prometheus, and now we would like to alarm based on certain metric dimensions. That&rsquo;s where alertmanager fits in. We can setup targets and rules, once rules for our targets does not match, we can alarm to destinations suchs as slack, email etc.</p>
+
+<h2>What we will be doing:</h2>
+
+<p>In our previous tutorial we installed blackbox exporter to probe a endpoint. Now we will install Alertmanager and configure an alert to notify us via email and slack when our endpoint goes down. See <a href="">this post</a> if you have not seen the previous tutorial.</p>
+
+<h2>Install Alertmanager</h2>
+
+<p>Create the user for alertmanager:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false alertmanager
+</code></pre>
+
+<p>Download alertmanager and extract:</p>
+
+<pre><code>$ https://github.com/prometheus/alertmanager/releases/download/v0.17.0/alertmanager-0.17.0.linux-amd64.tar.gz
+$ tar -xvf alertmanager-0.17.0.linux-amd64.tar.gz
+</code></pre>
+
+<p>Move alertmanager and amtool birnaries in place:</p>
+
+<pre><code>$ cp alertmanager-0.17.0.linux-amd64/alertmanager /usr/local/bin/
+$ cp alertmanager-0.17.0.linux-amd64/amtool /usr/local/bin/
+</code></pre>
+
+<p>Ensure that the correct permissions are in place:</p>
+
+<pre><code>$ chown alertmanager:alertmanager /usr/local/bin/alertmanager
+$ chown alertmanager:alertmanager /usr/local/bin/amtool
+</code></pre>
+
+<p>Cleanup:</p>
+
+<pre><code>$ rm -rf alertmanager-0.17.0*
+</code></pre>
+
+<h2>Configure Alertmanager:</h2>
+
+<p>Create the alertmanager directory and configure the global alertmanager configuration:</p>
+
+<pre><code>$ mkdir /etc/alertmanager
+$ vim /etc/alertmanager/alertmanager.yml
+</code></pre>
+
+<p>Provide the global config and ensure to populate your personal information. See <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/">this post</a> to create a slack webhook.</p>
+
+<pre><code>global:
+  smtp_smarthost: 'smtp.domain.net:587'
+  smtp_from: 'AlertManager &lt;mailer@domain.com&gt;'
+  smtp_require_tls: true
+  smtp_hello: 'alertmanager'
+  smtp_auth_username: 'username'
+  smtp_auth_password: 'password'
+
+  slack_api_url: 'https://hooks.slack.com/services/x/xx/xxx'
+
+route:
+  group_by: ['instance', 'alert']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 3h
+  receiver: team-1
+
+receivers:
+  - name: 'team-1'
+    email_configs:
+      - to: 'user@domain.com'
+    slack_configs:
+      # https://prometheus.io/docs/alerting/configuration/#slack_config
+      - channel: 'system_events'
+      - username: 'AlertManager'
+      - icon_emoji: ':joy:'
+</code></pre>
+
+<p>Ensure the permissions are in place:</p>
+
+<pre><code>$ chown alertmanager:alertmanager -R /etc/alertmanager
+</code></pre>
+
+<p>Create the alertmanager systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/alertmanager.service
+</code></pre>
+
+<p>And supply the unit file configuration. Note that I am exposing port <code>9093</code> directly as Im not using a reverse proxy.</p>
+
+<pre><code>[Unit]
+Description=Alertmanager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+WorkingDirectory=/etc/alertmanager/
+ExecStart=/usr/local/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.external-url http://0.0.0.0:9093
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Now we need to inform prometheus that we will send alerts to alertmanager to it&rsquo;s exposed port:</p>
+
+<pre><code>$ vim /etc/prometheus/prometheus.yml
+</code></pre>
+
+<p>And supply the alertmanager configuration for prometheus:</p>
+
+<pre><code>...
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - localhost:9093
+...
+</code></pre>
+
+<p>So when we get alerted, our alert will include a link to our alert. We need to provide the base url of that alert. That get&rsquo;s done in our alertmanager systemd unit file: <code>/etc/systemd/system/alertmanager.service</code> under <code>--web.external-url</code> passing the alertmanager base ip address:</p>
+
+<pre><code>[Unit]
+Description=Alertmanager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+WorkingDirectory=/etc/alertmanager/
+ExecStart=/usr/local/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.external-url http://&lt;your.alertmanager.ip.address&gt;:9093
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Then we need to do the same with the prometheus systemd unit file: <code>/etc/systemd/system/prometheus.service</code> under <code>--web.external-url</code> passing the prometheus base ip address:</p>
+
+<pre><code>[Unit]
+Description=Prometheus
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+    --config.file /etc/prometheus/prometheus.yml \
+    --storage.tsdb.path /var/lib/prometheus/ \
+    --web.console.templates=/etc/prometheus/consoles \
+    --web.console.libraries=/etc/prometheus/console_libraries \
+    --web.external-url http://&lt;your.prometheus.ip.address&gt;
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Since we have edited the systemd unit files, we need to reload the systemd daemon:</p>
+
+<pre><code>$ systemctl daemon-reload
+</code></pre>
+
+<p>Then restart prometheus and alertmanager:</p>
+
+<pre><code>$ systemctl restart prometheus
+$ systemctl restart alertmanager
+</code></pre>
+
+<p>Inspect the status of alertmanager and prometheus:</p>
+
+<pre><code>$ systemctl status alertmanager
+$ systemctl status prometheus
+</code></pre>
+
+<p>If everything seems good, enable alertmanager on boot:</p>
+
+<pre><code>$ systemctl enable alertmanager
+</code></pre>
+
+<h2>Access Alertmanager:</h2>
+
+<p>Access alertmanager on your endpoint on port <code>9093</code>:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946361-69856980-78dc-11e9-8c48-ebcc3b0d201e.png" alt="alertmanager" /></p>
+
+<p>From our previous tutorial we started a local web service on port <code>8080</code> that is being monitored by prometheus. Let&rsquo;s stop that service to test out the alerting. You should get a notification via email:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946586-f29ca080-78dc-11e9-983c-6b857ef21bae.png" alt="alertmanager" /></p>
+
+<p>And the notification via slack:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946602-03e5ad00-78dd-11e9-9ecc-c3d58b2ad3ec.png" alt="alertmanager" /></p>
+
+<p>When you start the service again and head over to the prometheus ui under alerts, you will see that the service recovered:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57946647-2677c600-78dd-11e9-95a9-b9f4190172bf.png" alt="prometheus" /></p>
+
+<h2>Install Prometheus Alertmanager Plugin</h2>
+
+<p>Install the Prometheus Alertmanager Plugin in Grafana. Head to the instance where grafana is installed and install the plugin:</p>
+
+<pre><code>$ grafana-cli plugins install camptocamp-prometheus-alertmanager-datasource
+</code></pre>
+
+<p>Once the plugin is installed, restart grafana:</p>
+
+<pre><code>$ service grafana-server restart
+</code></pre>
+
+<p>Install the dasboard <a href="https://grafana.com/dashboards/8010">grafana.com/dashboards/8010</a>. Create a new datasource, select the prometheus-alertmanager datasource, configure and save.</p>
+
+<p>Add a new dasboard, select import and provide the ID <code>8010</code>, select the prometheus-alertmanager datasource and save. You should see the following (more or less):</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/57947092-3f34ab80-78de-11e9-904b-f42d5ecd7d0a.png" alt="prometheus-alertmanager" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install Grafana to Visualize Your Metrics From Datasources Such as Prometheus on Linux]]></title>
@@ -328,461 +747,6 @@ print response
 <a href="https://www.syntouch.nl/custom-cloudwatch-metrics-in-python-yes-we-can/">https://www.syntouch.nl/custom-cloudwatch-metrics-in-python-yes-we-can/</a> &lt;- psutil
 <a href="https://aws.amazon.com/blogs/devops/new-how-to-better-monitor-your-custom-application-metrics-using-amazon-cloudwatch-agent/">https://aws.amazon.com/blogs/devops/new-how-to-better-monitor-your-custom-application-metrics-using-amazon-cloudwatch-agent/</a>
 <a href="https://medium.com/@mrdoro/aws-lambda-as-the-website-monitoring-tool-184b09202ae2">https://medium.com/@mrdoro/aws-lambda-as-the-website-monitoring-tool-184b09202ae2</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/"/>
-    <updated>2018-11-11T13:09:18-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-banner.png" alt="" /></p>
-
-<p>In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. If you have not setup the Elastic Stack with / or APM Server, you <a href="https://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">can follow this post</a> to setup the needed.</p>
-
-<p>Then we will make a bunch of HTTP Requests to our Application and will go through the metrics per request type.</p>
-
-<h2>Application Metrics</h2>
-
-<p>Our Application will have the following Request Paths:</p>
-
-<ul>
-<li><code>/</code> - Returns static text</li>
-<li><code>/delay</code> - random delays to simulate increased response latencies</li>
-<li><code>/upstream</code> - get data from a upstream provider, if statements to provide dummy 200, 404 and 502 reponses to visualize</li>
-<li><code>/5xx</code> - request path that will raise an exception so that we can see the error via apm</li>
-<li><code>/sql-write</code> - inserts 5 rows into a sqlite database</li>
-<li><code>/sql-read</code> - executes a select all from the database</li>
-<li><code>/sql-group</code> - sql query to group all the cities and count them</li>
-</ul>
-
-
-<p>This is just simple request paths to demonstrate the metrics via APM (Application Performance Monitoring) on Kibana.</p>
-
-<h2>Install Flask and APM Agent</h2>
-
-<p>Create a virtual environment and install the dependencies:</p>
-
-<pre><code class="bash">$ apt install python python-setuptools -y
-$ easy_install pip
-$ pip install virtualenv
-$ pip install elastic-apm[flask]
-$ pip install flask
-</code></pre>
-
-<p>For more info on <a href="https://www.elastic.co/guide/en/apm/agent/python/current/getting-started.html">APM Configuration</a>.</p>
-
-<h2>Instrument a Bare Bones Python Flask app with APM:</h2>
-
-<p>A Barebones app with APM Configured will look like this:</p>
-
-<pre><code class="python">from flask import Flask, jsonify
-from elasticapm.contrib.flask import ElasticAPM
-from elasticapm.handlers.logging import LoggingHandler
-
-app = Flask(__name__)
-apm = ElasticAPM(app, server_url='http://localhost:8200', service_name='flask-app-1', logging=True)
-
-@app.route('/')
-def index():
-    return jsonify({"message": "response ok"}), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80)
-</code></pre>
-
-<p>This will provide metrics on the <code>/</code> request path. In order to trace transaction ids from the metrics, we need to configure the index on Kibana. To do this, head over to Kibana, Management, Index Patterns, Add Index Pattern, <code>apm*</code>, select <code>@timestamp</code> as the time filter field name.</p>
-
-<p>This will allow you to see the data when tracing the transaction id&rsquo;s via the Discover UI.</p>
-
-<h2>Create the Python Flask App</h2>
-
-<p>Create the Flask App with the request paths as mentioned in the beginning:</p>
-
-<pre><code class="python">import sqlite3, requests, time, logging, random
-from flask import Flask, jsonify
-from elasticapm.contrib.flask import ElasticAPM
-from elasticapm.handlers.logging import LoggingHandler
-
-names = ['ruan', 'stefan', 'philip', 'norman', 'frank', 'pete', 'johnny', 'peter', 'adam']
-cities = ['cape town', 'johannesburg', 'pretoria', 'dublin', 'kroonstad', 'bloemfontein', 'port elizabeth', 'auckland', 'sydney']
-lastnames = ['smith', 'bekker', 'admams', 'phillips', 'james', 'adamson']
-
-conn = sqlite3.connect('database.db')
-conn.execute('CREATE TABLE IF NOT EXISTS people (name STRING, age INTEGER, surname STRING, city STRING)')
-#sqlquery_write = conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
-seconds = [0.002, 0.003, 0.004, 0.01, 0.3, 0.2, 0.009, 0.015, 0.02, 0.225, 0.009, 0.001, 0.25, 0.030, 0.018]
-
-app = Flask(__name__)
-apm = ElasticAPM(app, server_url='http://localhost:8200', service_name='my-app-01', logging=False)
-
-@app.route('/')
-def index():
-    return jsonify({"message": "response ok"})
-
-@app.route('/delay')
-def delay():
-    time.sleep(random.choice(seconds))
-    return jsonify({"message": "response delay"})
-
-@app.route('/upstream')
-def upstream():
-    r = requests.get('https://api.ruanbekker.com/people').json()
-    r.get('country')
-    if r.get('country') == 'italy':
-        return 'Italalia!', 200
-    elif r.get('country') == 'canada':
-        return 'Canada!', 502
-    else:
-        return 'Not Found', 404
-
-@app.route('/5xx')
-def fail_with_5xx():
-    value = 'a' + 1
-    return jsonify({"message": value})
-
-@app.route('/sql-write')
-def sqlw():
-    conn = sqlite3.connect('database.db')
-    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
-    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
-    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
-    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
-    conn.execute('INSERT INTO people VALUES("{}", "{}", "{}", "{}")'.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))
-    conn.commit()
-    conn.close()
-    return 'ok', 200
-
-@app.route('/sql-read')
-def sqlr():
-    conn = sqlite3.connect('database.db')
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute('select * from people')
-    rows = cur.fetchall()
-    conn.close()
-    return 'ok', 200
-
-@app.route('/sql-group')
-def slqg():
-    conn = sqlite3.connect('database.db')
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute('select count(*) as num, city from people group by city')
-    rows = cur.fetchall()
-    conn.close()
-    return 'ok', 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80)
-</code></pre>
-
-<p>Run the app:</p>
-
-<pre><code class="bash">$ python app.py
-</code></pre>
-
-<p>At this point, we wont have any data on APM as we need to make requests to our application. Let&rsquo;s make 10 HTTP GET Requests on the <code>/</code> Request Path:</p>
-
-<pre><code class="bash">$ count=0 &amp;&amp; while [ $count -lt 10 ]; do curl http://application-routable-address:80/; sleep 1; count=$((count+1)); done
-</code></pre>
-
-<h2>Visualize the Root Request Path</h2>
-
-<p>Head over to Kibana, Select APM and you will see something similar like below when selecting the timepicker to 15 minutes at the right top corner. This page will give you the overview of all your configured applications and the average response times over the selected time, transactions per minute, errors per minute etc:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-home-root.png" alt="" /></p>
-
-<p>When you select your application, you will find the graphs on you response times and requests per minute, also a breakdown per request path:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-1.png" alt="" /></p>
-
-<p>When selecting the request path, in this case <code>GET /</code>, you will find a breakdown of metrics only for that request and also the response time distribution for that request path, if you select frame from the response time distribution, it will filter the focus to that specific transaction.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-1.png" alt="" /></p>
-
-<p>When you scroll a bit down to the Transaction Sample section, you will find data about the request, response, system etc:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-transaction-1.png" alt="" /></p>
-
-<p>From the Transaction Sample, you can select the View Transaction in Discover button, which will trace that transaction id on the Discover UI:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-transaction-disc-1.png" alt="" /></p>
-
-<p>Increasing the http curl clients running simultaneously from different servers and increasing the time for 15 minutes to have more metrics will result in the screenshot below, notice the 6ms response time can easily be traced selecting it in the response time distribution, then discovering it in the UI, which will give you the raw data from that request:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-2.png" alt="" /></p>
-
-<h2>Viewing Application Errors in APM</h2>
-
-<p>Make a couple of requests to <code>/5xx</code>:</p>
-
-<pre><code class="bash">$ curl http://application-routable-endpoint:80/5xx
-</code></pre>
-
-<p>Navigate to the app, select Errors, then you will see the exception details that was returned. Here we can see that in our code we tried to concatenate integers with strings:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-1.png" alt="" /></p>
-
-<p>Furthermore we can select that error and it will provide us a direct view on where in our code the error gets generated:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-details-1.png" alt="" /></p>
-
-<p>Pretty cool right?! You can also further select the library frames, which will take you to the lower level code that raised the exception. If this errors can be drilled down via the discover ui, to group by source address etc.</p>
-
-<h2>Simulate Response Latencies:</h2>
-
-<p>Make a couple of requests to the <code>/delay</code> request path, and you should see the increased response times from earlier:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-delay.png" alt="" /></p>
-
-<h2>Requests where Database Calls are Executed</h2>
-
-<p>The while loop to call random request paths:</p>
-
-<pre><code class="bash">count=0 &amp;&amp; while [ $count -lt 1000 ]; 
-do 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-read; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-group; 
-  curl -H "Host: my-eu-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-us-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-read; 
-  curl -H "Host: my-eu-server" -i http://x.x.x.x/sql-group; 
-  curl -H "Host: my-us-server" -i http://x.x.x.x/sql-group; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-write; 
-  curl -H "Host: my-eu-server" -i http://x.x.x.x/sql-group; 
-  curl -H "Host: my-za-server" -i http://x.x.x.x/sql-group; 
-  count=$((count+1)); 
-done
-</code></pre>
-
-<p>When we look at our applications performance monitoring overview, we can see the writes provide more latencies as the group by&rsquo;s:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-view-1.png" alt="" /></p>
-
-<p>The <code>/sql-write</code> request overview:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1.png" alt="" /></p>
-
-<p>When selecting a transaction sample, we can see the timeline of each database call:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1-details.png" alt="" /></p>
-
-<p>When looking at the <code>/sql-group</code> request overview, we can see that the response times increasing overtime, as more data is written to the database, it takes longer to read and group all the data from the database:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1.png" alt="" /></p>
-
-<p>The transaction details shows the timeline of the database query from that request:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-details.png" alt="" /></p>
-
-<p>When you select the database select query on the timeline view, it will take you to the exact database query that was executed:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-span.png" alt="" /></p>
-
-<p>When we include a database call with a external request to a remote http endpoint, we will see something like:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlread-ext.png" alt="" /></p>
-
-<h2>Viewing 4xx and 5xx Response Codes</h2>
-
-<p>From the application code we are returning 2xx, 4xx, and 5xx response codes for this demonstration to visualize them:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-response-codes.png" alt="" /></p>
-
-<h2>Configuring more Applications</h2>
-
-<p>Once more apps are configured, and they start serving traffic, they will start appearing on the APM UI as below:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-apps.png" alt="" /></p>
-
-<p>APM is available for other languages as well and provides a getting started snippets from the APM UI. For more information on APM, have a look at their <a href="https://www.elastic.co/solutions/apm">Documentation</a></p>
-
-<p>Hope this was useful.</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/"/>
-    <updated>2018-11-11T12:31:43-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
-
-<p>In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive the metric data from the application side, and is then pushed to apm indices on Elasticsearch.</p>
-
-<p>This will be a 2 post blog on APM:</p>
-
-<ul>
-<li>1) <a href="">Setup the Elastic Stack with Elasticsearch, Kibana and APM Server</a> - this post</li>
-<li>2) <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Setup a Python Flask application with the APM Agent</a></li>
-</ul>
-
-
-<h2>What is APM</h2>
-
-<p>From their website APM is described as: &ldquo;Elastic APM is an application performance monitoring system built on the Elastic Stack. It allows you to monitor software services and applications in real time, collecting detailed performance information on response time for incoming requests, database queries, calls to caches, external HTTP requests, etc.&rdquo;</p>
-
-<p>You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred etc.</p>
-
-<ul>
-<li><a href="https://www.elastic.co/solutions/apm">More Info</a></li>
-</ul>
-
-
-<h2>APM Agents:</h2>
-
-<p>The APM Agents will be loaded inside your application, application metrics will then be pushed to the APM Server (which we will setup in this post), which then gets pushed to Elasticsearch and is then consumed by Kibana.</p>
-
-<p>At the time of writing, the APM Agents are supported in the following languages:</p>
-
-<ul>
-<li>Node.js</li>
-<li>Django</li>
-<li>Flask</li>
-<li>Ruby on Rails</li>
-<li>Rack</li>
-<li>RUM</li>
-<li>Golang</li>
-<li>Java</li>
-</ul>
-
-
-<h2>Setup the Elastic Stack</h2>
-
-<p>One thing to note, every service in your Elastic Stack needs to be running on the same version. In this post we will setup Elasticsearch, APM and Kibana all running on version <code>6.4.3</code></p>
-
-<h2>Setup the Pre-Requirements:</h2>
-
-<p>Elasticsearch depends on Java, se we will go ahead and setup the repositories:</p>
-
-<pre><code class="bash">$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
-$ apt-get install apt-transport-https -y
-$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
-$ apt update &amp;&amp; apt upgrade -y 
-$ apt install openjdk-8-jdk -y
-</code></pre>
-
-<p>Verify that Java is installed:</p>
-
-<pre><code class="bash">$ java -version
-openjdk version "1.8.0_181"
-OpenJDK Runtime Environment (build 1.8.0_181-8u181-b13-1ubuntu0.16.04.1-b13)
-OpenJDK 64-Bit Server VM (build 25.181-b13, mixed mode)
-</code></pre>
-
-<p>Setup Kernel parameters for Elasticsearch:</p>
-
-<pre><code class="bash">$ sysctl -w vm.max_map_count=262144
-$ echo 'vm.max_map_count=262144' &gt;&gt; /etc/sysctl.conf
-</code></pre>
-
-<h2>Setup Elasticsearch:</h2>
-
-<p>Search for the latest versions (when already having elasticsearch, either upgrade or install apm on the same version as elasticsearch/kibana):</p>
-
-<pre><code class="bash">$ apt-cache madison elasticsearch
-elasticsearch |      6.4.3 | https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
-elasticsearch |      6.4.2 | https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
-</code></pre>
-
-<p>Install Elasticsearch:</p>
-
-<pre><code class="bash">$ apt-get install elasticsearch=6.4.3 -y
-</code></pre>
-
-<p>Configure Elasticsearch to lock the memory on startup:</p>
-
-<pre><code class="bash">$ sed -i 's/#bootstrap.memory_lock: true/bootstrap.memory_lock: true/g' /etc/elasticsearch/elasticsearch.yml
-</code></pre>
-
-<p>Enable Elasticsearch on startup and start the service:</p>
-
-<pre><code>$ systemctl daemon-reload
-$ systemctl enable elasticsearch.service
-$ systemctl start elasticsearch.service
-</code></pre>
-
-<h2>Install Kibana:</h2>
-
-<p>Install Kibana version <code>6.4.3</code>:</p>
-
-<pre><code class="bash">$ apt install kibana=6.4.3 -y
-</code></pre>
-
-<p>For demonstration, I will configure Kibana to listen on all interfaces on port <code>5601</code>, but note this will enable access for everyone, you can [follow this blogpost] to setup a Nginx Reverse Proxy to upstream to localhost on port 5601.</p>
-
-<p>Since this demonstration we are using Elasticsearch locally, so if you have a remote cluster, configuration can be applied where needed.</p>
-
-<pre><code class="bash">$ sed -i 's/#server.host: "localhost"/server.host: "0.0.0.0"/'g /etc/kibana/kibana.yml
-$ sed -i 's/#elasticsearch.url: "http:\/\/localhost:9200"/elasticsearch.url: "http:\/\/localhost:9200"/'g /etc/kibana/kibana.yml
-</code></pre>
-
-<p>Enable Kibana on startup and start the service:</p>
-
-<pre><code class="bash">$ systemctl enable kibana.service
-$ systemctl restart kibana.service
-</code></pre>
-
-<h2>Install the APM Server</h2>
-
-<p>Install APM Server version <code>6.4.3</code>:</p>
-
-<pre><code class="bash">$ apt install apm-server=6.4.3 -y
-</code></pre>
-
-<p>Since we have everything locally, the configuration can be kept as is, but if you need to configure the elasticsearch or kibana hosts, it can be done via <code>/etc/apm-server/apm-server.yml</code></p>
-
-<p>Then once Kibana and Elasticsearch is started, load the mapping templates, enable and start the service:</p>
-
-<pre><code class="bash">$ apm-server setup
-$ systemctl enable apm-server.service
-$ systemctl restart apm-server.service
-</code></pre>
-
-<p>Ensure all the services are running with <code>netstat -tulpn</code> and port <code>9200</code>, <code>9300</code>, <code>5601</code> and <code>8300</code> should be listening</p>
-
-<h2>Access Your Elastic Stack</h2>
-
-<p>Access Kibana on your routable endpoint on port <code>5601</code> and you should see something like this:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-startup.png" alt="" /></p>
-
-<h2>Configuring a Application to push metrics to APM</h2>
-
-<p>In the <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">next post</a> I will setup a Python Flask Application on APM</p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
 ]]></content>
   </entry>
   

@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In Concourse, Resources refer to external resource types such as s3, github etc. So for example, we can run a pipeline which pulls data from github &hellip;">
+  <meta name="description" content="Today I had the requirement to achieve a task by using parallel processing in order to save time. The task to be achieved For this demonstration, I &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -91,6 +91,211 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/02/19/parallel-processing-with-python-and-multiprocessing-using-queue/">Parallel Processing With Python and Multiprocessing Using Queue</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-02-19T08:05:47-05:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>19</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>8:05 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53020033-c51b9480-345e-11e9-9625-b73062e2464a.png" alt="" /></p>
+
+<p>Today I had the requirement to achieve a task by using parallel processing in order to save time.</p>
+
+<h2>The task to be achieved</h2>
+
+<p>For this demonstration, I have a list of people and each task needs to lookup its pet name and return to stdout. I want to spawn a task for each persons pet name lookup and run the tasks in parallel so that all the results can be returned back at once, instead of sequential.</p>
+
+<p>This is a basic task, but you could have a CPU intensive job, where it will shine better.</p>
+
+<h2>Multiprocesing Queues</h2>
+
+<p>When using multiple processes, one generally uses message passing for communication between processes and avoids having to use any synchronization primitives like locks.</p>
+
+<p>The Queue type is a multi producer, multi consumer FIFO queues modelled on the queue.Queue class in the standard library. You can read more up on it <a href="https://docs.python.org/3.4/library/multiprocessing.html?highlight=process#pipes-and-queues">here</a></p>
+
+<h2>Our Workflow</h2>
+
+<p>Our multiprocessing workflow will look like this:</p>
+
+<ul>
+<li>We will define our data, which will be a dictionary of people and their pet names</li>
+<li>We will define an output queue</li>
+<li>Create a example function that will produce each task to the queue</li>
+<li>Then we will setup a lost of processes that we want to run</li>
+<li>From the list of processes that we defined, we will run each process, then wait and exit the completed processes</li>
+<li>We will then consume from the queue. For each process in our processes list</li>
+</ul>
+
+
+<p>Note that I also added a delay of 2 seconds, so that you can see that the tasks are run in parallel, so the delay will only be 2 seconds.</p>
+
+<p>Our code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">multiprocessing</span> <span class="kn">as</span> <span class="nn">mp</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">string</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">time</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">pet_maps</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&quot;adam&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;max&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;steve&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;sylvester&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;michelle&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;fuzzy&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;frank&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;pete&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;will&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;cat&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;natasha&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;tweety&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;samantha&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;bob&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;peter&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;garfield&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;susan&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;zazu&quot;</span><span class="p">},</span>
+</span><span class='line'>        <span class="s">&quot;josh&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s">&quot;pet_name&quot;</span><span class="p">:</span> <span class="s">&quot;tom&quot;</span><span class="p">},</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">pet_owners</span> <span class="o">=</span> <span class="n">pet_maps</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">output</span> <span class="o">=</span> <span class="n">mp</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">get_pet_name</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">output</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&#39;adding to queue&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="s">&#39;pet name: {}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">output</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">processes</span> <span class="o">=</span> <span class="p">[</span><span class="n">mp</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">get_pet_name</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">pet_maps</span><span class="p">[</span><span class="n">name</span><span class="p">][</span><span class="s">&#39;pet_name&#39;</span><span class="p">],</span> <span class="n">output</span><span class="p">))</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">pet_owners</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">p</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">p</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&#39;consuming from queue:&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">output</span><span class="o">.</span><span class="n">get</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">]</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Running the example:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python3</span> <span class="n">mp</span><span class="o">.</span><span class="n">py</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'><span class="n">adding</span> <span class="n">to</span> <span class="n">queue</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">consuming</span> <span class="kn">from</span> <span class="nn">queue</span><span class="p">:</span>
+</span><span class='line'><span class="p">[</span><span class="s">&#39;pet name: max&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: sylvester&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: fuzzy&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: pete&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: cat&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: tweety&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: garfield&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: bob&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: zazu&#39;</span><span class="p">,</span> <span class="s">&#39;pet name: tom&#39;</span><span class="p">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
+
+<center>
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick" />
+<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
+<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
+</form>
+</center>
+
+
+<p><br></p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1847,399 +2052,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/01/10/setup-a-3-node-docker-swarm-cluster-on-ubuntu-16-dot-04/">Setup a 3 Node Docker Swarm Cluster on Ubuntu 16.04</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-01-10T09:52:07-05:00'><span class='date'><span class='date-month'>Jan</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>9:52 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg" alt="" /></p>
-
-<p>Docker Swarm is a Clustering and Orchestration Framework for the Docker ecosystem. Have a look at their <a href="https://docs.docker.com/engine/swarm/">official documentation</a> for detailed information.</p>
-
-<p>In this Tutorial we will Setup a 3 Node Docker Swarm Cluster and to Demonstrate How Easy it is to Deploy a Web Application with 2 Replicas from a Docker Image.</p>
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-
-<p><br></p>
-
-<h2>Overview of What we will be Doing</h2>
-
-<ul>
-<li>Install Docker on 3 Servers with Ubuntu 16.04</li>
-<li>Initialize the Swarm and Join the Worker Nodes</li>
-<li>Create a Nginx Service with 2 Replicas</li>
-<li>Do some Inspection: View some info on the Service</li>
-</ul>
-
-
-<h2>Prerequisites</h2>
-
-<p>3 Fresh Deployed Ubuntu 16.04 Servers. ( 1GB Memory Servers will be good for development )</p>
-
-<h2>What is Docker</h2>
-
-<p>Docker is a Open Source Technology that allows you to create lightweight, isolated, reproducible application instances which is called Containers. Docker is built on top of the LXC technology, so it uses Linux Containers and as mentioned, it&rsquo;s lightweight compared to a traditional VM.</p>
-
-<p>A Container is isolated and uses the Kernel of the Docker host, it also utilizes Kernel features such as cgroups and namespaces in order to make them isolated.</p>
-
-<h2>Installing Docker Community Edition</h2>
-
-<p>Remove any older versions of Docker that might be present and install the dependencies:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt remove docker docker-engine -y
-</span><span class='line'><span class="nv">$ </span>sudo apt install linux-image-extra-<span class="k">$(</span>uname -r<span class="k">)</span> linux-image-extra-virtual python-setuptools -y
-</span><span class='line'><span class="nv">$ </span>sudo apt install apt-transport-https ca-certificates curl software-properties-common -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Get the needed repository to setup Docker Community Edition:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -fsSL https://download.docker.com/linux/ubuntu/gpg <span class="p">|</span> sudo apt-key add -
-</span><span class='line'><span class="nv">$ </span>sudo apt-key fingerprint 0EBFCD88
-</span><span class='line'><span class="nv">$ </span>sudo add-apt-repository <span class="s2">&quot;deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Update the repository index and Install Docker Community Edition:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt update
-</span><span class='line'><span class="nv">$ </span>sudo apt install docker-ce -y
-</span><span class='line'><span class="nv">$ </span>sudo easy_install pip
-</span><span class='line'><span class="nv">$ </span>sudo pip install docker-compose
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Enable Docker on Startup and Start the Docker Engine:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>docker
-</span><span class='line'><span class="nv">$ </span>sudo systemctl restart docker
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you would like to execute your docker commands without sudo, add your user to the docker group:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo usermod -aG docker <span class="k">$(</span>whoami<span class="k">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Test your Setup by Running a Hello World Container. You will see that if the image is not in the local docker image cache, it will pull the image from docker hub (or the respective docker registry), then once the image is saved locally, docker will then instantiate the container from that image:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run hello-world
-</span><span class='line'>Unable to find image <span class="s1">&#39;hello-world:latest&#39;</span> locally
-</span><span class='line'>latest: Pulling from library/hello-world
-</span><span class='line'>78445dd45222: Pull <span class="nb">complete</span>
-</span><span class='line'>Digest: sha256:c5515758d4c5e1e838e9cd307f6c6a0d620b5e07e6f927b07d05f6d12a1ac8d7
-</span><span class='line'>Status: Downloaded newer image <span class="k">for</span> hello-world:latest
-</span><span class='line'>
-</span><span class='line'>Hello from Docker!
-</span><span class='line'>This message shows that your installation appears to be working correctly.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>DNS Configuration</h2>
-
-<p>If you have a DNS Server you can configure the A Records for these hosts on DNS, but for simplicity, I will add the noted IP Addresses from the previous step into my <code>/etc/hosts</code> file so we can resolve names to IP&rsquo;s</p>
-
-<p>Open up the the hosts file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo vim /etc/hosts
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In my example, my IP Addresses:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>192.0.2.41  manager
-</span><span class='line'>192.0.2.42  worker-1
-</span><span class='line'>192.0.2.43  worker-2
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Repeat the above steps on the other 2 Servers and make note of the IP Addresses of each node. You should be able to ping and reach the nodes that was configured. Make sure to allow all traffic between these nodes.</p>
-
-<h2>Initialize the Swarm:</h2>
-
-<p>Now we will initialize the swarm on the manager node and as we have more than one network interface, we will specify the &ndash;advertise-addr option:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker swarm init --advertise-addr 192.0.2.41
-</span><span class='line'>Swarm initialized: current node <span class="o">(</span>siqyf3yricsvjkzvej00a9b8h<span class="o">)</span> is now a manager.
-</span><span class='line'>
-</span><span class='line'>    To add a worker to this swarm, run the following <span class="nb">command</span>:
-</span><span class='line'>
-</span><span class='line'>    docker swarm join <span class="se">\</span>
-</span><span class='line'>    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 <span class="se">\</span>
-</span><span class='line'>    192.0.2.41:2377
-</span><span class='line'>
-</span><span class='line'>    To add a manager to this swarm, run <span class="s1">&#39;docker swarm join-token manager&#39;</span> and follow the instructions.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>From the response above, we received the join token that allows the workers to register with the manager node. If its a scenario where you want to have more than one manager node, you can run <code>docker swarm join-token manager</code> to receive the join token for additional manager.</p>
-
-<p>Let&rsquo;s add the two worker nodes to the manager:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="o">[</span>worker-1<span class="o">]</span> docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.0.2.41:2377
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="o">[</span>worker-2<span class="o">]</span> docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.0.2.41:2377
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To see the node status, so that we can determine if the nodes are active/available etc, from the manager node, list all the nodes in the swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker node ls
-</span><span class='line'>ID                           HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS
-</span><span class='line'>j14mte3v1jhtbm3pb2qrpgwp6    worker-1  Ready   Active
-</span><span class='line'>siqyf3yricsvjkzvej00a9b8h *  master    Ready   Active        Leader
-</span><span class='line'>srl5yzme5hxnzxal2t1efmwje    worker-2  Ready   Active
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Reobtaining the Join Tokens</h2>
-
-<p>If at any time, you lost your join token, it can be retrieved by running the following for the manager token:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker swarm join-token manager -q SWMTKN-1-67chzvi4epx28ii18gizcia8idfar5hokojz660igeavnrltf0-09ijujbnnh4v960b8xel58pmj
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And the following to retrieve the worker token:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker swarm join-token worker -q SWMTKN-1-67chzvi4epx28ii18gizcia8idfar5hokojz660igeavnrltf0-acs21nn28v17uwhw0oqg5ibwx
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Swarm Services in Docker uses a declarative model which means that you define the desired state of the service, and rely on Docker to maintain this state. More information on this can be found on their <a href="https://docs.docker.com/engine/swarm/how-swarm-mode-works/services/">Documentation</a></p>
-
-<p>At this moment, we will see that we have no services running in our swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker service ls
-</span><span class='line'>ID  NAME  MODE  REPLICAS  IMAGE
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploying our First Service</h2>
-
-<p>Now onto the creation of a standard nginx service with 2 replicas, which means that there will be 2 containers of nginx running in our swarm.</p>
-
-<p>But first, we need to create a overlay network, which is a network driver that creates a distributed network among multiple Docker daemon hosts. Swarm takes care of the routing automatically, which is routed via the port mappings. So you can have that your container sits on worker-2, when you hit your manager node on the published port, it will route the request to the desired application that resides on the respective container.</p>
-
-<p>To create a overlay network called mynet:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker network create --driver overlay mynet
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now onto creating the Service. If any of these containers fail, they will handled by the manager node and will be spawned again to have the desired number that we set on the replica option:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker service create --name my-web --publish 8080:80 --replicas <span class="m">2</span> --network mynet nginx
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s have a look at our nginx service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker service ls
-</span><span class='line'>ID            NAME    MODE        REPLICAS  IMAGE
-</span><span class='line'>1okycpshfusq  my-web  replicated  2/2       nginx:latest
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After we see that the replica count is 2/2 our service is ready.</p>
-
-<p>To see on which nodes our containers are running that makes up our service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker service ps my-web
-</span><span class='line'>ID            NAME      IMAGE         NODE      DESIRED STATE  CURRENT STATE           ERROR  PORTS
-</span><span class='line'>k0qqrh8s0c2d  my-web.1  nginx:latest  worker-1  Running        Running <span class="m">30</span> seconds ago
-</span><span class='line'>nku9wer6tmll  my-web.2  nginx:latest  worker-2  Running        Running <span class="m">30</span> seconds ago
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>From the above output, we can see that worker-1 and worker-2 are serving our containers for our service. We can also retrieve more information of our service by using the inspect option, which will give you a detailed response in json format of the service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker service inspect my-web
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can get the Endpoint Port info by using inspect and using the &ndash;format parameter to filter the output:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>manager<span class="o">]</span> <span class="nv">$ </span>docker service inspect --format<span class="o">=</span><span class="s2">&quot;&quot;</span> my-web  <span class="p">|</span> python -m json.tool
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>From the output we will find the PublishedPort is the Port that we Expose, which will be the listener. Our TargetPort will be the port that is listening on the container:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">[</span>
-</span><span class='line'>    <span class="p">{</span>
-</span><span class='line'>        <span class="nt">&quot;Protocol&quot;</span><span class="p">:</span> <span class="s2">&quot;tcp&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="nt">&quot;PublishMode&quot;</span><span class="p">:</span> <span class="s2">&quot;ingress&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="nt">&quot;PublishedPort&quot;</span><span class="p">:</span> <span class="mi">8080</span><span class="p">,</span>
-</span><span class='line'>        <span class="nt">&quot;TargetPort&quot;</span><span class="p">:</span> <span class="mi">80</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'><span class="p">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we went through the inspection of our service, its time to test our base nginx service.</p>
-
-<h2>Testing Nginx in our Swarm</h2>
-
-<p>Make a request against your docker node manager address on the port that was exposed, in this case 8080:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -I http://docker-node-manager-ip:8080
-</span><span class='line'>
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Server: nginx/1.15.5
-</span><span class='line'>Date: Thu, <span class="m">10</span> Jan <span class="m">2019</span> 14:48:40 GMT
-</span><span class='line'>Content-Type: text/html
-</span><span class='line'>Content-Length: 612
-</span><span class='line'>Last-Modified: Tue, <span class="m">02</span> Oct <span class="m">2018</span> 14:49:27 GMT
-</span><span class='line'>Connection: keep-alive
-</span><span class='line'>ETag: <span class="s2">&quot;5bb38577-264&quot;</span>
-</span><span class='line'>Accept-Ranges: bytes
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we have successfull setup a 3 node docker swarm cluster and deployed a basic nginx service to our swarm. Please have a look at my other <a href="https://blog.ruanbekker.com/blog/categories/docker/">Docker Swarm Tutorials</a> for other content.</p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-</form>
-</center>
-
-
-
-
-<p><p></p>
-
-<p>Thanks for reading!</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -2280,6 +2092,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2019/05/17/prometheus-series-of-tutorials-for-your-guide-to-epic-metrics/">Prometheus Series of Tutorials for Your Guide to Epic Metrics</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Install Blackbox Exporter to Monitor Websites With Prometheus</a>
       </li>
     
@@ -2293,10 +2109,6 @@
     
       <li class="post">
         <a href="/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Install Pushgateway to Expose Metrics to Prometheus</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/05/10/running-a-ha-mysql-galera-cluster-on-docker-swarm/">Running a HA MySQL Galera Cluster on Docker Swarm</a>
       </li>
     
   </ul>

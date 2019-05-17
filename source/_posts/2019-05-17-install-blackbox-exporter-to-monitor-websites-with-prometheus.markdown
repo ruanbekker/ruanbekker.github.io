@@ -6,6 +6,8 @@ comments: true
 categories: ["prometheus", "metrics", "monitoring", "blackbox"] 
 ---
 
+![prometheus](https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png)
+
 Blackbox Exporter by Prometheus allows probing over endpoints such as http, https, icmp, tcp and dns.
 
 ## What will we be doing
@@ -214,6 +216,8 @@ The dashboard should look similar to this:
 
 ## Next up, Alertmanager
 
-In the next tutorial we will setup Alertmanager to alert when our endpoint goes down
+In the [next tutorial](https://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/) we will setup Alertmanager to alert when our endpoint goes down
 
+## Resources
 
+See all [#prometheus](https://blog.ruanbekker.com/blog/categories/prometheus/) blogposts

@@ -5,12 +5,13 @@ date: 2019-05-17 12:49:26 -0400
 comments: true
 categories: ["alertmanager", "prometheus", "notifications", "monitoring", "metrics"] 
 ---
+![prometheus](https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png)
 
 So we are pushing our time series metrics into prometheus, and now we would like to alarm based on certain metric dimensions. That's where alertmanager fits in. We can setup targets and rules, once rules for our targets does not match, we can alarm to destinations suchs as slack, email etc.
 
 ## What we will be doing:
 
-In our previous tutorial we installed blackbox exporter to probe a endpoint. Now we will install Alertmanager and configure an alert to notify us via email and slack when our endpoint goes down. See [this post]() if you have not seen the previous tutorial.
+In our previous tutorial we installed blackbox exporter to probe a endpoint. Now we will install Alertmanager and configure an alert to notify us via email and slack when our endpoint goes down. See [this post](https://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/) if you have not seen the previous tutorial.
 
 ## Install Alertmanager
 
@@ -242,4 +243,6 @@ Add a new dasboard, select import and provide the ID `8010`, select the promethe
 
 ![prometheus-alertmanager](https://user-images.githubusercontent.com/567298/57947092-3f34ab80-78de-11e9-904b-f42d5ecd7d0a.png)
 
+## Resources
 
+See all [#prometheus](https://blog.ruanbekker.com/blog/categories/prometheus/) blogposts

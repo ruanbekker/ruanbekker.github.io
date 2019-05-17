@@ -112,4 +112,4 @@ Have a look at this screencast where the guys from grafana show you how to build
 
 Also have a look at their [public repository of dashboards](https://grafana.com/dashboards)
 
-For more tutorials on prometheus and metrics have a look at **[#metrics](https://blog.ruanbekker.com/blog/categories/prometheus/)**
+For more tutorials on prometheus and metrics have a look at **[#prometheus](https://blog.ruanbekker.com/blog/categories/prometheus/)**

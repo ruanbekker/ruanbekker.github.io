@@ -155,3 +155,7 @@ print(response.status_code)
 ```
 
 With this method, you can push any custom metrics (bash, lambda function, etc) to pushgateway and allow prometheus to consume that data into it's time series database.
+
+## Resources:
+
+See [#prometheus](https://blog.ruanbekker.com/blog/categories/prometheus/) for more posts on Prometheus

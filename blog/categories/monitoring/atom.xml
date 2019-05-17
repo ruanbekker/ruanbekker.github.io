@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Monitoring | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/monitoring/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-10T07:24:46-04:00</updated>
+  <updated>2019-05-17T12:02:45-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,153 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Install Pushgateway to Expose Metrics to Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/"/>
+    <updated>2019-05-17T07:04:03-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="" /></p>
+
+<p>In most cases when we want to scrape a node for metrics, we will install node-exporter on a host and configure prometheus to scrape the configured node to consume metric data. But in certain cases we want to push custom metrics to prometheus. In such cases, we can make use of pushgateway.</p>
+
+<p>Pushgateway allows you to push custom metrics to push gateway&rsquo;s endpoint, then we configure prometheus to scrape push gateway to consume the exposed metrics into prometheus.</p>
+
+<h2>Pre-Requirements</h2>
+
+<p>If you have not set up <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Prometheus</a>, head over to <strong><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">this blogpost</a></strong> to set up prometheus on Linux.</p>
+
+<h2>What we will do?</h2>
+
+<p>In this tutorial, we will setup pushgateway on linux and after pushgateway has been setup, we will push some custom metrics to pushgateway and configure prometheus to scrape metrics from pushgateway.</p>
+
+<h2>Install Pushgateway</h2>
+
+<p>Get the latest version of <a href="https://prometheus.io/download/">pushgateway</a> from prometheus.io, then download and extract:</p>
+
+<pre><code>$ wget https://github.com/prometheus/pushgateway/releases/download/v0.8.0/pushgateway-0.8.0.linux-amd64.tar.gz
+$ tar -xvf pushgateway-0.8.0.linux-amd64.tar.gz
+</code></pre>
+
+<p>Create the <code>pushgateway</code> user:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false pushgateway
+</code></pre>
+
+<p>Move the binary in place and update the permissions to the user that we created:</p>
+
+<pre><code>$ cp pushgateway-0.8.0.linux-amd64/pushgateway /usr/local/bin/pushgateway
+$ chown pushgateway:pushgateway /usr/local/bin/pushgateway
+</code></pre>
+
+<p>Create the systemd unit file:</p>
+
+<pre><code>$ cat &gt; /etc/systemd/system/pushgateway.service &lt;&lt; EOF
+[Unit]
+Description=Pushgateway
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=pushgateway
+Group=pushgateway
+Type=simple
+ExecStart=/usr/local/bin/pushgateway \
+    --web.listen-address=":9091" \
+    --web.telemetry-path="/metrics" \
+    --persistence.file="/tmp/metric.store" \
+    --persistence.interval=5m \
+    --log.level="info" \
+    --log.format="logger:stdout?json=true"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+</code></pre>
+
+<p>Reload systemd and restart the pushgateway service:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl restart pushgateway
+</code></pre>
+
+<p>Ensure that pushgateway has been started:</p>
+
+<pre><code>$ systemctl status pushgateway
+  pushgateway.service - Pushgateway
+   Loaded: loaded (/etc/systemd/system/pushgateway.service; disabled; vendor preset: enabled)
+   Active: active (running) since Tue 2019-05-07 09:05:57 UTC; 2min 33s ago
+ Main PID: 6974 (pushgateway)
+    Tasks: 6 (limit: 4704)
+   CGroup: /system.slice/pushgateway.service
+           └─6974 /usr/local/bin/pushgateway --web.listen-address=:9091 --web.telemetry-path=/metrics --persistence.file=/tmp/metric.store --persistence.interval=5m --log.level=info --log.format=logger:st
+
+May 07 09:05:57 ip-172-31-41-126 systemd[1]: Started Pushgateway.
+</code></pre>
+
+<h2>Configure Prometheus</h2>
+
+<p>Now we want to configure prometheus to scrape pushgateway for metrics, then the scraped metrics will be injected into prometheus&rsquo;s time series database:</p>
+
+<p>At the moment, I have prometheus, node-exporter and pushgateway on the same node so I will provide my complete prometheus configuration, If you are just looking for the pushgateway config, it will be the last line:</p>
+
+<pre><code>$ cat /etc/prometheus/prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node_exporter'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9100']
+
+  - job_name: 'pushgateway'
+    honor_labels: true
+    static_configs:
+      - targets: ['localhost:9091']
+</code></pre>
+
+<p>Restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<h2>Push metrics to pushgateway</h2>
+
+<p>First we will look at a bash example to push metrics to pushgateway:</p>
+
+<pre><code>$ echo "cpu_utilization 20.25" | curl --data-binary @- http://localhost:9091/metrics/job/my_custom_metrics/instance/10.20.0.1:9000/provider/hetzner
+</code></pre>
+
+<p>Have a look at pushgateway&rsquo;s metrics endpoint:</p>
+
+<pre><code>$ curl -L http://localhost:9091/metrics/
+# TYPE cpu_utilization untyped
+cpu_utlization{instance="10.20.0.1:9000",job="my_custom_metrics",provider="hetzner"} 20.25
+</code></pre>
+
+<p>Let&rsquo;s look at a python example on how we can push metrics to pushgateway:</p>
+
+<pre><code class="python">import requests
+
+job_name='my_custom_metrics'
+instance_name='10.20.0.1:9000'
+provider='hetzner'
+payload_key='cpu_utilization'
+payload_value='21.90'
+
+response = requests.post('http://localhost:9091/metrics/job/{j}/instance/{i}/team/{t}'.format(j=job_name, i=instance_name, t=team_name), data='{k} {v}\n'.format(k=payload_key, v=payload_value))
+print(response.status_code)
+</code></pre>
+
+<p>With this method, you can push any custom metrics (bash, lambda function, etc) to pushgateway and allow prometheus to consume that data into it&rsquo;s time series database.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Prometheus and Node Exporter on Ubuntu for Epic Monitoring]]></title>
@@ -633,160 +780,6 @@ $ systemctl restart apache2
 <h2>Up Next</h2>
 
 <p>Next, <a href="https://blog.ruanbekker.com/blog/2019/03/18/monitor-your-first-host-and-services-with-nagios/">Monitor your first Server with Nagios</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Setup a Nagios Monitoring Server]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/03/13/how-to-setup-a-nagios-monitoring-server/"/>
-    <updated>2019-03-13T17:53:42-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/03/13/how-to-setup-a-nagios-monitoring-server</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/54547916-65f26680-49af-11e9-8d42-e27c57ef8e2e.png" alt="" /></p>
-
-<p>Good old nagios! Nagios is a great Open Source Monitoring Server that monitors your servers and services/applications that is hosted on top of them, and has the ability to notify in the event when they go down.</p>
-
-<p>I&rsquo;ve been using Nagios for the last 7 years and worked for 3 business that chose Nagios as their preferred server monitoring solution.</p>
-
-<p>All <a href="https://blog.ruanbekker.com/blog/categories/nagios/">Nagios</a> related posts are grouped under the <a href="https://blog.ruanbekker.com/blog/categories/nagios/">#nagios</a> category.</p>
-
-<h2>What we are doing today</h2>
-
-<p>Today we will setup a Nagios server and its plugins. The plugins helps to check different endpoints, such as custom tcp checks, ssh, snmp etc.</p>
-
-<p>In this nagios tutorial series, I will publish a couple of post which will include:</p>
-
-<ul>
-<li>Setup the Nagios Server and its Plugins - this post</li>
-<li>Setup the NRPE Server and NRPE Client Server (this is nice for local ports or custom checks)</li>
-<li>Setup Nagiosgraph (Graph performance data and add it as extra host configuration)</li>
-<li>Setup a custom Bash and Python Nagios Plugin for Custom Checks</li>
-<li>Setup a Telegram / Slack Plugin</li>
-</ul>
-
-
-<h2>Installing Dependencies:</h2>
-
-<p>Go ahead and install all the dependencies needed by nagios and add the nagios user and group:</p>
-
-<pre><code class="bash">$ apt update
-$ apt install build-essential libgd-dev openssl libssl-dev unzip apache2 -y
-$ apt install autoconf gcc libc6 make wget unzip apache2 php libapache2-mod-php7.2 libgd-dev
-$ apt install libmcrypt-dev libssl-dev bc gawk dc build-essential libnet-snmp-perl gettext
-$ apt install libcarp-clan-perl rrdtool php-rrd libssl1.0-dev
-$ useradd nagios
-$ groupadd nagcmd
-$ usermod -a -G nagcmd nagios
-</code></pre>
-
-<h2>Install Nagios</h2>
-
-<p>Download the nagios tarball from their website, have a look at <a href="https://www.nagios.org/downloads/">https://www.nagios.org/downloads/</a> for the latest version.</p>
-
-<pre><code class="bash">$ wget -O nagios.tar.gz 'https://assets.nagios.com/downloads/nagioscore/releases/nagios-4.4.3.tar.gz?__hstc=118811158.7bdae752f04b6d927ddf150ae1ce5c71.1552389135285.1552394646569.1552410974898.3&amp;__hssc=118811158.1.1552410974898&amp;__hsfp=2323916385#_ga=2.246938692.1332751653.1552389134-913645931.1552389134'
-</code></pre>
-
-<p>Extract the archive:</p>
-
-<pre><code>$ tar xpf nagios*.tar.gz
-$ cd nagios-4.4.3/
-</code></pre>
-
-<p>Configure with nagios user and nagcmd group, install and change the ownership of the generated data:</p>
-
-<pre><code>$ ./configure --with-nagios-group=nagios --with-command-group=nagcmd
-$ make -j4 all
-$ make install
-$ make install-commandmode
-$ make install-init
-$ make install-config
-$ /usr/bin/install -c -m 644 sample-config/httpd.conf /etc/apache2/sites-available/nagios.conf
-$ usermod -a -G nagcmd www-data
-</code></pre>
-
-<h2>Install Nagios Plugins</h2>
-
-<p>Get the nagios plugins tarball, extract and install:</p>
-
-<pre><code>$ wget nagios-plugins.tar.gz 'https://nagios-plugins.org/download/nagios-plugins-2.2.1.tar.gz#_ga=2.250909126.1332751653.1552389134-913645931.1552389134'
-$ tar xpf nagios-plugins*.tar.gz
-$ cd nagios-plugins-2.2.1
-$ ./configure --with-nagios-user=nagios --with-nagios-group=nagcmd --with-openssl
-$ make -j4
-$ make install
-</code></pre>
-
-<h2>Access Nagios</h2>
-
-<p>Enable apache modules:</p>
-
-<pre><code>$ a2enmod rewrite
-$ a2enmod cgi
-</code></pre>
-
-<p>Setup basic auth for logging onto nagios:</p>
-
-<pre><code>$ htpasswd -c /usr/local/nagios/etc/htpasswd.users nagiosadmin
-</code></pre>
-
-<p>Setup a symlink for apache&rsquo;s nagios configuration</p>
-
-<p>The configuration for the above will look more or less like the following:</p>
-
-<pre><code>$ cat /etc/apache2/sites-enabled/nagios.conf
-
-...
-         Require all granted
-         AuthName "Nagios Access"
-         AuthType Basic
-         AuthUserFile /usr/local/nagios/etc/htpasswd.users
-         Require valid-user
-...
-</code></pre>
-
-<p>Create the systemd unit file for nagios <code>/etc/systemd/system/nagios.service</code></p>
-
-<pre><code>[Unit]
-Description=Nagios
-BindTo=network.target
-
-[Install]
-WantedBy=multi-user.target
-
-[Service]
-Type=simple
-User=nagios
-Group=nagcmd
-ExecStart=/usr/local/nagios/bin/nagios /usr/local/nagios/etc/nagios.cfg
-</code></pre>
-
-<p>Reload the daemon:</p>
-
-<pre><code>$ systemctl daemon-reload
-</code></pre>
-
-<p>Enable the service:</p>
-
-<pre><code>$ systemctl enable /etc/systemd/system/nagios.service
-</code></pre>
-
-<p>Ensure nagios is started:</p>
-
-<pre><code class="bash">$ systemctl restart nagios
-$ systemctl restart apache2
-</code></pre>
-
-<p>Access nagios on <a href="http://nagios-ip/nagios">http://nagios-ip/nagios</a> with the credentials that you configured earlier.</p>
-
-<h2>Up Next</h2>
-
-<p>In the next posts I will cover the following:</p>
-
-<ol>
-<li><a href="https://blog.ruanbekker.com/blog/2019/03/18/how-to-setup-the-nagiosgraph-plugin-on-nagios-monitoring-server/">Setup NagiosGraph for monitoring performance data</a></li>
-<li>Show you how to create a custom nagios plugin in python</li>
-<li>Create a Custom Notification service to send notifications to Telegram (or any API)</li>
-</ol>
-
 ]]></content>
   </entry>
   

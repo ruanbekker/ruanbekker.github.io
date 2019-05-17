@@ -110,4 +110,6 @@ Have a look at this screencast where the guys from grafana show you how to build
 
 <iframe width="560" height="315" src="https://www.youtube.com/embed/sKNZMtoSHN4" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
+Also have a look at their [public repository of dashboards](https://grafana.com/dashboards)
+
 For more tutorials on prometheus and metrics have a look at **[#metrics](https://blog.ruanbekker.com/blog/categories/prometheus/)**

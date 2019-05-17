@@ -12,6 +12,10 @@ Grafana is a Open Source Dashboarding service that allows you to monitor, analyz
 
 Not only is grafana amazing, its super pretty!
 
+Example of how a dashboard might look like:
+
+<img width="1279" alt="E24B39B1-23C8-44C5-959D-6E6275F8FE99" src="https://user-images.githubusercontent.com/567298/57942872-d98ef200-78d2-11e9-9370-b130bcc222f7.png">
+
 ## What are we doing today
 
 In this tutorial we will setup grafana on linux. If you have not set up [prometheus](https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/), follow [this blogpost](https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/) to install prometheus.

@@ -46,12 +46,22 @@ We need to use `growpart` and `resize2fs` to resize our partition:
 ```bash
 $ sudo growpart /dev/xvda 1
 CHANGED: disk=/dev/xvda partition=1: start=4096 old: size=209711070,end=209715166 new: size=2097147870,end=2097151966
+```
 
+```bash
 $ sudo resize2fs /dev/xvda1
 resize2fs 1.42.12 (29-Aug-2014)
 Filesystem at /dev/xvda1 is mounted on /; on-line resizing required
 old_desc_blocks = 7, new_desc_blocks = 63
 The filesystem on /dev/xvda1 is now 262143483 (4k) blocks long.
+```
+
+**Note:** If you are using XFS as your filesystem type, you will need to use `xfs_growfs` instead of `resize2fs`. (Thanks Donovan). 
+
+Example using XFS shown below:
+
+```bash
+$ sudo xfs_growfs /dev/xvda1
 ```
 
 Now we will have a resized partition to 100GB:

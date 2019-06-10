@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="If you installed your Ghost Blog with the Ghost-CLI, you can easily upgrade your Ghost version using the CLI. Backups Backup your blog by exporting &hellip;">
+  <meta name="description" content="As you may know a DynamoDB Table&rsquo;s Partition Splits on 2 factors, Read/Write Capacity Units and when Storage goes over 10GB. Automatically &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -91,6 +91,370 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/11/22/delete-old-items-with-amazons-dynamodb-ttl-feature/">Delete Old Items With Amazons DynamoDB TTL Feature</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-11-22T17:47:31-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>22</span><span class='date-suffix'>nd</span>, <span class='date-year'>2017</span></span> <span class='time'>5:47 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53352723-ffd46f80-392b-11e9-98e6-7795c1f145da.jpg" alt="" /></p>
+
+<p>As you may know a DynamoDB Table&rsquo;s Partition Splits on 2 factors, Read/Write Capacity Units and when Storage goes over 10GB.</p>
+
+<h2>Automatically Deleting Old Data in DynamoDB:</h2>
+
+<p>With the TTL Feature in DynamoDB, we can enable TTL on a Attribute on our Table, the attributes value needs to have an epoc time value, more specifically, when the current time is the same as the value of on of the items attribute value, that item will be expired, which will be deleted.</p>
+
+<h2>What we will be doing:</h2>
+
+<ul>
+<li>Use Boto3 in Python</li>
+<li>Create DynamoDB Table: &lsquo;session-table&rsquo;</li>
+<li>Set TTL Attribute on &lsquo;ExpirationTime&rsquo;, so whenever the epoch time is equals to the AttributeValue it will delete the item</li>
+<li>Do one PUT Item with 48 Hours expiry Date from the Write</li>
+<li>Do 240 PUT Items with 24 Hours expiry Date from the Write</li>
+<li>Verify after 24 hours if only one item is in our table.</li>
+</ul>
+
+
+<h2>Pre-Requisites:</h2>
+
+<p>Install the AWS CLI, Boto3 and configure your credentials, so that boto3 can read from your credential provider:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install awscli
+</span><span class='line'><span class="nv">$ </span>pip install boto3
+</span><span class='line'><span class="nv">$ </span>aws configure
+</span><span class='line'>AWS Access Key ID <span class="o">[</span>****************XYZ<span class="o">]</span>:
+</span><span class='line'>AWS Secret Access Key <span class="o">[</span>****************xyz<span class="o">]</span>:
+</span><span class='line'>Default region name <span class="o">[</span>eu-west-1<span class="o">]</span>:
+</span><span class='line'>Default output format <span class="o">[</span>json<span class="o">]</span>:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Table:</h2>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python</span>
+</span><span class='line'>
+</span><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">,</span> <span class="n">profile_name</span><span class="o">=</span><span class="s">&#39;default&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">dynamodb</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">table</span> <span class="o">=</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">create_table</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">TableName</span><span class="o">=</span><span class="s">&#39;session-table&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">KeySchema</span><span class="o">=</span><span class="p">[</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;AttributeName&#39;</span><span class="p">:</span> <span class="s">&#39;sessionid&#39;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&#39;KeyType&#39;</span><span class="p">:</span> <span class="s">&#39;HASH&#39;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">],</span>
+</span><span class='line'>    <span class="n">AttributeDefinitions</span><span class="o">=</span><span class="p">[</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;AttributeName&#39;</span><span class="p">:</span> <span class="s">&#39;sessionid&#39;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&#39;AttributeType&#39;</span><span class="p">:</span> <span class="s">&#39;S&#39;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">],</span>
+</span><span class='line'>    <span class="n">ProvisionedThroughput</span><span class="o">=</span><span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;ReadCapacityUnits&#39;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&#39;WriteCapacityUnits&#39;</span><span class="p">:</span> <span class="mi">2</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>From the Console, enable TTL and set the TTL Attribute on <code>ExpirationTime</code></p>
+
+<h2>Write Data to DynamoDB</h2>
+
+<p>We have 2 functions that will write the current epoch time to the <code>CreationTime</code> attribute and <code>ExpirationTime</code> will have the current time plus the 24 hours in seconds, which will be used for the 240 items that will be written using the for loop and the other function with the 48 hours of seconds, which will be a single write item.</p>
+
+<p>Then we will just write random data to the session data attribute:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">time</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">uuid</span> <span class="kn">import</span> <span class="n">uuid4</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;john&#39;</span><span class="p">,</span> <span class="s">&#39;steve&#39;</span><span class="p">,</span> <span class="s">&#39;peter&#39;</span><span class="p">,</span> <span class="s">&#39;frank&#39;</span><span class="p">,</span> <span class="s">&#39;steven&#39;</span><span class="p">,</span> <span class="s">&#39;jonathan&#39;</span><span class="p">,</span> <span class="s">&#39;stephen&#39;</span><span class="p">,</span> <span class="s">&#39;will&#39;</span><span class="p">,</span> <span class="s">&#39;adam&#39;</span><span class="p">,</span> <span class="s">&#39;william&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">retailer</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;shoprite&#39;</span><span class="p">,</span> <span class="s">&#39;edgars&#39;</span><span class="p">,</span> <span class="s">&#39;pnp&#39;</span><span class="p">,</span> <span class="s">&#39;bestbuy&#39;</span><span class="p">,</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="s">&#39;grocer-a&#39;</span><span class="p">,</span> <span class="s">&#39;amazon&#39;</span><span class="p">,</span> <span class="s">&#39;seveneleven&#39;</span><span class="p">,</span> <span class="s">&#39;shop-a&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">session</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">,</span> <span class="n">profile_name</span><span class="o">=</span><span class="s">&#39;dev&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">ddb</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">ddb</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="s">&#39;session-table&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">current_time</span><span class="p">():</span>
+</span><span class='line'>    <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">current_time</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">expiration_time</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span> <span class="o">+</span> <span class="mi">86400</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="err">48</span><span class="nf">h_expiration_time</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span> <span class="o">+</span> <span class="mi">172800</span>
+</span><span class='line'>
+</span><span class='line'><span class="c"># expiry on 48 hours</span>
+</span><span class='line'><span class="n">client</span><span class="o">.</span><span class="n">put_item</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Item</span><span class="o">=</span><span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;sessionid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid4</span><span class="p">()),</span>
+</span><span class='line'>        <span class="s">&#39;CreationTime&#39;</span><span class="p">:</span> <span class="n">current_time</span><span class="p">(),</span>
+</span><span class='line'>        <span class="s">&#39;ExpirationTime&#39;</span><span class="p">:</span> <span class="mi">48</span><span class="n">h_expiration_time</span><span class="p">(),</span>
+</span><span class='line'>        <span class="s">&#39;SessionData&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;Name&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span>
+</span><span class='line'>            <span class="s">&#39;Retailer&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">retailer</span><span class="p">),</span>
+</span><span class='line'>            <span class="s">&#39;TimeOfTransaction&#39;</span><span class="p">:</span> <span class="n">current_time</span><span class="p">(),</span>
+</span><span class='line'>            <span class="s">&#39;Amount&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span><span class="mi">9000</span><span class="p">)</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="c"># expiry on 24 hours</span>
+</span><span class='line'><span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="mi">240</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">client</span><span class="o">.</span><span class="n">put_item</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">Item</span><span class="o">=</span><span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;sessionid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid4</span><span class="p">()),</span>
+</span><span class='line'>            <span class="s">&#39;CreationTime&#39;</span><span class="p">:</span> <span class="n">current_time</span><span class="p">(),</span>
+</span><span class='line'>            <span class="s">&#39;ExpirationTime&#39;</span><span class="p">:</span> <span class="n">expiration_time</span><span class="p">(),</span>
+</span><span class='line'>            <span class="s">&#39;SessionData&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>                <span class="s">&#39;Name&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span>
+</span><span class='line'>                <span class="s">&#39;Retailer&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">retailer</span><span class="p">),</span>
+</span><span class='line'>                <span class="s">&#39;TimeOfTransaction&#39;</span><span class="p">:</span> <span class="n">current_time</span><span class="p">(),</span>
+</span><span class='line'>                <span class="s">&#39;Amount&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span><span class="mi">9000</span><span class="p">)</span>
+</span><span class='line'>            <span class="p">}</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Verify:</h2>
+
+<p>Verify after 24 hours if the item with the 48 hour expiration time is still in our table:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">client</span><span class="o">.</span><span class="n">get_item</span><span class="p">(</span> <span class="n">Key</span><span class="o">=</span><span class="p">{</span><span class="s">&#39;sessionid&#39;</span><span class="p">:</span> <span class="s">&#39;69c2a472-f70e-4d72-b25f-e27573696b0c&#39;</span><span class="p">}</span> <span class="p">)[</span><span class="s">&#39;Item&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>    <span class="s">u&#39;ExpirationTime&#39;</span><span class="p">:</span> <span class="n">Decimal</span><span class="p">(</span><span class="s">&#39;1510672221&#39;</span><span class="p">),</span>
+</span><span class='line'>    <span class="s">u&#39;CreationTime&#39;</span><span class="p">:</span> <span class="n">Decimal</span><span class="p">(</span><span class="s">&#39;1510585821&#39;</span><span class="p">),</span>
+</span><span class='line'>    <span class="s">u&#39;sessionid&#39;</span><span class="p">:</span> <span class="s">u&#39;69c2a472-f70e-4d72-b25f-e27573696b0c&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">u&#39;SessionData&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">u&#39;Amount&#39;</span><span class="p">:</span> <span class="n">Decimal</span><span class="p">(</span><span class="s">&#39;3553&#39;</span><span class="p">),</span>
+</span><span class='line'>        <span class="s">u&#39;Retailer&#39;</span><span class="p">:</span> <span class="s">u&#39;amazon&#39;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">u&#39;TimeOfTransaction&#39;</span><span class="p">:</span> <span class="n">Decimal</span><span class="p">(</span><span class="s">&#39;1510585821&#39;</span><span class="p">),</span>
+</span><span class='line'>        <span class="s">u&#39;Name&#39;</span><span class="p">:</span> <span class="s">u&#39;steve&#39;</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Which we can see is still there, when doing a GET item on one of our 24 hour expired items, we can see that its no longer there:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">client</span><span class="o">.</span><span class="n">get_item</span><span class="p">(</span> <span class="n">Key</span><span class="o">=</span><span class="p">{</span><span class="s">&#39;sessionid&#39;</span><span class="p">:</span> <span class="s">&#39;70b9fc8c-19c4-49d3-bf63-046e992335af&#39;</span><span class="p">}</span> <span class="p">)[</span><span class="s">&#39;Item&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">Traceback</span> <span class="p">(</span><span class="n">most</span> <span class="n">recent</span> <span class="n">call</span> <span class="n">last</span><span class="p">):</span>
+</span><span class='line'>  <span class="n">File</span> <span class="s">&quot;&lt;stdin&gt;&quot;</span><span class="p">,</span> <span class="n">line</span> <span class="mi">1</span><span class="p">,</span> <span class="ow">in</span> <span class="o">&lt;</span><span class="n">module</span><span class="o">&gt;</span>
+</span><span class='line'><span class="ne">KeyError</span><span class="p">:</span> <span class="s">&#39;Item&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Doing a SCAN operation, we should see one item:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="n">r</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">TableName</span><span class="o">=</span><span class="s">&#39;session-table&#39;</span><span class="p">,</span> <span class="n">Limit</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">Select</span><span class="o">=</span><span class="s">&#39;COUNT&#39;</span><span class="p">,</span> <span class="n">ReturnConsumedCapacity</span><span class="o">=</span><span class="s">&#39;TOTAL&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+</span><span class='line'><span class="p">{</span>
+</span><span class='line'>    <span class="s">&quot;Count&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&quot;ScannedCount&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&quot;ConsumedCapacity&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&quot;CapacityUnits&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&quot;TableName&quot;</span><span class="p">:</span> <span class="s">&quot;session-table&quot;</span>
+</span><span class='line'>    <span class="p">},</span>
+</span><span class='line'>    <span class="s">&quot;ResponseMetadata&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&quot;RetryAttempts&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&quot;HTTPStatusCode&quot;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&quot;RequestId&quot;</span><span class="p">:</span> <span class="s">&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&quot;HTTPHeaders&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>            <span class="s">&quot;x-amzn-requestid&quot;</span><span class="p">:</span> <span class="s">&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;content-length&quot;</span><span class="p">:</span> <span class="s">&quot;107&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;server&quot;</span><span class="p">:</span> <span class="s">&quot;Server&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;connection&quot;</span><span class="p">:</span> <span class="s">&quot;keep-alive&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;x-amz-crc32&quot;</span><span class="p">:</span> <span class="s">&quot;2228370918&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;date&quot;</span><span class="p">:</span> <span class="s">&quot;Tue, 14 Nov 2017 12:02:31 GMT&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;content-type&quot;</span><span class="p">:</span> <span class="s">&quot;application/x-amz-json-1.0&quot;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So we can confirm that the TTL feature expires the data based on the epoch value we provide our item.</p>
+
+<h2>Delete the Table:</h2>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">client</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">TableName</span><span class="o">=</span><span class="s">&#39;session-table&#39;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/">https://sysadmins.co.za/interfacing-amazon-dynamodb-with-python-using-boto3/</a></li>
+<li><a href="http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html">http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2028,123 +2392,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/10/26/using-python-to-query-mysql-database-with-mysqldb-library/">Using Python to Query MySQL Database With MySQLdb Library</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-10-26T03:40:11-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>26</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>3:40 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>a Quick post to demostrate how to use Python to Query data from MySQL. We will use the MySQL Docker Image for the demonstration.</p>
-
-<h2>Provision MySQL</h2>
-
-<p>We will use the latest mysql image, and use the environment variable to pass the root password, and also expose the mysql port:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -itd -p 3306:3306 -e <span class="nv">MYSQL_ROOT_PASSWORD</span><span class="o">=</span>password mysql
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Populate some data in MySQL</h2>
-
-<p>Connect to MySQL:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mysql -h 127.0.0.1 -u root -ppasword
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create some test data:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">database</span> <span class="n">foo</span><span class="p">;</span>
-</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="n">use</span> <span class="n">foo</span><span class="p">;</span>
-</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">create</span> <span class="k">table</span> <span class="n">bar</span> <span class="p">(</span><span class="n">name</span> <span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">20</span><span class="p">),</span> <span class="n">surname</span> <span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">20</span><span class="p">));</span>
-</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">bar</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;ruan&#39;</span><span class="p">,</span> <span class="s1">&#39;bekker&#39;</span><span class="p">);</span>
-</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">bar</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;stefan&#39;</span><span class="p">,</span> <span class="s1">&#39;bester&#39;</span><span class="p">);</span>
-</span><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">insert</span> <span class="k">into</span> <span class="n">bar</span> <span class="k">values</span><span class="p">(</span><span class="s1">&#39;peter&#39;</span><span class="p">,</span> <span class="s1">&#39;williams&#39;</span><span class="p">);</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Python with MySQL: Setup the Environment</h2>
-
-<p>We will use virtualenv to create a virtual environment to keep our installation isolated from the rest of our system. Install virtualenv:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install virtualenv
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create a virtual environment and install the required dependency:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>virtualenv venv-mysql
-</span><span class='line'><span class="nv">$ </span><span class="nb">source </span>venv-mysql/bin/activate
-</span><span class='line'><span class="o">(</span>venv-mysql<span class="o">)</span> pip install MySQL-python
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Python with MySQL: Develop the Client</h2>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">MySQLdb</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">db</span> <span class="o">=</span> <span class="n">MySQLdb</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;127.0.0.1&#39;</span><span class="p">,</span> <span class="s">&#39;root&#39;</span><span class="p">,</span> <span class="s">&#39;password&#39;</span><span class="p">,</span> <span class="s">&#39;foo&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&quot;SELECT * from bar&quot;</span><span class="p">)</span>
-</span><span class='line'><span class="il">4L</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">rows</span> <span class="o">=</span> <span class="n">con</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
-</span><span class='line'><span class="o">...</span>     <span class="k">print</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">row</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
-</span><span class='line'><span class="o">...</span>
-</span><span class='line'><span class="p">(</span><span class="s">&#39;ruan&#39;</span><span class="p">,</span> <span class="s">&#39;bekker&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="p">(</span><span class="s">&#39;stefan&#39;</span><span class="p">,</span> <span class="s">&#39;bester&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="p">(</span><span class="s">&#39;peter&#39;</span><span class="p">,</span> <span class="s">&#39;williams&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="nb">exit</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/20">&larr; Older</a>
@@ -2185,6 +2432,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2019/06/10/setup-traefik-as-an-ingress-controller-on-kubernetes/">Setup Traefik as an Ingress Controller on Kubernetes</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2019/06/10/testing-out-scaleways-kapsule-their-kubernetes-as-a-service-offering/">Testing Out Scaleways Kapsule Their Kubernetes as a Service Offering</a>
       </li>
     
@@ -2198,10 +2449,6 @@
     
       <li class="post">
         <a href="/blog/2019/05/17/prometheus-series-of-tutorials-for-your-guide-to-epic-metrics/">Prometheus Series of Tutorials for Your Guide to Epic Metrics</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Install Blackbox Exporter to Monitor Websites With Prometheus</a>
       </li>
     
   </ul>

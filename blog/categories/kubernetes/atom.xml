@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Kubernetes | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/kubernetes/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-06-10T12:40:57-04:00</updated>
+  <updated>2019-06-10T16:42:27-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,234 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup Traefik as an Ingress Controller on Kubernetes]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/06/10/setup-traefik-as-an-ingress-controller-on-kubernetes/"/>
+    <updated>2019-06-10T16:21:36-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/06/10/setup-traefik-as-an-ingress-controller-on-kubernetes</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/59225379-db498e00-8bd0-11e9-9f20-62aecf915431.png" alt="image" /></p>
+
+<p>If you have not provisioned a Kubernetes Cluster, you can <a href="https://blog.ruanbekker.com/blog/2019/06/10/testing-out-scaleways-kapsule-their-kubernetes-as-a-service-offering/">see this tutorial</a> on how to provision a Kubernetes Cluster on Scaleway</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will setup Traefik as an Ingress Controller on Kubernetes and deploy a logos web app to our Kubernetes Cluster, using frontend rules to map subdomains to specific services.</p>
+
+<p>We will have 3 subdomains, being mapped to containers from the below docker images:</p>
+
+<pre><code>FQDN                     Image Name
+- python.domain.com   -&gt; ruanbekker/logos:python
+- openfaas.domain.com -&gt; ruanbekker/logos:openfaas
+- rancher.domain.com  -&gt; ruanbekker/logos:rancher
+</code></pre>
+
+<h2>Get the sources</h2>
+
+<p>If you would like to get the source code for this demonstration you can checkout this repository: <a href="https://github.com/ruanbekker/traefik-kubernetes-scaleway-demo">https://github.com/ruanbekker/traefik-kubernetes-scaleway-demo</a></p>
+
+<pre><code>$ git clone https://github.com/ruanbekker/traefik-kubernetes-scaleway-demo
+$ cd traefik-kubernetes-scaleway-demo
+</code></pre>
+
+<h2>Provision Traefik as an Ingress Controller</h2>
+
+<p>Apply role based access control to authorize Traefik to use the Kubernetes API:</p>
+
+<pre><code>$ kubectl apply -f traefik/01-traefik-rbac.yaml
+clusterrole.rbac.authorization.k8s.io/traefik-ingress-controller created
+clusterrolebinding.rbac.authorization.k8s.io/traefik-ingress-controller created
+</code></pre>
+
+<p>We will apply a Deployment and a Daemonset <a href="https://docs.traefik.io/user-guide/kubernetes/#deploy-traefik-using-a-deployment-or-daemonset">more details on why</a></p>
+
+<p>Apply the deployment:</p>
+
+<pre><code>$ kubectl apply -f traefik/02-traefik-deployment.yaml
+serviceaccount/traefik-ingress-controller created
+deployment.extensions/traefik-ingress-controller created
+service/traefik-ingress-service created
+</code></pre>
+
+<p>Apply Daemon Set:</p>
+
+<pre><code>$ kubectl apply -f traefik/03-traefik-ds.yaml
+serviceaccount/traefik-ingress-controller unchanged
+daemonset.extensions/traefik-ingress-controller created
+The Service "traefik-ingress-service" is invalid:
+* spec.ports[0].nodePort: Forbidden: may not be used when `type` is 'ClusterIP'
+* spec.ports[1].nodePort: Forbidden: may not be used when `type` is 'ClusterIP'
+</code></pre>
+
+<p>I ran into the issue above, the way I resolved it was:</p>
+
+<pre><code>$ kubectl replace -f traefik/03-traefik-ds.yaml
+$ kubectl delete -f traefik/03-traefik-ds.yaml
+$ kubectl apply -f traefik/03-traefik-ds.yaml
+serviceaccount/traefik-ingress-controller created
+daemonset.extensions/traefik-ingress-controller created
+service/traefik-ingress-service created
+</code></pre>
+
+<p>The Traefik UI Service will be associated with a FQDN, remember to set the FQDN for the endpoint, as example:</p>
+
+<pre><code>$ cat traefik/04-traefik-ui.yaml
+...
+spec:
+  rules:
+  - host: traefik-ui.x-x-x-x-x.nodes.k8s.fr-par.scw.cloud
+    http:
+      paths:
+      - path: /
+...
+</code></pre>
+
+<p>Create the Traefik UI Service:</p>
+
+<pre><code>$ kubectl apply -f traefik/04-traefik-ui.yaml
+service/traefik-web-ui created
+</code></pre>
+
+<p>Traefik UI Ingress:</p>
+
+<pre><code>$ kubectl apply -f traefik/05-traefik-ui-ingress.yaml
+ingress.extensions/traefik-web-ui created
+</code></pre>
+
+<p>View the services:</p>
+
+<pre><code>$ kubectl get services --namespace=kube-system
+NAME                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                  AGE
+coredns                   ClusterIP   x.x.x.x         &lt;none&gt;        53/UDP,53/TCP,9153/TCP   11h
+heapster                  ClusterIP   x.x.x.x         &lt;none&gt;        80/TCP                   11h
+kubernetes-dashboard      ClusterIP   x.x.x.x         &lt;none&gt;        443/TCP                  11h
+metrics-server            ClusterIP   x.x.x.x         &lt;none&gt;        443/TCP                  11h
+monitoring-influxdb       ClusterIP   x.x.x.x         &lt;none&gt;        8086/TCP                 11h
+traefik-ingress-service   ClusterIP   x.x.x.x         &lt;none&gt;        80/TCP,8080/TCP          24m
+traefik-web-ui            ClusterIP   x.x.x.x         &lt;none&gt;        80/TCP                   24m
+</code></pre>
+
+<h2>Deploy the Logo App to the Cluster</h2>
+
+<p>We will deploy the logo app to our cluster:</p>
+
+<pre><code>$ kubectl apply -f logos-app/logos-services.yaml
+service/openfaas created
+service/rancher created
+service/python created
+</code></pre>
+
+<p>Create the deployment:</p>
+
+<pre><code>$ kubectl apply -f logos-app/logos-deployments.yaml
+deployment.extensions/openfaas created
+deployment.extensions/rancher created
+deployment.extensions/python created
+</code></pre>
+
+<p>Before creating the ingress for the logo&rsquo;s applications, we need to set the fqdn endpoints that we want to route traffic to as below as an example:</p>
+
+<pre><code>$ cat logos-app/logos-ingress.yaml
+...
+spec:
+  rules:
+  - host: openfaas.x-x-x-x-x.nodes.k8s.fr-par.scw.cloud
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: openfaas
+          servicePort: http
+...
+</code></pre>
+
+<p>Create the ingress:</p>
+
+<pre><code>$ kubectl apply -f logos-app/logos-ingress.yaml
+ingress.extensions/logo created
+</code></pre>
+
+<p>After some time, have a look at the pods to get the status:</p>
+
+<pre><code>$ kubectl get pods
+NAME                                     READY   STATUS    RESTARTS   AGE
+openfaas-cffdddc4-lvn5w                  1/1     Running   0          4m6s
+openfaas-cffdddc4-wbcl6                  1/1     Running   0          4m6s
+python-65ccf9c74b-8kmgp                  1/1     Running   0          4m6s
+python-65ccf9c74b-dgnqb                  1/1     Running   0          4m6s
+rancher-597b6b8554-mgcjr                 1/1     Running   0          4m6s
+rancher-597b6b8554-mpk62                 1/1     Running   0          4m6s
+</code></pre>
+
+<h2>Navigating with Kubectl</h2>
+
+<p>Show nodes:</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                             STATUS   ROLES    AGE   VERSION
+scw-k8s-mystifying-torvald-jovial-mclar-25a942   Ready    node     20h   v1.14.1
+scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2   Ready    node     20h   v1.14.1
+scw-k8s-mystifying-torvalds-default-7f263aabab   Ready    master   20h   v1.14.1
+</code></pre>
+
+<p>Show services:</p>
+
+<pre><code>$ kubectl get services
+NAME                    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)           AGE
+kubernetes              ClusterIP   10.32.0.1      &lt;none&gt;        443/TCP           20h
+openfaas                ClusterIP   10.41.47.185   &lt;none&gt;        80/TCP            9h
+python                  ClusterIP   10.42.56.141   &lt;none&gt;        80/TCP            9h
+rancher                 ClusterIP   10.32.41.218   &lt;none&gt;        80/TCP            9h
+</code></pre>
+
+<p>Show Pods:</p>
+
+<p><em>To see pods from the kube-system namespace add -n kube-system</em></p>
+
+<pre><code>$ kubectl get pods
+NAME                                     READY   STATUS    RESTARTS   AGE
+openfaas-cffdddc4-lvn5w                  1/1     Running   0          9h
+openfaas-cffdddc4-wbcl6                  1/1     Running   0          9h
+python-65ccf9c74b-8kmgp                  1/1     Running   0          9h
+python-65ccf9c74b-dgnqb                  1/1     Running   0          9h
+rancher-597b6b8554-mgcjr                 1/1     Running   0          9h
+rancher-597b6b8554-mpk62                 1/1     Running   0          9h
+</code></pre>
+
+<p>Show deployments:</p>
+
+<pre><code>$ kubectl get deployments -o wide
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS  IMAGES                      SELECTOR
+openfaas                2/2     2            2           9h    logo        ruanbekker/logos:openfaas   app=logo,task=openfaas
+python                  2/2     2            2           9h    logo        ruanbekker/logos:python     app=logo,task=python
+rancher                 2/2     2            2           9h    logo        ruanbekker/logos:rancher    app=logo,task=rancher
+</code></pre>
+
+<p>Show ingress:</p>
+
+<pre><code>$ kubectl get ingress -o wide
+NAME      HOSTS                                                          ADDRESS   PORTS   AGE
+logo      openfaas.domain.com,rancher.domain.com,python.domain.com       80      9h
+</code></pre>
+
+<p>Show system ingress:</p>
+
+<pre><code>$ kubectl get ingress -o wide -n kube-system
+NAME             HOSTS                     ADDRESS   PORTS   AGE
+traefik-web-ui   traefik-ui.domain.com               80      9h
+</code></pre>
+
+<h2>Access your Applications</h2>
+
+<p>Access the Traefik-UI, and filter for one of the applications. Let&rsquo;s take OpenFaaS for an example:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/59177432-63418080-8b5c-11e9-8e54-20600508e510.png" alt="image" /></p>
+
+<p>Access the OpenFaaS Page via the URL:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/59177206-a4856080-8b5b-11e9-8954-238590f18e5c.png" alt="image" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Testing Out Scaleways Kapsule Their Kubernetes as a Service Offering]]></title>

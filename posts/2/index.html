@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In a previous post we have set up the vault server on docker, but using a file backend to persist our data. In this tutorial we will configure vault &hellip;">
+  <meta name="description" content="In this tutorial we will use Vault API to create a user and allow that user to write/read key/value pairs from a given path. Related Posts: Setup a &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -91,6 +91,636 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/05/07/use-the-vault-api-to-provision-app-keys-and-create-kv-pairs/">Use the Vault API to Provision App Keys and Create KV Pairs</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-05-07T16:23:10-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>7</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>4:23 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57256060-f1a27e00-7055-11e9-9a05-77d3fdd6c76f.png" alt="" /></p>
+
+<p>In this tutorial we will use Vault API to create a user and allow that user to write/read key/value pairs from a given path.</p>
+
+<p>Related Posts:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">Setup a Vault Server on Docker</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">Getting Started with the Vault CLI</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/">Use the S3 Storage Backend to Persist Data</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/">Create Secrets with Vaults Transit Secret Engine</a></li>
+</ul>
+
+
+<h2>Credentials / Authentication</h2>
+
+<p>Export Vault Root Tokens:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export ROOT_TOKEN="$(cat ~/.vault-token)"
+</span><span class='line'>$ export VAULT_TOKEN=${ROOT_TOKEN}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check the vault status:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/sys/health | jq
+</span><span class='line'>{
+</span><span class='line'>  "initialized": true,
+</span><span class='line'>  "sealed": false,
+</span><span class='line'>  "standby": false,
+</span><span class='line'>  "performance_standby": false,
+</span><span class='line'>  "replication_performance_mode": "disabled",
+</span><span class='line'>  "replication_dr_mode": "disabled",
+</span><span class='line'>  "server_time_utc": 1554652468,
+</span><span class='line'>  "version": "1.1.0",
+</span><span class='line'>  "cluster_name": "vault-cluster-bfb00cd7",
+</span><span class='line'>  "cluster_id": "dc1dc9a6-xx-xx-xx-a2870f475e7a"
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Do a lookup for the root user:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/token/lookup-self | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "69a19f66-5bad-3af2-81a5-81ca24e50b02",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "accessor": "A7Xkik1ebWpUfzqNrvADmQ08",
+</span><span class='line'>    "creation_time": 1554651149,
+</span><span class='line'>    "creation_ttl": 0,
+</span><span class='line'>    "display_name": "root",
+</span><span class='line'>    "entity_id": "",
+</span><span class='line'>    "expire_time": null,
+</span><span class='line'>    "explicit_max_ttl": 0,
+</span><span class='line'>    "id": "s.po8HkMdCnnAerlCAeHGGGszQ",
+</span><span class='line'>    "meta": null,
+</span><span class='line'>    "num_uses": 0,
+</span><span class='line'>    "orphan": true,
+</span><span class='line'>    "path": "auth/token/root",
+</span><span class='line'>    "policies": [
+</span><span class='line'>      "root"
+</span><span class='line'>    ],
+</span><span class='line'>    "ttl": 0,
+</span><span class='line'>    "type": "service"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Roles</h2>
+
+<p>Create the AppRole:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"type": "approle"}' http://127.0.0.1:8200/v1/sys/auth/approle | jq
+</span><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/sys/auth | jq
+</span><span class='line'>{
+</span><span class='line'>  "token/": {
+</span><span class='line'>    "accessor": "auth_token_31f2381e",
+</span><span class='line'>    "config": {
+</span><span class='line'>      "default_lease_ttl": 0,
+</span><span class='line'>      "force_no_cache": false,
+</span><span class='line'>      "max_lease_ttl": 0,
+</span><span class='line'>      "token_type": "default-service"
+</span><span class='line'>    },
+</span><span class='line'>    "description": "token based credentials",
+</span><span class='line'>    "local": false,
+</span><span class='line'>    "options": null,
+</span><span class='line'>    "seal_wrap": false,
+</span><span class='line'>    "type": "token"
+</span><span class='line'>  },
+</span><span class='line'>  "approle/": {
+</span><span class='line'>    "accessor": "auth_approle_d542dcad",
+</span><span class='line'>    "config": {
+</span><span class='line'>      "default_lease_ttl": 0,
+</span><span class='line'>      "force_no_cache": false,
+</span><span class='line'>      "max_lease_ttl": 0,
+</span><span class='line'>      "token_type": "default-service"
+</span><span class='line'>    },
+</span><span class='line'>    "description": "",
+</span><span class='line'>    "local": false,
+</span><span class='line'>    "options": {},
+</span><span class='line'>    "seal_wrap": false,
+</span><span class='line'>    "type": "approle"
+</span><span class='line'>  },
+</span><span class='line'>  "request_id": "20554948-b8e0-4254-f21d-f9ad25f1e5d5",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "approle/": {
+</span><span class='line'>      "accessor": "auth_approle_d542dcad",
+</span><span class='line'>      "config": {
+</span><span class='line'>        "default_lease_ttl": 0,
+</span><span class='line'>        "force_no_cache": false,
+</span><span class='line'>        "max_lease_ttl": 0,
+</span><span class='line'>        "token_type": "default-service"
+</span><span class='line'>      },
+</span><span class='line'>      "description": "",
+</span><span class='line'>      "local": false,
+</span><span class='line'>      "options": {},
+</span><span class='line'>      "seal_wrap": false,
+</span><span class='line'>      "type": "approle"
+</span><span class='line'>    },
+</span><span class='line'>    "token/": {
+</span><span class='line'>      "accessor": "auth_token_31f2381e",
+</span><span class='line'>      "config": {
+</span><span class='line'>        "default_lease_ttl": 0,
+</span><span class='line'>        "force_no_cache": false,
+</span><span class='line'>        "max_lease_ttl": 0,
+</span><span class='line'>        "token_type": "default-service"
+</span><span class='line'>      },
+</span><span class='line'>      "description": "token based credentials",
+</span><span class='line'>      "local": false,
+</span><span class='line'>      "options": null,
+</span><span class='line'>      "seal_wrap": false,
+</span><span class='line'>      "type": "token"
+</span><span class='line'>    }
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the test policy:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"policy": "{\"name\": \"test\", \"path\": {\"secret/*\": {\"policy\": \"write\"}}}"}' http://127.0.0.1:8200/v1/sys/policy/test
+</span><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/sys/policy/test | jq
+</span><span class='line'>{
+</span><span class='line'>  "name": "test",
+</span><span class='line'>  "rules": "{\"name\": \"test\", \"path\": {\"secret/*\": {\"policy\": \"write\"}}}",
+</span><span class='line'>  "request_id": "e4f55dc0-575f-ead9-48f6-43154153889a",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "name": "test",
+</span><span class='line'>    "rules": "{\"name\": \"test\", \"path\": {\"secret/*\": {\"policy\": \"write\"}}}"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Attach the policy to the approle:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"policies": "test"}' http://127.0.0.1:8200/v1/auth/approle/role/app
+</span><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" 'http://127.0.0.1:8200/v1/auth/approle/role?list=true' | jq .
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "e645cad9-9010-4299-0e6b-0baf6d9194b8",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "keys": [
+</span><span class='line'>      "app"
+</span><span class='line'>    ]
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable the kv store:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -H "X-Vault-Token: ${VAULT_TOKEN}" -XPOST --data '{"type": "kv", "description": "my key value store", "config": {"force_no_cache": true}}' http://127.0.0.1:8200/v1/sys/mounts/secret</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the User Credentials</h2>
+
+<p>Get the role_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/approle/role/app/role-id | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "e803a1bf-a492-dad7-68db-bb1506752e03",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "role_id": "3e365c72-7aad-f4e4-521c-d7cf0dd83c0f"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the secret_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/approle/role/app/secret-id | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "b56d20c0-ff8a-a1fe-4d5f-42e57b625b83",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "secret_id": "5eecfe29-d6e1-50e6-7a70-04c6bea42b76",
+</span><span class='line'>    "secret_id_accessor": "2fa80586-32b9-1c6f-fe1d-7c547e5403e5"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the token with the role_id and secret_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -d '{"role_id": "3e365c72-7aad-f4e4-521c-d7cf0dd83c0f","secret_id": "5eecfe29-d6e1-50e6-7a70-04c6bea42b76"}' http://127.0.0.1:8200/v1/auth/approle/login | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "82470940-ef09-bcbb-f7a0-bdf085b4f47b",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": null,
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": {
+</span><span class='line'>    "client_token": "s.7EtwtRGsZWOtkqcMvj3UMLP0",
+</span><span class='line'>    "accessor": "2TPL1vg5IZXgVF6Xf1RRzbmL",
+</span><span class='line'>    "policies": [
+</span><span class='line'>      "default",
+</span><span class='line'>      "test"
+</span><span class='line'>    ],
+</span><span class='line'>    "token_policies": [
+</span><span class='line'>      "default",
+</span><span class='line'>      "test"
+</span><span class='line'>    ],
+</span><span class='line'>    "metadata": {
+</span><span class='line'>      "role_name": "app"
+</span><span class='line'>    },
+</span><span class='line'>    "lease_duration": 2764800,
+</span><span class='line'>    "renewable": true,
+</span><span class='line'>    "entity_id": "d5051b01-b7ce-626c-a9f4-e1663f8c23e8",
+</span><span class='line'>    "token_type": "service",
+</span><span class='line'>    "orphan": true
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create KV Pairs with New User</h2>
+
+<p>Export the user auth with the received token:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export APP_TOKEN=s.7EtwtRGsZWOtkqcMvj3UMLP0
+</span><span class='line'>$ export VAULT_TOKEN=$APP_TOKEN</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify if you can lookup your own info:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/auth/token/lookup-self | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "2e69cd68-8668-3159-6440-c430cb61d2e6",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 0,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "accessor": "2TPL1vg5IZXgVF6Xf1RRzbmL",
+</span><span class='line'>    "creation_time": 1554651882,
+</span><span class='line'>    "creation_ttl": 2764800,
+</span><span class='line'>    "display_name": "approle",
+</span><span class='line'>    "entity_id": "d5051b01-b7ce-626c-a9f4-e1663f8c23e8",
+</span><span class='line'>    "expire_time": "2019-05-09T15:44:42.1013993Z",
+</span><span class='line'>    "explicit_max_ttl": 0,
+</span><span class='line'>    "id": "s.7EtwtRGsZWOtkqcMvj3UMLP0",
+</span><span class='line'>    "issue_time": "2019-04-07T15:44:42.1013788Z",
+</span><span class='line'>    "meta": {
+</span><span class='line'>      "role_name": "app"
+</span><span class='line'>    },
+</span><span class='line'>    "num_uses": 0,
+</span><span class='line'>    "orphan": true,
+</span><span class='line'>    "path": "auth/approle/login",
+</span><span class='line'>    "policies": [
+</span><span class='line'>      "default",
+</span><span class='line'>      "test"
+</span><span class='line'>    ],
+</span><span class='line'>    "renewable": true,
+</span><span class='line'>    "ttl": 2764556,
+</span><span class='line'>    "type": "service"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a KV pair:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"app_password": "secret123"}' http://127.0.0.1:8200/v1/secret/app01/app_password</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the secret from KV pair:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET -H "X-Vault-Token: ${VAULT_TOKEN}" http://127.0.0.1:8200/v1/secret/app01/app_password | jq
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "70d5f16d-2abb-fcfd-063f-0e21d9cef8fd",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "lease_duration": 2764800,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "app_password": "secret123"
+</span><span class='line'>  },
+</span><span class='line'>  "wrap_info": null,
+</span><span class='line'>  "warnings": null,
+</span><span class='line'>  "auth": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Try to write outside the allowed path:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XPOST -H "X-Vault-Token: ${VAULT_TOKEN}" -d '{"app_password": "secret123"}' http://127.0.0.1:8200/v1/secrets/app01/app_password
+</span><span class='line'>{"errors":["1 error occurred:\n\t* permission denied\n\n"]}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.vaultproject.io/api/system/audit.html">https://www.vaultproject.io/api/system/audit.html</a></li>
+<li><a href="https://learn.hashicorp.com/vault/getting-started/apis">https://learn.hashicorp.com/vault/getting-started/apis</a></li>
+<li><a href="https://www.hashicorp.com/resources/getting-vault-enterprise-installed-running">https://www.hashicorp.com/resources/getting-vault-enterprise-installed-running</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2914,321 +3544,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/">Setup a Drone CICD Environment on Docker With Letsencrypt</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-04-18T12:53:49-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>18</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>12:53 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/56378979-ed313500-620e-11e9-9ac0-4fcd1df803e8.png" alt="drone-ci" /></p>
-
-<h2>What is Drone?</h2>
-
-<p>Drone is a self-service continuous delivery platform which can be used for CICD pipelines, devopsy stuff which is really awesome.</p>
-
-<p>With Configuration as Code, Pipelines are configured with a simple, easy‑to‑read file that you commit to your git repository such as github, gitlab, gogs, gitea etc.</p>
-
-<p>Each Pipeline step is executed inside an isolated Docker container that is automatically downloaded at runtime, if not found in cache.</p>
-
-<h2>Show me pipelines!</h2>
-
-<p>A pipeline can look as easy as:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">pipeline</span>
-</span><span class='line'><span class="l-Scalar-Plain">steps</span><span class="p-Indicator">:</span>
-</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">test</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">node</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">commands</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">npm install</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">npm test</span>
-</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
-</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">database</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">mysql</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3306</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Open for Testing!</h2>
-
-<p>I have enabled public access, so please go ahead and launch your cicd pipelines on my drone setup as I want to test the stability of it:</p>
-
-<p>==> <a href="https://drone.rbkr.xyz/">https://drone.rbkr.xyz/</a></p>
-
-<h2>What are we doing?</h2>
-
-<p>We will deploy a drone server which is responsible for the actual server and 2 drone agents which will receive instructions from the server whenever steps need to be executed. Steps run on agents.</p>
-
-<h2>Deploy the Servers</h2>
-
-<p>I&rsquo;m using VULTR to deploy 3 nodes on coreos, 1 drone server and 2 drone agents as seen below:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56371668-d0403600-61fd-11e9-8396-01c07c136518.png" alt="image" /></p>
-
-<p>Documentation:
-<a href="https://docs.drone.io/installation/github/multi-machine/">https://docs.drone.io/installation/github/multi-machine/</a>
-<a href="https://github.com/settings/developers">https://github.com/settings/developers</a></p>
-
-<p>We will use Github for version control and to delegate auth, therefore we need to register a new application on Github.</p>
-
-<p>Register New Application on Github at <a href="https://github.com/settings/developer">https://github.com/settings/developer</a> :</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56375985-22398980-6207-11e9-911d-9595f8f85db9.png" alt="register-application" /></p>
-
-<p>Get your Drone-Server Host Endpoint, and update the fields:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374721-287a3680-6204-11e9-837f-a7751651c29a.png" alt="image" /></p>
-
-<p>You will receive a Github Client ID, Secret which we will need later, which will look like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">Client ID</span><span class="p-Indicator">:</span>
-</span><span class='line'><span class="l-Scalar-Plain">xx</span>
-</span><span class='line'><span class="l-Scalar-Plain">Client Secret</span><span class="p-Indicator">:</span>
-</span><span class='line'><span class="l-Scalar-Plain">yyy</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Generate the shared secret which will be used on the server and agent:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ openssl rand -hex 16</span>
-</span><span class='line'><span class="l-Scalar-Plain">eb83xxe19a3497f597f53044250df6yy</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the Startup Script for Drone Server, which will just be a docker container running in detached mode. Note that you should use your own domain at <code>SERVER_HOST</code> and if you want to issue an certificate automatically keep <code>DRONE_TLS_AUTOCERT</code> to true.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ cat &gt; start_drone-server.sh &lt;&lt; EOF</span>
-</span><span class='line'><span class="l-Scalar-Plain">#!/usr/bin/env bash</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">set -ex</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">GITHUB_CLIENT_ID=xx</span>
-</span><span class='line'><span class="l-Scalar-Plain">GITHUB_CLIENT_SECRET=yyy</span>
-</span><span class='line'><span class="l-Scalar-Plain">SHARED_SECRET=eb83xxe19a3497f597f53044250df6yy</span>
-</span><span class='line'><span class="l-Scalar-Plain">SERVER_HOST=drone.yourdomain.com</span>
-</span><span class='line'><span class="l-Scalar-Plain">SERVER_PROTOCOL=https</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">docker run \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--volume=/var/run/docker.sock:/var/run/docker.sock \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--volume=/var/lib/drone:/data \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_GITHUB_SERVER=https://github.com \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_AGENTS_ENABLED=true \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_RPC_SECRET=${SHARED_SECRET} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_SERVER_HOST=${SERVER_HOST} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_SERVER_PROTO=${SERVER_PROTOCOL} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_TLS_AUTOCERT=true \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_USER_CREATE=username:&lt;your-github-username&gt;,admin:true \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--publish=80:80 \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--publish=443:443 \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--restart=always \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--detach=true \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--name=drone \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">drone/drone:1</span>
-</span><span class='line'><span class="l-Scalar-Plain">EOF</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the startup script for the drone agent, note that this script needs to be placed on the agent nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ cat &gt; start_drone-agent.sh &lt;&lt; EOF</span>
-</span><span class='line'><span class="l-Scalar-Plain">#!/usr/bin/env bash</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">set -ex</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">SHARED_SECRET=eb83xxe19a3497f597f53044250df6yy</span>
-</span><span class='line'><span class="l-Scalar-Plain">AGENT_SERVER_HOST=https://drone.yourdomain.com</span>
-</span><span class='line'><span class="l-Scalar-Plain">SERVER_PROTOCOL=https</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">docker run \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--volume=/var/run/docker.sock:/var/run/docker.sock \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_RPC_SERVER=${AGENT_SERVER_HOST} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_RPC_SECRET=${SHARED_SECRET} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_RUNNER_CAPACITY=2 \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--env=DRONE_RUNNER_NAME=${HOSTNAME} \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--restart=always \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--detach=true \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">--name=drone-agent-02 \</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">drone/agent:1</span>
-</span><span class='line'><span class="l-Scalar-Plain">EOF</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Logon to the server node and start the drone server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ bash start_drone-agent.sh</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Login to the agent nodes and start the agents:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ bash start_drone-agent.sh</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The server should show that it&rsquo;s listening on port 80 and 443:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ docker ps</span>
-</span><span class='line'><span class="l-Scalar-Plain">CONTAINER ID        IMAGE               COMMAND               CREATED             STATUS              PORTS                                      NAMES</span>
-</span><span class='line'><span class="l-Scalar-Plain">8ea70fc7b967        drone/drone:1       &quot;/bin/drone-server&quot;   12 minutes ago      Up 12 minutes       0.0.0.0:80-&gt;80/tcp, 0.0.0.0:443-&gt;443/tcp   drone</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Access Drone</h2>
-
-<p>Access your Drone instance on port 80 eg. <a href="http://drone.yourdomain.com">http://drone.yourdomain.com</a> you should be automatically redirected to port 443, which should direct you to a login page, which will look like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56375632-5eb8b580-6206-11e9-9ae8-92b2cd29abec.png" alt="drone-authorize" /></p>
-
-<p>Login with your github account and allow drone some time to sync your repositories:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373131-9e7c9e80-6200-11e9-83ce-e486b399468e.png" alt="image" /></p>
-
-<h2>Add drone config to your repository:</h2>
-
-<p>Clone this repository: <a href="https://github.com/ruanbekker/drone-ci-testing">https://github.com/ruanbekker/drone-ci-testing</a> which will contain the <code>.drone.yml</code> config which drone gets its instructions from.</p>
-
-<p>Select a repository to activate, (drone-ci-testing in this case) head over to settings:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373298-f1565600-6200-11e9-8262-ac3162fed4f2.png" alt="image" /></p>
-
-<p>Adding secret:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373209-c5d36b80-6200-11e9-90de-68c131480672.png" alt="image" /></p>
-
-<p>Add more secrets:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373443-3da19600-6201-11e9-85a9-083bfcbd604a.png" alt="image" /></p>
-
-<p>Your build list should be empty:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373533-6fb2f800-6201-11e9-8fa0-ab05e546c36e.png" alt="image" /></p>
-
-<h2>Trigger a Build</h2>
-
-<p>Edit any of the files in the clone repository and you should see your build running:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374465-85c1b800-6203-11e9-8542-acd1d5729447.png" alt="image" /></p>
-
-<p>When your build has completed:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374511-a25df000-6203-11e9-9eb8-d94a777a8b4a.png" alt="image" /></p>
-
-<p>You can also find out where the step ran:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374667-084a7780-6204-11e9-9c5b-6672f6882411.png" alt="image" /></p>
-
-<p>Run a couple of tests:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56376356-e3f09a00-6207-11e9-8ca0-16e06e7c0379.png" alt="image" /></p>
-
-<p>Get notified via slack:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56376376-eeab2f00-6207-11e9-9af9-194cb5a3023b.png" alt="image" /></p>
-
-<h2>Debugging</h2>
-
-<p>If your build fails, its most likely that you need the <code>slack_webhook</code> secret. You can remove the slack step which shouldhelp you get going with drone.</p>
-
-<h2>More on Drone</h2>
-
-<p>Have a look at <a href="https://github.com/ruanbekker/drone-ci-testing/blob/master/README.md">this document</a> for more examples or have a look at their <a href="https://docs.drone.io/">documentation</a> as well as their extensive list of <a href="http://plugins.drone.io/">plugins</a> and their <a href="https://docs.drone.io/installation/github/multi-machine/">setup documentation</a> to become familiar with their configuration.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -3269,6 +3584,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2019/06/10/testing-out-scaleways-kapsule-their-kubernetes-as-a-service-offering/">Testing Out Scaleways Kapsule Their Kubernetes as a Service Offering</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2019/06/04/setup-a-logstash-server-for-amazon-elasticsearch-service-and-auth-with-iam/">Setup a Logstash Server for Amazon Elasticsearch Service and Auth With IAM</a>
       </li>
     
@@ -3282,10 +3601,6 @@
     
       <li class="post">
         <a href="/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Install Blackbox Exporter to Monitor Websites With Prometheus</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Install Alertmanager to Alert Based on Metrics From Prometheus</a>
       </li>
     
   </ul>

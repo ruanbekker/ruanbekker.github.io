@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Aws | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/aws/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-30T17:36:27-04:00</updated>
+  <updated>2019-06-10T12:23:48-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,192 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Logstash Server for Amazon Elasticsearch Service and Auth With IAM]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/06/04/setup-a-logstash-server-for-amazon-elasticsearch-service-and-auth-with-iam/"/>
+    <updated>2019-06-04T17:46:27-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/06/04/setup-a-logstash-server-for-amazon-elasticsearch-service-and-auth-with-iam</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/59209960-ca872100-8bac-11e9-8672-8c6af502afe0.png" alt="logstash" /></p>
+
+<p>As many of you might know, when you deploy a ELK stack on Amazon Web Services, you only get E and K in the ELK stack, which is Elasticsearch and Kibana. Here we will be dealing with Logstash on EC2.</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will setup a Logstash Server on EC2, setup a IAM Role and Autenticate Requests to Elasticsearch with an IAM Role, setup Nginx so that logstash can ship logs to Elasticsearch.</p>
+
+<p>I am not fond of working with access key&rsquo;s and secret keys, and if I can stay away from handling secret information the better. So instead of creating a access key and secret key for logstash, we will instead create a IAM Policy that will allow the actions to Elasticsearch, associate that policy to an IAM Role, set EC2 as a trusted entity and strap that IAM Role to the EC2 Instance.</p>
+
+<p>Then we will allow the IAM Role ARN to the Elasticsearch Policy, then when Logstash makes requests against Elasticsearch, it will use the IAM Role to assume temporary credentials to authenticate. That way we don&rsquo;t have to deal with keys. But I mean you can create access keys if that is your preferred method, I&rsquo;m just not a big fan of keeping secret keys.</p>
+
+<p>The benefit of authenticating with IAM, allows you to remove a reverse proxy that is another hop to the path of your target.</p>
+
+<h2>Create the IAM Policy:</h2>
+
+<p>Create a IAM Policy that will allow actions to Elasticsearch:</p>
+
+<pre><code>{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttpHead",
+                "es:ESHttpPost",
+                "es:ESHttpGet",
+                "es:ESHttpPut"
+            ],
+            "Resource": "arn:aws:es:eu-west-1:0123456789012:domain/my-es-domain"
+        }
+    ]
+}
+</code></pre>
+
+<p>Create Role logstash-system-es with &ldquo;ec2.amazonaws.com&rdquo; as trusted entity in trust the relationship and associate the above policy to the role.</p>
+
+<h2>Authorize your Role in Elasticsearch Policy</h2>
+
+<p>Head over to your Elasticsearch Domain and configure your Elasticsearch Policy to include your IAM Role to grant requests to your Domain:</p>
+
+<pre><code>{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::0123456789012:role/logstash-system-es"
+        ]
+      },
+      "Action": "es:*",
+      "Resource": "arn:aws:es:eu-west-1:0123456789012:domain/my-es-domain/*"
+    }
+  ]
+}
+</code></pre>
+
+<h2>Install Logstash on EC2</h2>
+
+<p>I will be using Ubuntu Server 18. Update the repositories and install dependencies:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+$ apt install build-essential apt-transport-https -y
+$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+$ apt update
+</code></pre>
+
+<p>As logstash requires Java, install the the Java OpenJDK Runtime Environment:</p>
+
+<pre><code>$ apt install default-jre -y
+</code></pre>
+
+<p>Verify that Java is installed:</p>
+
+<pre><code>$ java -version
+openjdk version "11.0.3" 2019-04-16
+OpenJDK Runtime Environment (build 11.0.3+7-Ubuntu-1ubuntu218.04.1)
+OpenJDK 64-Bit Server VM (build 11.0.3+7-Ubuntu-1ubuntu218.04.1, mixed mode, sharing)
+</code></pre>
+
+<p>Now, install logstash and enable the service on boot:</p>
+
+<pre><code>$ apt install logstash -y
+$ systemctl enable logstash.service
+$ service logstash stop
+</code></pre>
+
+<h2>Install the Amazon ES Logstash Output Plugin</h2>
+
+<p>For us to be able to authenticate using IAM, we should use the Amazon-ES Logstash Output Plugin. Update and install the plugin:</p>
+
+<pre><code>$ /usr/share/logstash/bin/logstash-plugin update
+$ /usr/share/logstash/bin/logstash-plugin install logstash-output-amazon_es
+</code></pre>
+
+<h2>Configure Logstash</h2>
+
+<p>I like to split up my configuration in 3 parts, (input, filter, output).</p>
+
+<p>Let&rsquo;s create the input configuration: <code>/etc/logstash/conf.d/10-input.conf</code></p>
+
+<pre><code>input {
+  file {
+    path =&gt; "/var/log/nginx/access.log"
+    start_position =&gt; "beginning"
+  }
+}
+</code></pre>
+
+<p>Our filter configuration: <code>/etc/logstash/conf.d/20-filter.conf</code></p>
+
+<pre><code>filter {
+  grok {
+    match =&gt; { "message" =&gt; "%{HTTPD_COMMONLOG}" }
+  }
+  mutate {
+    add_field =&gt; {
+      "custom_field1" =&gt; "hello from: %{host}"
+    }
+  }
+}
+</code></pre>
+
+<p>And lastly, our output configuration: <code>/etc/logstash/conf.d/30-outputs.conf</code>:</p>
+
+<pre><code>output {
+  amazon_es {
+      hosts =&gt; ["my-es-domain.abcdef.eu-west-1.es.amazonaws.com"]
+      index =&gt; "new-logstash-%{+YYYY.MM.dd}"
+      region =&gt; "eu-west-1"
+      aws_access_key_id =&gt; ''
+      aws_secret_access_key =&gt; ''
+  }
+}
+</code></pre>
+
+<p>Note that the <code>aws_</code> directives has been left empty as that seems to be the way it needs to be set when using roles. Authentication will be assumed via the Role which is associated to the EC2 Instance.</p>
+
+<p>If you are using access keys, you can populate them there.</p>
+
+<h2>Start Logstash</h2>
+
+<p>Start logstash:</p>
+
+<pre><code>$ service logstash start
+</code></pre>
+
+<p>Tail the logs to see if logstash starts up correctly, it should look more or less like this:</p>
+
+<pre><code>$ tail -f /var/log/logstash/logstash-plain.log
+
+[2019-06-04T16:38:12,087][INFO ][logstash.runner          ] Starting Logstash {"logstash.version"=&gt;"6.8.0"}
+[2019-06-04T16:38:14,480][INFO ][logstash.pipeline        ] Starting pipeline {:pipeline_id=&gt;"main", "pipeline.workers"=&gt;2, "pipeline.batch.size"=&gt;125, "pipeline.batch.delay"=&gt;50}
+[2019-06-04T16:38:15,226][INFO ][logstash.outputs.elasticsearch] Elasticsearch pool URLs updated {:changes=&gt;{:removed=&gt;[], :added=&gt;[https://search-my-es-domain-xx.eu-west-1.es.amazonaws.com:443/]}}
+[2019-06-04T16:38:15,234][INFO ][logstash.outputs.elasticsearch] Running health check to see if an Elasticsearch connection is working {:healthcheck_url=&gt;https://search-my-es-domain-xx.eu-west-1.es.amazonaws.com:443/, :path=&gt;"/"}
+</code></pre>
+
+<h2>Install Nginx</h2>
+
+<p>As you noticed, I have specified <code>/var/log/nginx/access.log</code> as my input file for logstash, as we will test logstash by shipping nginx access logs to Elasticsearch Service.</p>
+
+<p>Install Nginx:</p>
+
+<pre><code>$ apt install nginx -y
+</code></pre>
+
+<p>Start the service:</p>
+
+<pre><code>$ systemctl restart nginx 
+$ systemctl enable nginx
+</code></pre>
+
+<p>Make a GET request on your Nginx Web Server and inspect the log on Kibana, where it should look like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/58917559-4dc8f280-8727-11e9-9e9d-7950217abe34.png" alt="" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Snippet: Create Custom CloudWatch Metrics With Python]]></title>
@@ -431,124 +617,6 @@ That took 1.014902114868164 seconds
 <pre><code class="bash">$ aws --profile prod ssm get-parameters --names '/service-a/team-a/my-app-name/db_username' --with-decryption | jq '.Parameters[]' | jq -r '.Value'
 my_db_user
 </code></pre>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Python Multiprocessing Tutorial]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/02/05/python-multiprocessing-tutorial/"/>
-    <updated>2019-02-05T10:05:49-05:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/02/05/python-multiprocessing-tutorial</id>
-    <content type="html"><![CDATA[<p>I stumbled apon a great <a href="https://tutorialedge.net/python/python-multiprocessing-tutorial/">python multiprocessing tutorial</a>, when I was looking into spawning multiple processes in parallel on a Lambda function.</p>
-
-<p>In this example im getting latencies between regions using tcpping, but instead of running them one at a time, I was looking into spawning them in parralel:</p>
-
-<p>(code made static for demonstration)</p>
-
-<pre><code class="python">import boto3
-import os
-import json
-import multiprocessing as mp
-from decimal import Decimal
-
-region_maps = {
-    'eu-west-1': {
-        'dynamodb': 'dynamodb.eu-west-1.amazonaws.com'
-    }, 
-    'us-east-1': {
-        'dynamodb': 'dynamodb.us-east-1.amazonaws.com'
-    }, 
-    'us-west-1': {
-        'dynamodb': 'dynamodb.us-west-1.amazonaws.com'
-    }, 
-    'us-west-2': {
-        'dynamodb': 'dynamodb.us-west-2.amazonaws.com'
-    }
-}
-
-def get_results(target_region, target_service, target_endpoint):
-    static_results = {
-        "address": target_endpoint,
-        "attempts": 5,
-        "avg": 481.80199999999996,
-        "max": 816.25,
-        "min": 312.46,
-        "port": 443,
-        "region": "eu-west-1_{}_{}".format(target_service, target_region),
-        "regionTo": target_region,
-        "results": [
-            {"seq": 1,"time": "816.25"},
-            {"seq": 2,"time": "331.50"},
-            {"seq": 3,"time": "597.22"},
-            {"seq": 4,"time": "312.46"},
-            {"seq": 5,"time": "351.58"}
-        ],
-        "timestamp": "2019-02-05T17:10:32"
-    }
-    return static_results
-
-def dynamodb_write(data):
-    ddb = boto3.Session(profile_name='test', region_name='eu-west-1').resource('dynamodb').Table('mydynamotable')
-    ddb_parsed = json.loads(json.dumps(data), parse_float=Decimal)
-    response = ddb.put_item(Item=ddb_parsed)
-    return response
-
-def spawn_work(region):
-    target_region = region
-    target_service = 'dynamodb'
-    target_endpoint = region_maps[target_region][target_service]
-    data = get_results(region, target_service, target_endpoint)
-    print("pid: {}, data: {}".format(os.getpid(), data))
-    response = dynamodb_write(data)
-
-if __name__ == "__main__":
-    pool = mp.Pool(mp.cpu_count())
-    result = pool.map(spawn_work, ['eu-west-1', 'us-east-1', 'us-west-1', 'us-west-2'])
-</code></pre>
-
-<p>When running it locally, I can see that each job ran in its own pid:</p>
-
-<pre><code class="bash">$ python foo.py
-pid: 31224, data: {'attempts': 5, 'min': 312.46, 'timestamp': '2019-02-05T17:10:32', 'address': 'dynamodb.eu-west-1.amazonaws.com', 'max': 816.25, 'region': 'eu-west-1_dynamodb_eu-west-1', 'avg': 481.80199999999996, 'port': 443, 'regionTo': 'eu-west-1', 'results': [{'seq': 1, 'time': '816.25'}, {'seq': 2, 'time': '331.50'}, {'seq': 3, 'time': '597.22'}, {'seq': 4, 'time': '312.46'}, {'seq': 5, 'time': '351.58'}]}
-
-pid: 31225, data: {'attempts': 5, 'min': 312.46, 'timestamp': '2019-02-05T17:10:32', 'address': 'dynamodb.us-east-1.amazonaws.com', 'max': 816.25, 'region': 'eu-west-1_dynamodb_us-east-1', 'avg': 481.80199999999996, 'port': 443, 'regionTo': 'us-east-1', 'results': [{'seq': 1, 'time': '816.25'}, {'seq': 2, 'time': '331.50'}, {'seq': 3, 'time': '597.22'}, {'seq': 4, 'time': '312.46'}, {'seq': 5, 'time': '351.58'}]}
-
-pid: 31226, data: {'attempts': 5, 'min': 312.46, 'timestamp': '2019-02-05T17:10:32', 'address': 'dynamodb.us-west-1.amazonaws.com', 'max': 816.25, 'region': 'eu-west-1_dynamodb_us-west-1', 'avg': 481.80199999999996, 'port': 443, 'regionTo': 'us-west-1', 'results': [{'seq': 1, 'time': '816.25'}, {'seq': 2, 'time': '331.50'}, {'seq': 3, 'time': '597.22'}, {'seq': 4, 'time': '312.46'}, {'seq': 5, 'time': '351.58'}]}
-
-pid: 31227, data: {'attempts': 5, 'min': 312.46, 'timestamp': '2019-02-05T17:10:32', 'address': 'dynamodb.us-west-2.amazonaws.com', 'max': 816.25, 'region': 'eu-west-1_dynamodb_us-west-2', 'avg': 481.80199999999996, 'port': 443, 'regionTo': 'us-west-2', 'results': [{'seq': 1, 'time': '816.25'}, {'seq': 2, 'time': '331.50'}, {'seq': 3, 'time': '597.22'}, {'seq': 4, 'time': '312.46'}, {'seq': 5, 'time': '351.58'}]}
-</code></pre>
-
-<p>Quite useful! Have a look at the link shared for more examples.</p>
 
 <h2>Thank You</h2>
 

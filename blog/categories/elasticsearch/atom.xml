@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Elasticsearch | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/elasticsearch/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-05-30T17:36:27-04:00</updated>
+  <updated>2019-06-10T12:23:48-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,192 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup a Logstash Server for Amazon Elasticsearch Service and Auth With IAM]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/06/04/setup-a-logstash-server-for-amazon-elasticsearch-service-and-auth-with-iam/"/>
+    <updated>2019-06-04T17:46:27-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/06/04/setup-a-logstash-server-for-amazon-elasticsearch-service-and-auth-with-iam</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/59209960-ca872100-8bac-11e9-8672-8c6af502afe0.png" alt="logstash" /></p>
+
+<p>As many of you might know, when you deploy a ELK stack on Amazon Web Services, you only get E and K in the ELK stack, which is Elasticsearch and Kibana. Here we will be dealing with Logstash on EC2.</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will setup a Logstash Server on EC2, setup a IAM Role and Autenticate Requests to Elasticsearch with an IAM Role, setup Nginx so that logstash can ship logs to Elasticsearch.</p>
+
+<p>I am not fond of working with access key&rsquo;s and secret keys, and if I can stay away from handling secret information the better. So instead of creating a access key and secret key for logstash, we will instead create a IAM Policy that will allow the actions to Elasticsearch, associate that policy to an IAM Role, set EC2 as a trusted entity and strap that IAM Role to the EC2 Instance.</p>
+
+<p>Then we will allow the IAM Role ARN to the Elasticsearch Policy, then when Logstash makes requests against Elasticsearch, it will use the IAM Role to assume temporary credentials to authenticate. That way we don&rsquo;t have to deal with keys. But I mean you can create access keys if that is your preferred method, I&rsquo;m just not a big fan of keeping secret keys.</p>
+
+<p>The benefit of authenticating with IAM, allows you to remove a reverse proxy that is another hop to the path of your target.</p>
+
+<h2>Create the IAM Policy:</h2>
+
+<p>Create a IAM Policy that will allow actions to Elasticsearch:</p>
+
+<pre><code>{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttpHead",
+                "es:ESHttpPost",
+                "es:ESHttpGet",
+                "es:ESHttpPut"
+            ],
+            "Resource": "arn:aws:es:eu-west-1:0123456789012:domain/my-es-domain"
+        }
+    ]
+}
+</code></pre>
+
+<p>Create Role logstash-system-es with &ldquo;ec2.amazonaws.com&rdquo; as trusted entity in trust the relationship and associate the above policy to the role.</p>
+
+<h2>Authorize your Role in Elasticsearch Policy</h2>
+
+<p>Head over to your Elasticsearch Domain and configure your Elasticsearch Policy to include your IAM Role to grant requests to your Domain:</p>
+
+<pre><code>{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::0123456789012:role/logstash-system-es"
+        ]
+      },
+      "Action": "es:*",
+      "Resource": "arn:aws:es:eu-west-1:0123456789012:domain/my-es-domain/*"
+    }
+  ]
+}
+</code></pre>
+
+<h2>Install Logstash on EC2</h2>
+
+<p>I will be using Ubuntu Server 18. Update the repositories and install dependencies:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+$ apt install build-essential apt-transport-https -y
+$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+$ echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+$ apt update
+</code></pre>
+
+<p>As logstash requires Java, install the the Java OpenJDK Runtime Environment:</p>
+
+<pre><code>$ apt install default-jre -y
+</code></pre>
+
+<p>Verify that Java is installed:</p>
+
+<pre><code>$ java -version
+openjdk version "11.0.3" 2019-04-16
+OpenJDK Runtime Environment (build 11.0.3+7-Ubuntu-1ubuntu218.04.1)
+OpenJDK 64-Bit Server VM (build 11.0.3+7-Ubuntu-1ubuntu218.04.1, mixed mode, sharing)
+</code></pre>
+
+<p>Now, install logstash and enable the service on boot:</p>
+
+<pre><code>$ apt install logstash -y
+$ systemctl enable logstash.service
+$ service logstash stop
+</code></pre>
+
+<h2>Install the Amazon ES Logstash Output Plugin</h2>
+
+<p>For us to be able to authenticate using IAM, we should use the Amazon-ES Logstash Output Plugin. Update and install the plugin:</p>
+
+<pre><code>$ /usr/share/logstash/bin/logstash-plugin update
+$ /usr/share/logstash/bin/logstash-plugin install logstash-output-amazon_es
+</code></pre>
+
+<h2>Configure Logstash</h2>
+
+<p>I like to split up my configuration in 3 parts, (input, filter, output).</p>
+
+<p>Let&rsquo;s create the input configuration: <code>/etc/logstash/conf.d/10-input.conf</code></p>
+
+<pre><code>input {
+  file {
+    path =&gt; "/var/log/nginx/access.log"
+    start_position =&gt; "beginning"
+  }
+}
+</code></pre>
+
+<p>Our filter configuration: <code>/etc/logstash/conf.d/20-filter.conf</code></p>
+
+<pre><code>filter {
+  grok {
+    match =&gt; { "message" =&gt; "%{HTTPD_COMMONLOG}" }
+  }
+  mutate {
+    add_field =&gt; {
+      "custom_field1" =&gt; "hello from: %{host}"
+    }
+  }
+}
+</code></pre>
+
+<p>And lastly, our output configuration: <code>/etc/logstash/conf.d/30-outputs.conf</code>:</p>
+
+<pre><code>output {
+  amazon_es {
+      hosts =&gt; ["my-es-domain.abcdef.eu-west-1.es.amazonaws.com"]
+      index =&gt; "new-logstash-%{+YYYY.MM.dd}"
+      region =&gt; "eu-west-1"
+      aws_access_key_id =&gt; ''
+      aws_secret_access_key =&gt; ''
+  }
+}
+</code></pre>
+
+<p>Note that the <code>aws_</code> directives has been left empty as that seems to be the way it needs to be set when using roles. Authentication will be assumed via the Role which is associated to the EC2 Instance.</p>
+
+<p>If you are using access keys, you can populate them there.</p>
+
+<h2>Start Logstash</h2>
+
+<p>Start logstash:</p>
+
+<pre><code>$ service logstash start
+</code></pre>
+
+<p>Tail the logs to see if logstash starts up correctly, it should look more or less like this:</p>
+
+<pre><code>$ tail -f /var/log/logstash/logstash-plain.log
+
+[2019-06-04T16:38:12,087][INFO ][logstash.runner          ] Starting Logstash {"logstash.version"=&gt;"6.8.0"}
+[2019-06-04T16:38:14,480][INFO ][logstash.pipeline        ] Starting pipeline {:pipeline_id=&gt;"main", "pipeline.workers"=&gt;2, "pipeline.batch.size"=&gt;125, "pipeline.batch.delay"=&gt;50}
+[2019-06-04T16:38:15,226][INFO ][logstash.outputs.elasticsearch] Elasticsearch pool URLs updated {:changes=&gt;{:removed=&gt;[], :added=&gt;[https://search-my-es-domain-xx.eu-west-1.es.amazonaws.com:443/]}}
+[2019-06-04T16:38:15,234][INFO ][logstash.outputs.elasticsearch] Running health check to see if an Elasticsearch connection is working {:healthcheck_url=&gt;https://search-my-es-domain-xx.eu-west-1.es.amazonaws.com:443/, :path=&gt;"/"}
+</code></pre>
+
+<h2>Install Nginx</h2>
+
+<p>As you noticed, I have specified <code>/var/log/nginx/access.log</code> as my input file for logstash, as we will test logstash by shipping nginx access logs to Elasticsearch Service.</p>
+
+<p>Install Nginx:</p>
+
+<pre><code>$ apt install nginx -y
+</code></pre>
+
+<p>Start the service:</p>
+
+<pre><code>$ systemctl restart nginx 
+$ systemctl enable nginx
+</code></pre>
+
+<p>Make a GET request on your Nginx Web Server and inspect the log on Kibana, where it should look like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/58917559-4dc8f280-8727-11e9-9e9d-7950217abe34.png" alt="" /></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install Elasticsearch With Ansible Tutorial]]></title>
@@ -956,346 +1142,6 @@ shards disk.indices disk.used disk.avail disk.total disk.percent host          i
 
 <ul>
 <li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/master/indices-shrink-index.html">https://www.elastic.co/guide/en/elasticsearch/reference/master/indices-shrink-index.html</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/"/>
-    <updated>2019-04-02T14:55:58-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
-
-<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
-
-<h2>Install Nginx:</h2>
-
-<p>Install nginx and the dependency package to create basic auth:</p>
-
-<pre><code class="bash">$ apt install nginx apache2-utils -y
-</code></pre>
-
-<h2>Configure Nginx for Reverse Proxy</h2>
-
-<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
-
-<p>Edit the main nginx configuration:</p>
-
-<pre><code>$ vim /etc/nginx/nginx.conf
-</code></pre>
-
-<p>and populate the information as shown below:</p>
-
-<pre><code>user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-
-events {
-    worker_connections 1024;
-    # multi_accept on;
-}
-
-http {
-
-    # basic Settings
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    # ssl settings
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
-    ssl_prefer_server_ciphers on;
-
-    # logging settings
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-
-    # gzip settings
-    gzip on;
-    gzip_disable "msie6";
-
-    # virtual host configs
-    include /etc/nginx/conf.d/*.conf;
-}
-</code></pre>
-
-<p>Next, edit the virtual host config:</p>
-
-<pre><code>$ vim /etc/nginx/conf.d/elasticsearch.conf
-</code></pre>
-
-<p>And populate the following config:</p>
-
-<pre><code># https://gist.github.com/sahilsk/b16cb51387847e6c3329
-
-upstream elasticsearch {
-    # define your es nodes
-    server 10.0.0.10:9200;
-    server 10.0.0.11:9200;
-    # persistent http connections
-    # https://www.elastic.co/blog/playing-http-tricks-nginx
-    keepalive 15;
-}
-
-server {
-  listen 80;
-  server_name elasticsearch.domain.com;
-
-  auth_basic "server auth";
-  auth_basic_user_file /etc/nginx/passwords;
-
-  location / {
-
-    # deny node shutdown api
-    if ($request_filename ~ "_shutdown") {
-      return 403;
-      break;
-    }
-
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_redirect off;
-  }
-
-  location = / {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_redirect off;
-    auth_basic "off";
-  }
-
-  location ~* ^(/_cluster/health|/_cat/health) {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_redirect off;
-    auth_basic "off";
-  }
-}
-</code></pre>
-
-<p>Set your username and password to protect your endpoint:</p>
-
-<pre><code class="bash">$ htpasswd -c /etc/nginx/passwords admin
-</code></pre>
-
-<p>Enable nginx on boot and restart the process:</p>
-
-<pre><code class="bash">$ systemctl enable nginx
-$ systemctl restart nginx
-</code></pre>
-
-<h2>Test it</h2>
-
-<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -u 'admin:admin' http://myproxy.domain.com/_cat/indices?v
-health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   first-index 1o6yM7tCSqagqoeihKM7_g   5   1          3            0     40.6kb         20.3kb
-</code></pre>
-
-<h2>Letsencrypt SSL Certificates</h2>
-
-<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
-
-<pre><code class="bash">$ apt-get update
-$ apt-get install software-properties-common -y
-$ add-apt-repository universe
-$ add-apt-repository ppa:certbot/certbot
-$ apt-get update
-$ apt-get install certbot python-certbot-nginx -y
-</code></pre>
-
-<p>Request a Certificate for your domain:</p>
-
-<pre><code class="bash">$ certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
-
-Obtaining a new certificate
-Performing the following challenges:
-dns-01 challenge for myproxy.domain.com
-</code></pre>
-
-<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
-
-<pre><code>Please deploy a DNS TXT record under the name
-_acme-challenge.myproxy.domain.com with the following value:
-
-xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
-
-Before continuing, verify the record is deployed.
-Press Enter to Continue
-Waiting for verification...
-Cleaning up challenges
-
-IMPORTANT NOTES:
- - Congratulations! Your certificate and chain have been saved at:
-   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
-   Your key file has been saved at:
-   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
-   Your cert will expire on 2019-07-01. To obtain a new or tweaked
-   version of this certificate in the future, simply run certbot
-   again. To non-interactively renew *all* of your certificates, run
-   "certbot renew"
- - If you like Certbot, please consider supporting our work by:
-
-   Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
-   Donating to EFF:                    https://eff.org/donate-le
-</code></pre>
-
-<h2>Update Nginx Config</h2>
-
-<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
-
-<p>Open up the virtual host nginx configuration:</p>
-
-<pre><code class="bash">$ vim /etc/nginx/conf.d/elasticsearch.conf
-</code></pre>
-
-<p>Update the config like the one below:</p>
-
-<pre><code>upstream elasticsearch {
-    server 10.0.0.10:9200;
-    server 10.0.0.11:9200;
-    keepalive 15;
-}
-
-server {
-  listen 80;
-  server_name myproxy.domain.com;
-  return 301 https://$host$request_uri;
-}
-
-server {
-  listen 443 ssl;
-  server_name myproxy.domain.com;
-
-  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem;
-
-  auth_basic "server auth";
-  auth_basic_user_file /etc/nginx/passwords;
-
-  location ^~ /.well-known/acme-challenge/ {
-    auth_basic off;
-  }
-
-  location / {
-
-    # deny node shutdown api
-    if ($request_filename ~ "_shutdown") {
-      return 403;
-      break;
-    }
-
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Host $http_host;
-    proxy_redirect off;
-  }
-
-  location = / {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Host $http_host;
-    proxy_redirect off;
-    auth_basic "off";
-  }
-
-  location ~* ^(/_cluster/health|/_cat/health) {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Host $http_host;
-    proxy_redirect off;
-    auth_basic "off";
-  }
-}
-</code></pre>
-
-<p>Restart the nginx process:</p>
-
-<pre><code class="bash">$ systemctl restart nginx
-</code></pre>
-
-<h2>Test the Nginx Proxy with SSL</h2>
-
-<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
-
-<pre><code class="bash">$ curl -iL -u 'admin:admin' http://myproxy.domain.com/_cat/nodes?v
-HTTP/1.1 301 Moved Permanently
-Server: nginx/1.14.0 (Ubuntu)
-Date: Tue, 02 Apr 2019 21:40:09 GMT
-Content-Type: text/html
-Content-Length: 194
-Connection: keep-alive
-Location: https://myproxy.domain.com/_cat/nodes?v
-
-HTTP/1.1 200 OK
-Server: nginx/1.14.0 (Ubuntu)
-Date: Tue, 02 Apr 2019 21:40:10 GMT
-Content-Type: text/plain; charset=UTF-8
-Content-Length: 276
-Connection: keep-alive
-
-ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-10.0.0.10               40          97   3    0.15    0.10     0.08 mdi       -      Lq9P7eP
-10.0.0.11               44          96   3    0.21    0.10     0.09 mdi       *      F5edOwK
-</code></pre>
-
-<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
-
-<pre><code class="bash">$ curl -i -u 'admin:admin' https://myproxy.domain.com/_cat/nodes?v
-HTTP/1.1 200 OK
-Server: nginx/1.14.0 (Ubuntu)
-Date: Tue, 02 Apr 2019 21:40:22 GMT
-Content-Type: text/plain; charset=UTF-8
-Content-Length: 276
-Connection: keep-alive
-
-ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-10.0.0.10               44          96   4    0.18    0.10     0.09 mdi       *      F5edOwK
-10.0.0.11               39          97   5    0.13    0.09     0.08 mdi       -      Lq9P7eP
-</code></pre>
-
-<p>Setup a cronjob to auto renew the certificates:</p>
-
-<pre><code class="bash">$ crontab -e
-</code></pre>
-
-<p>Populate the following line:</p>
-
-<pre><code class="bash">6 1,13 * * * /usr/bin/certbot renew --post-hook "systemctl restart nginx" --quiet
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
 </ul>
 
 ]]></content>

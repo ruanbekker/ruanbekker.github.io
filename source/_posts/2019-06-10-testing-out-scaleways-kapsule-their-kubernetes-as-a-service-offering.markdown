@@ -87,4 +87,11 @@ scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2   Ready     node      5m        v
 scw-k8s-mystifying-torvalds-default-7f263aabab   Ready     master    17m       v1.14.1
 ```
 
-Simplicity at its best, well done to Scaleway.
+In further posts, I would like to schedule my containers only on node role nodes, so if you want to do that, we can taint the master node so that we only have container scheduling on the node role nodes:
+
+```
+$ kubectl taint node scw-k8s-mystifying-torvalds-default-7f263aabab node-role.kubernetes.io/master=effect:NoSchedule
+node/scw-k8s-mystifying-torvalds-default-7f263aabab tainted
+```
+
+Simplicity at its best, well done to [Scaleway](https://scaleway.com).

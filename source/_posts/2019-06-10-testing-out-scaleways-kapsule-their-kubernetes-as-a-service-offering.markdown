@@ -62,36 +62,12 @@ scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2   Ready     <none>    2m        v
 scw-k8s-mystifying-torvalds-default-7f263aabab   Ready     <none>    15m       v1.14.1
 ```
 
-## Label the nodes
+## Master / Node Capabilities
 
-Apply node role capabilities by labelling the nodes to one master and two nodes:
+Usually, I will label master nodes as master: `node-role.kubernetes.io/master` and worker nodes as nodes: `node-role.kubernetes.io/node` to allow container scheduling only on the worker nodes. But Scaleway manages this on their end and when you list your nodes, the nodes that you see are your "worker" nodes. 
 
-```
-$ kubectl label node scw-k8s-mystifying-torvalds-default-7f263aabab node-role.kubernetes.io/master=""
-node "scw-k8s-mystifying-torvalds-default-7f263aabab" labeled
+The master nodes are managed by Scaleway.
 
-$ kubectl label node scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2 node-role.kubernetes.io/node=""
-node "scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2" labeled
+## Well Done Scaleway
 
-$ kubectl label node scw-k8s-mystifying-torvald-jovial-mclar-25a942 node-role.kubernetes.io/node=""
-node "scw-k8s-mystifying-torvald-jovial-mclar-25a942" labeled
-```
-
-Now when we inspect the nodes, they will be labeled:
-
-```
-$ kubectl get nodes
-NAME                                             STATUS    ROLES     AGE       VERSION
-scw-k8s-mystifying-torvald-jovial-mclar-25a942   Ready     node      5m        v1.14.1
-scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2   Ready     node      5m        v1.14.1
-scw-k8s-mystifying-torvalds-default-7f263aabab   Ready     master    17m       v1.14.1
-```
-
-In further posts, I would like to schedule my containers only on node role nodes, so if you want to do that, we can taint the master node so that we only have container scheduling on the node role nodes:
-
-```
-$ kubectl taint node scw-k8s-mystifying-torvalds-default-7f263aabab node-role.kubernetes.io/master=effect:NoSchedule
-node/scw-k8s-mystifying-torvalds-default-7f263aabab tainted
-```
-
-Simplicity at its best, well done to [Scaleway](https://scaleway.com).
+Just one more reason I really love Kapsule. Simplicity at its best, well done to [Scaleway](https://scaleway.com). I hope most of the people got access to private beta, but if not, im pretty sure they will keep the public informed on public release dates.

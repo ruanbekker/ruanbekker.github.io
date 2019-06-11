@@ -231,3 +231,7 @@ Access the OpenFaaS Page via the URL:
 ## Resources
 
 - https://docs.traefik.io/user-guide/kubernetes/
+
+center>
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>

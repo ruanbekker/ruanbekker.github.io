@@ -113,3 +113,6 @@ As its running in the foreground, you can just hit ctrl + c and as we persisted 
 
 Update (2019.06) - I am preparing a full elasticsearch course available on [https://github.com/ruanbekker/elasticsearch-demo](https://github.com/ruanbekker/elasticsearch-demo) and a [Elasticsearch Cheetsheat](https://gist.github.com/ruanbekker/e8a09604b14f37e8d2f743a87b930f93), feel free to check it out.
 
+<center>
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>

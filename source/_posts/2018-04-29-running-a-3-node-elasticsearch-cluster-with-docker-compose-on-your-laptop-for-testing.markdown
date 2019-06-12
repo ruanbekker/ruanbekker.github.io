@@ -47,7 +47,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - esdata1:/home/ruan/workspace/docker/elasticsearch/data
+      - esdata1:/usr/share/elasticsearch/data
     ports:
       - 9200:9200
     networks:
@@ -67,7 +67,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - esdata2:/home/ruan/workspace/docker/elasticsearch/data
+      - esdata2:/usr/share/elasticsearch/data
     networks:
       - esnet
   elasticsearch3:
@@ -85,7 +85,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - esdata3:/home/ruan/workspace/docker/elasticsearch/data
+      - esdata3:/usr/share/elasticsearch/data
     networks:
       - esnet
 
@@ -121,7 +121,7 @@ networks:
 
 ```
 
-Now make sure the paths exist that we referenced in the compose file, in my case `/home/ruan/workspace/docker/elasticsearch/data`
+The data of our elasticsearch container volumes will reside under `/var/lib/docker/`, if you want them to persist in another location, you can use the driver_opts setting for the local volume driver.
 
 ## Deploy
 
@@ -200,13 +200,8 @@ As its running in the foreground, you can just hit ctrl + c and as we persisted 
 
 - https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html
 
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+Update (2019.06) - I am preparing a full elasticsearch course available on [https://github.com/ruanbekker/elasticsearch-demo0](https://github.com/ruanbekker/elasticsearch-demo) and a [Elasticsearch Cheetsheat](https://gist.github.com/ruanbekker/e8a09604b14f37e8d2f743a87b930f93), feel free to check it out.
+
+<center>
+  <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>

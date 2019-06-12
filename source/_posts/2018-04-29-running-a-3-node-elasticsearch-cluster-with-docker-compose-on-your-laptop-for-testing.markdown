@@ -121,13 +121,13 @@ networks:
 
 ```
 
-The data of our elasticsearch container volumes will reside under `/var/lib/docker/`, if you want them to persist in another location, you can use the driver_opts setting for the local volume driver.
+The data of our elasticsearch container volumes will reside under /var/lib/docker, if you want them to persist in another location, you can use the `driver_opts` setting for the local volume driver.
 
 ## Deploy
 
 Deploy your elasticsearch cluster with docker compose:
 
-```bash
+```
 $ docker-compose up
 ```
 
@@ -200,5 +200,5 @@ As its running in the foreground, you can just hit ctrl + c and as we persisted 
 
 - https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html
 
-Update (2019.06) - I am preparing a full elasticsearch course available on [https://github.com/ruanbekker/elasticsearch-demo0](https://github.com/ruanbekker/elasticsearch-demo) and a [Elasticsearch Cheetsheat](https://gist.github.com/ruanbekker/e8a09604b14f37e8d2f743a87b930f93), feel free to check it out.
+Update (2019.06) - I am preparing a full elasticsearch course available on [https://github.com/ruanbekker/elasticsearch-demo](https://github.com/ruanbekker/elasticsearch-demo) and a [Elasticsearch Cheetsheat](https://gist.github.com/ruanbekker/e8a09604b14f37e8d2f743a87b930f93), feel free to check it out.
 

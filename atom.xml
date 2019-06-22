@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-06-12T02:16:03-04:00</updated>
+  <updated>2019-06-22T18:46:36-04:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,402 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Play With Kinesis Data Streams for Free]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/06/22/play-with-kinesis-data-streams-for-free/"/>
+    <updated>2019-06-22T17:35:19-04:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/06/22/play-with-kinesis-data-streams-for-free</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/59969559-3f187300-9550-11e9-9e6d-7fa4dbc30198.png" alt="image" /></p>
+
+<p>Misleading title? Perhaps, depends on how you look at it. Amazon Kinesis is a fully managed, cloud-based service for real-time processing of distributed data streams. So if you&rsquo;re a curious mad person like me, you want to test out stuff and when you can test stuff out for free, why not.</p>
+
+<p>So before paying for that, why not spin something up locally, such as <a href="https://github.com/mhart/kinesalite">Kinesisalite</a> which is an implementation of Amazon Kinesis built on top of LevelDB.</p>
+
+<p>Kinesis overview:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/59969540-caddcf80-954f-11e9-8e3d-23c932d35ef1.png" alt="image" /></p>
+
+<h2>What will we be doing?</h2>
+
+<p>In this tutorial we will setup a local kinesis instance using docker then do the following:</p>
+
+<ul>
+<li>Create a Kinesis Stream, List, Describe, PutRecord, GetRecords using Python&rsquo;s Boto3 Interface</li>
+<li>Write a Python Producer and Consumer</li>
+<li>Write and Read Records from our Local Kinesis Stream</li>
+</ul>
+
+
+<h2>Building Kinesis Local on Docker</h2>
+
+<p>If you would like to skip this step, you can use my docker image: <a href="https://hub.docker.com/r/ruanbekker/kinesis-local">ruanbekker/kinesis-local:latest</a></p>
+
+<p>Our Dockerfile:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>FROM node:8.16.0-stretch-slim
+</span><span class='line'>
+</span><span class='line'>RUN apt update && apt install build-essential python-minimal -y
+</span><span class='line'>RUN npm install --unsafe-perm -g kinesalite
+</span><span class='line'>RUN apt-get clean
+</span><span class='line'>
+</span><span class='line'>CMD ["kinesalite", "--port", "4567", "--createStreaMs", "5"]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Build:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker build -t kinesis-local .</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run and expose port 4567:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker run -it -p 4567:4567 kinesis-local:latest</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Interact with Kinesis Local:</h2>
+
+<p>In this next steps we will setup our environment, which will only require <code>python</code> and <code>boto3</code>. To keep things isolated, I will do this with a docker container:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker run -it python:3.7-alpine sh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we need to install boto3 and enter the python repl:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ pip3 install boto3
+</span><span class='line'>$ python3
+</span><span class='line'>Python 3.7.3 (default, May 11 2019, 02:00:41)
+</span><span class='line'>[GCC 8.3.0] on linux
+</span><span class='line'>Type "help", "copyright", "credits" or "license" for more information.
+</span><span class='line'>&gt;&gt;&gt;</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Import boto and create the connection to our kinesis local instance:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; import boto3
+</span><span class='line'>&gt;&gt;&gt; client = boto3.Session(
+</span><span class='line'>    region_name='eu-west-1').client('kinesis', aws_access_key_id='', aws_secret_access_key='', endpoint_url='http://localhost:4567'
+</span><span class='line'>)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s list our streams and as expected, we should have zero streams available:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; client.list_streams()
+</span><span class='line'>{u'StreamNames': [], u'HasMoreStreams': False, 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': '637xx', 'HTTPHeaders': {'x-amzn-requestid': '6xx', 'content-length': '41', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:17:34 GMT', 'content-type': 'application/x-amz-json-1.1'}}}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s create a stream named <code>mystream</code> with 1 primary shard:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; client.create_stream(StreamName='mystream', ShardCount=1)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s list our streams again:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; client.list_streams()
+</span><span class='line'>{u'StreamNames': [u'mystream'], u'HasMoreStreams': False, 'ResponseMetadata': ...</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s put some data in our kinesis stream, we will push a payload with the body: <code>{"name": "ruan"}</code> to our kinesis stream with partition key: <code>a01</code> which is used for sharding:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; response = client.put_record(StreamName='mystream', Data=json.dumps({"name": "ruan"}), PartitionKey='a01')
+</span><span class='line'>&gt;&gt;&gt; response
+</span><span class='line'>{u'ShardId': u'shardId-000000000000', 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': 'cb0xx', 'HTTPHeaders': {'x-amzn-requestid': 'xx', 'content-length': '110', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:20:27 GMT', 'content-type': 'application/x-amz-json-1.1'}}, u'SequenceNumber': u'490xx'}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we have data in our stream we need to read data from our kinesis stream. Before data can be read from the stream we need to obtain the shard iterator for the shard we are interested in. A shard iterator represents the position of the stream and shard from which the consumer will read, in this case we will call the get_shard_operator method and passing the stream name, shard id and shard iterator type.</p>
+
+<p>There are 2 comman iterator types:</p>
+
+<ul>
+<li>TRIM_HORIZON: Points to the last untrimmed record in the shard</li>
+<li>LATEST: Reads the most recent data in the shard</li>
+</ul>
+
+
+<p>We will use TRIM_HORIZON in this case, get the shard iterator id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; shard_id = response['ShardId']
+</span><span class='line'>&gt;&gt;&gt; response = client.get_shard_iterator(StreamName='mystream', ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')
+</span><span class='line'>&gt;&gt;&gt; response
+</span><span class='line'>{u'ShardIterator': u'AAAxx=', 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': '22dxx', 'HTTPHeaders': {'x-amzn-requestid': '22dxx', 'content-length': '224', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:22:55 GMT', 'content-type': 'application/x-amz-json-1.1'}}}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we have the shard iterator id, we can call the get_records method with the shard iterator id, to read the data from the stream:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; shard_iterator = response['ShardIterator']
+</span><span class='line'>&gt;&gt;&gt; response = client.get_records(ShardIterator=shard_iterator)
+</span><span class='line'>&gt;&gt;&gt; response
+</span><span class='line'>{u'Records': [{u'Data': '{"name": "ruan"}', u'PartitionKey': u'a01', u'ApproximateArrivalTimestamp': datetime.datetime(2019, 6, 22, 21, 20, 27, 937000, tzinfo=tzlocal()), u'SequenceNumber': u'495xx'}], 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': '2b6xx', 'HTTPHeaders': {'x-amzn-requestid': '2b6xx', 'content-length': '441', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:30:19 GMT', 'content-type': 'application/x-amz-json-1.1'}}, u'NextShardIterator': u'AAAxx=', u'MillisBehindLatest': 0}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To loop and parse through the response to make it more readable:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; for record in response['Records']:
+</span><span class='line'>...     if 'Data' in record:
+</span><span class='line'>...         json.loads(record['Data'])
+</span><span class='line'>...
+</span><span class='line'>{u'name': u'ruan'}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once we are done, we can delete our stream:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; client.delete_stream(StreamName='mystream')</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we have the basics, lets create our producer and consumer for a demonstration on pushing data to a kinesis stream from one process and consuming it from another process. As this demonstration we will be producing and consuming data from the same laptop, in real use-cases, you will do them from seperate servers and using Amazon Kinesis.</p>
+
+<h2>Our Kinesis Producer</h2>
+
+<p>The following will create a Kinesis Local Stream and Write 25 JSON Documents to our stream:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">time</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;stefan&#39;</span><span class="p">,</span> <span class="s">&#39;pete&#39;</span><span class="p">,</span> <span class="s">&#39;tom&#39;</span><span class="p">,</span> <span class="s">&#39;frank&#39;</span><span class="p">,</span> <span class="s">&#39;peter&#39;</span><span class="p">,</span> <span class="s">&#39;ruan&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;kinesis&#39;</span><span class="p">,</span> <span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">,</span> <span class="n">endpoint_url</span><span class="o">=</span><span class="s">&#39;http://localhost:4567&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">list_streams</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">list_streams</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="s">&#39;mystream&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">list_streams</span><span class="p">[</span><span class="s">&#39;StreamNames&#39;</span><span class="p">]:</span>
+</span><span class='line'>    <span class="n">client</span><span class="o">.</span><span class="n">create_stream</span><span class="p">(</span><span class="n">StreamName</span><span class="o">=</span><span class="s">&#39;mystream&#39;</span><span class="p">,</span> <span class="n">ShardCount</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;Starting at {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;%H:%m:%S&quot;</span><span class="p">)))</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">while</span> <span class="n">count</span> <span class="o">!=</span> <span class="mi">25</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">put_record</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">StreamName</span><span class="o">=</span><span class="s">&#39;mystream&#39;</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">Data</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+</span><span class='line'>            <span class="s">&quot;number&quot;</span><span class="p">:</span> <span class="n">count</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span>
+</span><span class='line'>            <span class="s">&quot;age&quot;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span><span class="mi">50</span><span class="p">)}</span>
+</span><span class='line'>        <span class="p">),</span>
+</span><span class='line'>        <span class="n">PartitionKey</span><span class="o">=</span><span class="s">&#39;a01&#39;</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;Finished at {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;%H:%m:%S&quot;</span><span class="p">)))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Our Kinesis Local Consumer:</h2>
+
+<p>This will read 5 records at a time from our stream, you will notice if you run them on the same time it will only read one at a time as the producer only writes one per second.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">time</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">os</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;kinesis&#39;</span><span class="p">,</span> <span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">,</span> <span class="n">endpoint_url</span><span class="o">=</span><span class="s">&#39;http://localhost:4567&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">stream_details</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">describe_stream</span><span class="p">(</span><span class="n">StreamName</span><span class="o">=</span><span class="s">&#39;mystream&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">shard_id</span> <span class="o">=</span> <span class="n">stream_details</span><span class="p">[</span><span class="s">&#39;StreamDescription&#39;</span><span class="p">][</span><span class="s">&#39;Shards&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s">&#39;ShardId&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_shard_iterator</span><span class="p">(</span><span class="n">StreamName</span><span class="o">=</span><span class="s">&#39;mystream&#39;</span><span class="p">,</span> <span class="n">ShardId</span><span class="o">=</span><span class="n">shard_id</span><span class="p">,</span> <span class="n">ShardIteratorType</span><span class="o">=</span><span class="s">&#39;TRIM_HORIZON&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">shard_iterator</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;ShardIterator&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_records</span><span class="p">(</span><span class="n">ShardIterator</span><span class="o">=</span><span class="n">shard_iterator</span><span class="p">,</span> <span class="n">Limit</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">shard_iterator</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;NextShardIterator&#39;</span><span class="p">]</span>
+</span><span class='line'>    <span class="k">for</span> <span class="n">record</span> <span class="ow">in</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Records&#39;</span><span class="p">]:</span>
+</span><span class='line'>        <span class="k">if</span> <span class="s">&#39;Data&#39;</span> <span class="ow">in</span> <span class="n">record</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">record</span><span class="p">[</span><span class="s">&#39;Data&#39;</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span class='line'>            <span class="k">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">record</span><span class="p">[</span><span class="s">&#39;Data&#39;</span><span class="p">]))</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.75</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Demo Time!</h2>
+
+<p>Now that we have our <code>producer.py</code> and <code>consumer.py</code>, lets test this out.</p>
+
+<p>Start the server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">docker</span> <span class="n">run</span> <span class="o">-</span><span class="n">it</span> <span class="o">-</span><span class="n">p</span> <span class="mi">4567</span><span class="p">:</span><span class="mi">4567</span> <span class="n">ruanbekker</span><span class="o">/</span><span class="n">kinesis</span><span class="o">-</span><span class="n">local</span><span class="p">:</span><span class="n">latest</span>
+</span><span class='line'><span class="n">Listening</span> <span class="n">at</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="p">:::</span><span class="mi">4567</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the Producer from your Python Environment:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python</span> <span class="n">producer</span><span class="o">.</span><span class="n">py</span>
+</span><span class='line'><span class="n">Starting</span> <span class="n">at</span> <span class="mo">00</span><span class="p">:</span><span class="mo">06</span><span class="p">:</span><span class="mi">16</span>
+</span><span class='line'><span class="n">Finished</span> <span class="n">at</span> <span class="mo">00</span><span class="p">:</span><span class="mo">06</span><span class="p">:</span><span class="mi">42</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the Consumer from your Python Environment:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python</span> <span class="n">consumer</span><span class="o">.</span><span class="n">py</span>
+</span><span class='line'><span class="n">Starting</span> <span class="n">Consuming</span> <span class="n">at</span> <span class="mo">00</span><span class="p">:</span><span class="mo">06</span><span class="p">:</span><span class="mi">31</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;pete&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">23</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruan&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">22</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;peter&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;stefan&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">49</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;tom&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">47</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;pete&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">35</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;stefan&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruan&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">38</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">9</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;frank&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;tom&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">38</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">11</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">12</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">38</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">13</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;tom&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">25</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">14</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;tom&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;peter&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">50</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">29</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">17</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;james&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">42</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">18</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;pete&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">25</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">19</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;pete&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">36</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;tom&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">45</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">21</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;peter&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">39</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">22</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruan&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">43</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">23</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;tom&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">38</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">24</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;pete&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;age&#39;</span><span class="p">:</span> <span class="mi">40</span><span class="p">,</span> <span class="s">u&#39;number&#39;</span><span class="p">:</span> <span class="mi">25</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;frank&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="n">Finshed</span> <span class="n">Consuming</span> <span class="n">at</span> <span class="mo">00</span><span class="p">:</span><span class="mo">06</span><span class="p">:</span><span class="mi">35</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thanks</h2>
+
+<p>Hope that was useful, feel free to check out <a href="https://aws.amazon.com/kinesis/">Amazon&rsquo;s Kinesis</a> out if you are planning to run this in any non-testing environment</p>
+
+<center>
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Traefik as an Ingress Controller on Kubernetes]]></title>
@@ -5099,389 +5495,6 @@
 
 
 <p>Hope this might help someone facing the same issue</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using Drone CI to Build a Jekyll Site and Deploy to Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm/"/>
-    <updated>2019-04-23T17:57:02-04:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/56618556-3de7ca00-6623-11e9-995f-c22792f0ab21.png" alt="image" /></p>
-
-<p>CICD Pipelines! &lt;3</p>
-
-<p>In this post I will show you how to setup a cicd pipeline using drone to build a jekyll site and deploy to docker swarm.</p>
-
-<h2>Environment Overview</h2>
-
-<p><strong>Jekyll&rsquo;s Codebase</strong>: Our code will be hosted on Github (I will demonstrate how to set it up from scratch)</p>
-
-<p><strong>Secret Store</strong>: Our secrets such as ssh key, swarm host address etc will be stored in drones secrets manager</p>
-
-<p><strong>Docker Swarm</strong>: Docker Swarm has Traefik as a HTTP Loadbalancer</p>
-
-<p><strong>Drone Server and Agent</strong>: If you dont have drone, you can setup <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/">drone server and agent on docker</a> or have a look at <a href="https://cloud.drone.io">cloud.drone.io</a></p>
-
-<p><strong>Workflow:</strong></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>* Whenever a push to master is receive on github, the pipeline will be triggered
-</span><span class='line'>* The content from our github repository will be cloned to the agent on a container
-</span><span class='line'>* Jekyll will build and the output will be transferred to docker swarm using rsync
-</span><span class='line'>* The docker-compose.yml will be transferred to the docker swarm host using scp
-</span><span class='line'>* A docker stack deploy is ran via ssh</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Install Jekyll Locally</h2>
-
-<p>Install Jekyll locally, as we will use it to create the initial site. I am using a mac, so I will be using <code>brew</code>. For other operating systems, have a look at <a href="https://jekyllrb.com/docs/installation/">this post</a>.</p>
-
-<p>I will be demonstrating with a weightloss blog as an example.</p>
-
-<p>Install jekyll:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ brew install jekyll</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Go ahead and create a new site which will host the data for your jekyll site:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ jekyll new blog-weightloss</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create a Github Repository</h2>
-
-<p>First we need to create an empty github repository, in my example it was <code>github.com/ruanbekker/blog-weightloss.git</code>. Once you create the repo change into the directory created by the <code>jekyll new</code> command:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cd blog-weightloss</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now initialize git, set the remote, add the jekyll data and push to github:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ git init
-</span><span class='line'>$ git remote add origin git@github.com:ruanbekker/blog-weightloss.git # &lt;== change to your repository
-</span><span class='line'>$ git add .
-</span><span class='line'>$ git commit -m "first commit"
-</span><span class='line'>$ git push origin master</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You should see your data on your github repository.</p>
-
-<h2>Create Secrets on Drone</h2>
-
-<p>Logon to the Drone UI, sync repositories, activate the new repository and head over to settings where you will find the secrets section.</p>
-
-<p>Add the following secrets:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Secret Name: swarm_host
-</span><span class='line'>Secret Value: ip address of your swarm
-</span><span class='line'>
-</span><span class='line'>Secret Name: swarm_key
-</span><span class='line'>Secret Value: contents of your private ssh key
-</span><span class='line'>
-</span><span class='line'>Secret Name: swarm_user
-</span><span class='line'>Secret Value: the user that is allowed to ssh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You should see the following:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56619871-5c4fc480-6627-11e9-8820-c9d4ddff698c.png" alt="image" /></p>
-
-<h2>Add the Drone Config</h2>
-
-<p>Drone looks from a <code>.drone.yml</code> file in the root directory for instructions on how to do its tasks. Lets go ahead and declare our pipeline:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim .drone.yml</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And populate the drone config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>pipeline:
-</span><span class='line'>  jekyll-build:
-</span><span class='line'>    image: jekyll/jekyll:latest
-</span><span class='line'>    commands:
-</span><span class='line'>      - touch Gemfile.lock
-</span><span class='line'>      - chmod a+w Gemfile.lock
-</span><span class='line'>      - chown -R jekyll:jekyll /drone
-</span><span class='line'>      - gem update --system
-</span><span class='line'>      - gem install bundler
-</span><span class='line'>      - bundle install
-</span><span class='line'>      - bundle exec jekyll build
-</span><span class='line'>
-</span><span class='line'>  transfer-build:
-</span><span class='line'>    image: drillster/drone-rsync
-</span><span class='line'>    hosts:
-</span><span class='line'>      from_secret: swarm_host
-</span><span class='line'>    key:
-</span><span class='line'>      from_secret: swarm_key
-</span><span class='line'>    user:
-</span><span class='line'>      from_secret: swarm_user
-</span><span class='line'>    source: ./*
-</span><span class='line'>    target: ~/my-weightloss-blog.com
-</span><span class='line'>    recursive: true
-</span><span class='line'>    delete: true
-</span><span class='line'>    when:
-</span><span class='line'>      branch: [master]
-</span><span class='line'>      event: [push]
-</span><span class='line'>
-</span><span class='line'>  transfer-compose:
-</span><span class='line'>    image: appleboy/drone-scp
-</span><span class='line'>    host:
-</span><span class='line'>      from_secret: swarm_host
-</span><span class='line'>    username:
-</span><span class='line'>      from_secret: swarm_user
-</span><span class='line'>    key:
-</span><span class='line'>      from_secret: swarm_key
-</span><span class='line'>    target: /root/my-weightloss-blog.com
-</span><span class='line'>    source:
-</span><span class='line'>      - docker-compose.yml
-</span><span class='line'>    when:
-</span><span class='line'>      branch: [master]
-</span><span class='line'>      event: [push]
-</span><span class='line'>
-</span><span class='line'>  deploy-jekyll-to-swarm:
-</span><span class='line'>    image: appleboy/drone-ssh
-</span><span class='line'>    host:
-</span><span class='line'>      from_secret: swarm_host
-</span><span class='line'>    username:
-</span><span class='line'>      from_secret: swarm_user
-</span><span class='line'>    key:
-</span><span class='line'>      from_secret: swarm_key
-</span><span class='line'>    port: 22
-</span><span class='line'>    script:
-</span><span class='line'>      - docker stack deploy --prune -c /root/my-weightloss-blog.com/docker-compose.yml apps
-</span><span class='line'>    when:
-</span><span class='line'>      branch: [master]
-</span><span class='line'>      event: [push]</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Notifications?</h2>
-
-<p>If you want to be notified about your builds, you can add a slack notification step as the last step.</p>
-
-<p>To do that, create a new webhook integration, you can <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/">follow this post for a step by step guide</a>. After you have the webhook, go to secrets and create a <code>slack_webhook</code> secret.</p>
-
-<p>Then apply the notification step as shown below:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>  notify-via-slack:
-</span><span class='line'>    image: plugins/slack
-</span><span class='line'>    webhook:
-</span><span class='line'>      from_secret: slack_webhook
-</span><span class='line'>    channel: system_events
-</span><span class='line'>    template: &gt;
-</span><span class='line'>      
-</span><span class='line'>        [DRONE CI]: ** : /
-</span><span class='line'>        ( -  | )
-</span><span class='line'>
-</span><span class='line'>      
-</span><span class='line'>        [DRONE CI]: ** : /
-</span><span class='line'>        ( -  | )
-</span><span class='line'>      </span></code></pre></td></tr></table></div></figure>
-
-
-<p>Based on the status, you should get a notification similar like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56622206-6e356580-662f-11e9-8d93-286c9c126d24.png" alt="image" /></p>
-
-<h2>Add the Docker Compose</h2>
-
-<p>Next we need to declare our docker compose file which is needed to deploy our jekyll service to the swarm:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim docker-compose.yml</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And populate this info (just change the values for your own environment/settings):</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.5&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">myweightlossblog</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ruanbekker/jekyll:contrast</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">jekyll serve --watch --force_polling --verbose</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">appnet</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/root/my-weightloss-blog.com:/srv/jekyll</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">mode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">replicated</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend.loadbalancer.sticky=false&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend.loadbalancer.swarm=true&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend=myweightlossblog&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.docker.network=appnet&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.entrypoints=https&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.frontend.passHostHeader=true&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.frontend.rule=Host:www.my-weightloss-blog.com,my-weightloss-blog.com&quot;</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.port=4000&quot;</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">update_config</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">parallelism</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">2</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">delay</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">10s</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">restart_policy</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">condition</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">on-failure</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">placement</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">constraints</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">node.role == manager</span>
-</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">appnet</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">external</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Push to Github</h2>
-
-<p>Now we need to push our <code>.drone.yml</code> and <code>docker-compose.yml</code> to github. Since the repository is activated on drone, any push to master will trigger the pipeline, so after this push we should go to drone to look at our pipeline running.</p>
-
-<p>Add the untracked files and push to github:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">$ git add .drone.yml</span>
-</span><span class='line'><span class="l-Scalar-Plain">$ git add docker-compose.yml</span>
-</span><span class='line'><span class="l-Scalar-Plain">$ git commit -m &quot;add drone and docker config&quot;</span>
-</span><span class='line'><span class="l-Scalar-Plain">$ git push origin master</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you head over to your drone ui, you should see your pipeline output which will look more or less like this (just look how pretty it is! :D )</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56620236-91a8e200-6628-11e9-9278-38e3305fdcd7.png" alt="image" /></p>
-
-<h2>Test Jekyll</h2>
-
-<p>If your deployment has completed you should be able to access your application on the configured domain. A screenshot of my response when accessing Jekyll:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56620280-af764700-6628-11e9-9d4f-c2592e6cf561.png" alt="image" /></p>
-
-<p>Absolutely Amazingness! I really love drone!</p>
 ]]></content>
   </entry>
   

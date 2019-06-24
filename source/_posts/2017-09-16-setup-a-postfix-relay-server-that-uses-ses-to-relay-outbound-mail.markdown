@@ -13,7 +13,8 @@ We will setup a Postfix Relay Servcer which our clients will use to send out mai
 Install Postfix and SASL:
 
 ```bash
-$ apt install postfix mailutils libsasl2-2 sasl2-bin libsasl2-modules -y
+$ apt install postfix mailutils libsasl2-2 sasl2-bin libsasl2-modules ca-certificates -y
+$ update-ca-certificates
 ```
 
 Section we need to configure in `/etc/postfix/main.cf`:

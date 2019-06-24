@@ -16,7 +16,7 @@ Install Postfix and SASL:
 $ apt install postfix mailutils libsasl2-2 sasl2-bin libsasl2-modules -y
 ```
 
-Section we need to configure in `/etc/nginx/main.cf`:
+Section we need to configure in `/etc/postfix/main.cf`:
 
 ```bash
 relayhost = [email-smtp.eu-west-1.amazonaws.com]:587

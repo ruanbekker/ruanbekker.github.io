@@ -289,7 +289,9 @@ Finshed Consuming at 00:06:35
 ## Thanks
 
 <center>
+
 [![Say Thanks!](https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg)](https://saythanks.io/to/ruanbekker)
+
 </center>
 
 Hope that was useful, feel free to check out [Amazon's Kinesis](https://aws.amazon.com/kinesis/) out if you are planning to run this in any non-testing environment

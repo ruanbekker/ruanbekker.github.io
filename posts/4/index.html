@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Resize your Elasticsearch Index with fewer Primary Shards by using the Shrink API. In Elasticsearch, every index consists of multiple shards and &hellip;">
+  <meta name="description" content="At times you may find that the indexes in your cluster are not queried that often but you still want them around. But you also want to reduce the &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -107,6 +107,251 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/04/06/reindex-your-elasticsearch-indexes-tutorial/">Reindex Your Elasticsearch Indexes Tutorial</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-04-06T15:37:18-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>6</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>3:37 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53352581-b3892f80-392b-11e9-9532-5db5cbfc8f1c.jpg" alt="" /></p>
+
+<p>At times you may find that the indexes in your cluster are not queried that often but you still want them around. But you also want to reduce the resource footprint by reducing the number of shards, and perhaps increase the refresh interval.</p>
+
+<p>For refresh interval, if new data comes in and we dont care to have it available near real time, we can set the refresh interval for example to 60 seconds, so the index will only have the data available every 60 seconds. (default: 1s)</p>
+
+<h2>Reindexing Elasticsearch Indexes</h2>
+
+<p>In this example we will use the scenario where we have daily indexes with 5 primary shards and 1 set of replicas and we would like to create a weekly index with 1 primary shard, 1 replica and the refresh interval of 60 seconds, and reindex the previous weeks data into our weekly index.</p>
+
+<p>Create the target weekly index with the mentioned configuration:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -H "Content-Type: application/json" -XPUT 'http://127.0.0.1:9200/my-index-2019.01.01-07' -d '
+</span><span class='line'>{
+</span><span class='line'>  "settings": {
+</span><span class='line'>      "number_of_shards": "1",
+</span><span class='line'>      "number_of_replicas": "1",
+</span><span class='line'>      "refresh_interval" : "60s"
+</span><span class='line'>  }
+</span><span class='line'>}
+</span><span class='line'>'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure the index exist:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/indices/my-index-2019.01.01*?v'
+</span><span class='line'>health status index                    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+</span><span class='line'>green  open   my-index-2019.01.01      wbFEJCApSpSlbOXzb1Tjxw   5   1      22007            0      6.6mb          3.2mb
+</span><span class='line'>green  open   my-index-2019.01.02      cbDmJR7pbpRT3O2x46fj20   5   1      28031            0      7.2mb          3.4mb
+</span><span class='line'>..
+</span><span class='line'>green  open   my-index-2019.01.01-07   mJR7pJ9O4T3O9jzyI943ca   1   1          0            0       466b           233b</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the reindex job, specify the source indexes and the destination index where the data must be reindexed to:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -H 'Content-Type: application/json' -XPOST 'http://127.0.0.1:9200/_reindex' -d '
+</span><span class='line'>{
+</span><span class='line'>  "source": {
+</span><span class='line'>      "index": [
+</span><span class='line'>          "my-index-2019.01.01",
+</span><span class='line'>          "my-index-2019.01.02",
+</span><span class='line'>          "my-index-2019.01.03",
+</span><span class='line'>          "my-index-2019.01.04",
+</span><span class='line'>          "my-index-2019.01.05",
+</span><span class='line'>          "my-index-2019.01.06",
+</span><span class='line'>          "my-index-2019.01.07"
+</span><span class='line'>      ]
+</span><span class='line'>  },
+</span><span class='line'>  "dest": {
+</span><span class='line'>      "index": "my-index-2019.01.01-07"
+</span><span class='line'>  }
+</span><span class='line'>}
+</span><span class='line'>'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can use the tasks api to monitor the progress:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/tasks?'
+</span><span class='line'>indices:data/write/bulk        -3MIFskURPKxd1tg8P2j0w:912621270 -                                transport 1538459598188 22:53:18 3.1ms       x.x.x.x -3MIFsk
+</span><span class='line'>indices:data/write/bulk[s]     -3MIFskURPKxd1tg8P2j0w:912621271 -3MIFskURPKxd1tg8P2j0w:816648230 transport 1538459598188 22:53:18 3.1ms       x.x.x.x -3MIFsk</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You manipulate the output of the tasks api by either fetching specific actions:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_tasks?actions=*data/write/reindex&detailed&pretty'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Or viewing detailed output:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/tasks?detailed' | grep 'indices:data/write/reindex'
+</span><span class='line'>indices:data/write/reindex     IvoqWoUqSgGCQ0ELG21nhg:740560815 -                                transport 1538462294714 23:38:14 1.7m        x.x.x.x IvoqWoU reindex from [my-index-2019.01.01] to [my-index-2019.01.01-07]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Or you could get the json response:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_tasks?actions=*data/write/reindex&detailed&pretty'
+</span><span class='line'>{
+</span><span class='line'>  "nodes" : {
+</span><span class='line'>    "xx" : {
+</span><span class='line'>      "name" : "xx",
+</span><span class='line'>      "roles" : [ "data", "ingest" ],
+</span><span class='line'>      "tasks" : {
+</span><span class='line'>        "xx:876452606" : {
+</span><span class='line'>          "node" : "xx",
+</span><span class='line'>          "id" : 776452606,
+</span><span class='line'>          "type" : "transport",
+</span><span class='line'>          "action" : "indices:data/write/reindex",
+</span><span class='line'>          "status" : {
+</span><span class='line'>            "total" : 4785475,
+</span><span class='line'>            "updated" : 0,
+</span><span class='line'>            "created" : 234000,
+</span><span class='line'>            "deleted" : 0,
+</span><span class='line'>            "batches" : 235,
+</span><span class='line'>            "version_conflicts" : 0,
+</span><span class='line'>            "noops" : 0,
+</span><span class='line'>            "retries" : {
+</span><span class='line'>              "bulk" : 0,
+</span><span class='line'>              "search" : 0
+</span><span class='line'>            },
+</span><span class='line'>            "throttled_millis" : 0,
+</span><span class='line'>            "requests_per_second" : -1.0,
+</span><span class='line'>            "throttled_until_millis" : 0
+</span><span class='line'>          },
+</span><span class='line'>          "description" : "reindex from [my-index-2019.01.07] to [my-index-2019.01.01-07]",
+</span><span class='line'>          "start_time_in_millis" : 1538462901120,
+</span><span class='line'>          "running_time_in_nanos" : 64654161339,
+</span><span class='line'>          "cancellable" : true
+</span><span class='line'>        }
+</span><span class='line'>      }
+</span><span class='line'>    }
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Anyways, moving along. Reindex jobs will always be listed as a <code>data/write/reindex</code> action, so we can count the output:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/tasks?'  | grep 'data/write/reindex' | wc -l</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If the response is 0 then all the tasks completed and we can have a look at our index again:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/indices/my-index-2019.01.0*?v'
+</span><span class='line'>health status index                    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+</span><span class='line'>green  open   my-index-2019.01.01      wbFEJCApSpSlbOXzb1Tjxw   5   1      22007            0      6.6mb          3.2mb
+</span><span class='line'>green  open   my-index-2019.01.02      cbDmJR7pbpRT3O2x46fj20   5   1      28031            0      7.2mb          3.4mb
+</span><span class='line'>..
+</span><span class='line'>green  open   my-index-2019.01.01-07   mJR7pJ9O4T3O9jzyI943ca   1   1     322007            0     45.9mb         22.9mb</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we can verify that the reindex tasks finished and we can see the aggregated result in our target index, we can delete our source indexes:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -XDELETE 'http://127.0.0.1:9200/my-index-2019.01.01,my-index-2019.01.02,my-index-2019.01.03,my-index-2019.01.04,my-index-2019.01.05,my-index-2019.01.06,my-index-2019.01.07'</span></code></pre></td></tr></table></div></figure>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3749,887 +3994,6 @@ Finally, it recovers the target index as though it were a closed index which had
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/03/21/how-to-deploy-a-docker-swarm-cluster-on-scaleway-with-terraform/">How to Deploy a Docker Swarm Cluster on Scaleway With Terraform</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-03-21T02:15:07-04:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>21</span><span class='date-suffix'>st</span>, <span class='date-year'>2019</span></span> <span class='time'>2:15 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/54737111-09fa2e80-4bb7-11e9-97f4-a94a31fc9a3a.png" alt="" /></p>
-
-<p>We will deploy a 3 node docker swarm cluster with terraform on scaleway. I have used the base source code from <a href="https://github.com/stefanprodan/scaleway-swarm-terraform">this</a> repository but tweaked the configuration to my needs.</p>
-
-<h2>Pre-Requisites</h2>
-
-<p>Ensure terraform and jq is instaled:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew install terraform
-</span><span class='line'><span class="nv">$ </span>brew install jq
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Terraform</h2>
-
-<p>You can have a look at the linked source at the top for the source code, but below I will provide each file that will make up our terraform deployment.</p>
-
-<p>Ource <code>main.tf</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>provider <span class="s2">&quot;scaleway&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">region</span> <span class="o">=</span> <span class="s2">&quot;${var.region}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>data <span class="s2">&quot;scaleway_bootscript&quot;</span> <span class="s2">&quot;debian&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">architecture</span> <span class="o">=</span> <span class="s2">&quot;x86_64&quot;</span>
-</span><span class='line'>  <span class="nv">name</span> <span class="o">=</span> <span class="s2">&quot;x86_64 mainline 4.15.11 rev1&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>data <span class="s2">&quot;scaleway_image&quot;</span> <span class="s2">&quot;debian_stretch&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">architecture</span> <span class="o">=</span> <span class="s2">&quot;x86_64&quot;</span>
-</span><span class='line'>  <span class="nv">name</span>         <span class="o">=</span> <span class="s2">&quot;Debian Stretch&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>data <span class="s2">&quot;template_file&quot;</span> <span class="s2">&quot;docker_conf&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">template</span> <span class="o">=</span> <span class="s2">&quot;${file(&quot;</span>conf/docker.tpl<span class="s2">&quot;)}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  vars <span class="o">{</span>
-</span><span class='line'>    <span class="nv">ip</span> <span class="o">=</span> <span class="s2">&quot;${var.docker_api_ip}&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The <code>outputs.tf</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>output <span class="s2">&quot;swarm_manager_public_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_ip.swarm_manager_ip.0.ip}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>output <span class="s2">&quot;swarm_manager_private_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_server.swarm_manager.0.private_ip}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>output <span class="s2">&quot;swarm_workers_public_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> <span class="s2">&quot;${concat(scaleway_server.swarm_worker.*.name, scaleway_server.swarm_worker.*.public_ip)}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>output <span class="s2">&quot;swarm_workers_private_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> <span class="s2">&quot;${concat(scaleway_server.swarm_worker.*.name, scaleway_server.swarm_worker.*.private_ip)}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>output <span class="s2">&quot;workspace&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> <span class="s2">&quot;${terraform.workspace}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>security-groups.tf</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>resource <span class="s2">&quot;scaleway_security_group&quot;</span> <span class="s2">&quot;swarm_managers&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">name</span>        <span class="o">=</span> <span class="s2">&quot;swarm_managers&quot;</span>
-</span><span class='line'>  <span class="nv">description</span> <span class="o">=</span> <span class="s2">&quot;Allow HTTP/S and SSH traffic&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_security_group_rule&quot;</span> <span class="s2">&quot;ssh_accept&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">security_group</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_security_group.swarm_managers.id}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">action</span>    <span class="o">=</span> <span class="s2">&quot;accept&quot;</span>
-</span><span class='line'>  <span class="nv">direction</span> <span class="o">=</span> <span class="s2">&quot;inbound&quot;</span>
-</span><span class='line'>  <span class="nv">ip_range</span>  <span class="o">=</span> <span class="s2">&quot;0.0.0.0/0&quot;</span>
-</span><span class='line'>  <span class="nv">protocol</span>  <span class="o">=</span> <span class="s2">&quot;TCP&quot;</span>
-</span><span class='line'>  <span class="nv">port</span>      <span class="o">=</span> 22
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_security_group_rule&quot;</span> <span class="s2">&quot;http_accept&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">security_group</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_security_group.swarm_managers.id}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">action</span>    <span class="o">=</span> <span class="s2">&quot;accept&quot;</span>
-</span><span class='line'>  <span class="nv">direction</span> <span class="o">=</span> <span class="s2">&quot;inbound&quot;</span>
-</span><span class='line'>  <span class="nv">ip_range</span>  <span class="o">=</span> <span class="s2">&quot;0.0.0.0/0&quot;</span>
-</span><span class='line'>  <span class="nv">protocol</span>  <span class="o">=</span> <span class="s2">&quot;TCP&quot;</span>
-</span><span class='line'>  <span class="nv">port</span>      <span class="o">=</span> 80
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_security_group_rule&quot;</span> <span class="s2">&quot;https_accept&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">security_group</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_security_group.swarm_managers.id}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">action</span>    <span class="o">=</span> <span class="s2">&quot;accept&quot;</span>
-</span><span class='line'>  <span class="nv">direction</span> <span class="o">=</span> <span class="s2">&quot;inbound&quot;</span>
-</span><span class='line'>  <span class="nv">ip_range</span>  <span class="o">=</span> <span class="s2">&quot;0.0.0.0/0&quot;</span>
-</span><span class='line'>  <span class="nv">protocol</span>  <span class="o">=</span> <span class="s2">&quot;TCP&quot;</span>
-</span><span class='line'>  <span class="nv">port</span>      <span class="o">=</span> 443
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_security_group&quot;</span> <span class="s2">&quot;swarm_workers&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">name</span>        <span class="o">=</span> <span class="s2">&quot;swarm_workers&quot;</span>
-</span><span class='line'>  <span class="nv">description</span> <span class="o">=</span> <span class="s2">&quot;Allow SSH traffic&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_security_group_rule&quot;</span> <span class="s2">&quot;ssh_accept_workers&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">security_group</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_security_group.swarm_workers.id}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">action</span>    <span class="o">=</span> <span class="s2">&quot;accept&quot;</span>
-</span><span class='line'>  <span class="nv">direction</span> <span class="o">=</span> <span class="s2">&quot;inbound&quot;</span>
-</span><span class='line'>  <span class="nv">ip_range</span>  <span class="o">=</span> <span class="s2">&quot;0.0.0.0/0&quot;</span>
-</span><span class='line'>  <span class="nv">protocol</span>  <span class="o">=</span> <span class="s2">&quot;TCP&quot;</span>
-</span><span class='line'>  <span class="nv">port</span>      <span class="o">=</span> 22
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>variables.tf</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>variable <span class="s2">&quot;docker_version&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;18.06.3~ce~3-0~debian&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>variable <span class="s2">&quot;region&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;ams1&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>variable <span class="s2">&quot;manager_instance_type&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;START1-M&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>variable <span class="s2">&quot;worker_instance_type&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;START1-M&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>variable <span class="s2">&quot;worker_instance_count&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> 2
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>variable <span class="s2">&quot;docker_api_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;127.0.0.1&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>managers.tf</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>resource <span class="s2">&quot;scaleway_ip&quot;</span> <span class="s2">&quot;swarm_manager_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">count</span> <span class="o">=</span> 1
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_server&quot;</span> <span class="s2">&quot;swarm_manager&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">count</span>          <span class="o">=</span> 1
-</span><span class='line'>  <span class="nv">name</span>           <span class="o">=</span> <span class="s2">&quot;${terraform.workspace}-manager-${count.index + 1}&quot;</span>
-</span><span class='line'>  <span class="nv">image</span>          <span class="o">=</span> <span class="s2">&quot;${data.scaleway_image.debian_stretch.id}&quot;</span>
-</span><span class='line'>  <span class="nb">type</span>           <span class="o">=</span> <span class="s2">&quot;${var.manager_instance_type}&quot;</span>
-</span><span class='line'>  <span class="nv">bootscript</span>     <span class="o">=</span> <span class="s2">&quot;${data.scaleway_bootscript.debian.id}&quot;</span>
-</span><span class='line'>  <span class="nv">security_group</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_security_group.swarm_managers.id}&quot;</span>
-</span><span class='line'>  <span class="nv">public_ip</span>      <span class="o">=</span> <span class="s2">&quot;${element(scaleway_ip.swarm_manager_ip.*.ip, count.index)}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  volume <span class="o">{</span>
-</span><span class='line'>    <span class="nv">size_in_gb</span> <span class="o">=</span> 50
-</span><span class='line'>    <span class="nb">type</span>       <span class="o">=</span> <span class="s2">&quot;l_ssd&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">script</span> <span class="o">=</span> <span class="s2">&quot;scripts/mount-disk.sh&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  connection <span class="o">{</span>
-</span><span class='line'>    <span class="nb">type</span> <span class="o">=</span> <span class="s2">&quot;ssh&quot;</span>
-</span><span class='line'>    <span class="nv">user</span> <span class="o">=</span> <span class="s2">&quot;root&quot;</span>
-</span><span class='line'>    <span class="nv">private_key</span> <span class="o">=</span> <span class="s2">&quot;${file(&quot;</span>~/.ssh/id_rsa<span class="s2">&quot;)}&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;mkdir -p /etc/systemd/system/docker.service.d&quot;</span>,
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;file&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">content</span>     <span class="o">=</span> <span class="s2">&quot;${data.template_file.docker_conf.rendered}&quot;</span>
-</span><span class='line'>    <span class="nv">destination</span> <span class="o">=</span> <span class="s2">&quot;/etc/systemd/system/docker.service.d/docker.conf&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;file&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nb">source</span>      <span class="o">=</span> <span class="s2">&quot;scripts/install-docker-ce.sh&quot;</span>
-</span><span class='line'>    <span class="nv">destination</span> <span class="o">=</span> <span class="s2">&quot;/tmp/install-docker-ce.sh&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;file&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nb">source</span>      <span class="o">=</span> <span class="s2">&quot;scripts/local-persist-plugin.sh&quot;</span>
-</span><span class='line'>    <span class="nv">destination</span> <span class="o">=</span> <span class="s2">&quot;/tmp/local-persist-plugin.sh&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;chmod +x /tmp/install-docker-ce.sh&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;/tmp/install-docker-ce.sh ${var.docker_version}&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;docker swarm init --advertise-addr ${self.private_ip}&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;chmod +x /tmp/local-persist-plugin.sh&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;/tmp/local-persist-plugin.sh&quot;</span>
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>workers.tf</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-<span class='line-number'>80</span>
-<span class='line-number'>81</span>
-<span class='line-number'>82</span>
-<span class='line-number'>83</span>
-<span class='line-number'>84</span>
-<span class='line-number'>85</span>
-<span class='line-number'>86</span>
-<span class='line-number'>87</span>
-<span class='line-number'>88</span>
-<span class='line-number'>89</span>
-<span class='line-number'>90</span>
-<span class='line-number'>91</span>
-<span class='line-number'>92</span>
-<span class='line-number'>93</span>
-<span class='line-number'>94</span>
-<span class='line-number'>95</span>
-<span class='line-number'>96</span>
-<span class='line-number'>97</span>
-<span class='line-number'>98</span>
-<span class='line-number'>99</span>
-<span class='line-number'>100</span>
-<span class='line-number'>101</span>
-<span class='line-number'>102</span>
-<span class='line-number'>103</span>
-<span class='line-number'>104</span>
-<span class='line-number'>105</span>
-<span class='line-number'>106</span>
-<span class='line-number'>107</span>
-<span class='line-number'>108</span>
-<span class='line-number'>109</span>
-<span class='line-number'>110</span>
-<span class='line-number'>111</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>resource <span class="s2">&quot;scaleway_ip&quot;</span> <span class="s2">&quot;swarm_worker_ip&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">count</span> <span class="o">=</span> <span class="s2">&quot;${var.worker_instance_count}&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>resource <span class="s2">&quot;scaleway_server&quot;</span> <span class="s2">&quot;swarm_worker&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">count</span>          <span class="o">=</span> <span class="s2">&quot;${var.worker_instance_count}&quot;</span>
-</span><span class='line'>  <span class="nv">name</span>           <span class="o">=</span> <span class="s2">&quot;${terraform.workspace}-worker-${count.index + 1}&quot;</span>
-</span><span class='line'>  <span class="nv">image</span>          <span class="o">=</span> <span class="s2">&quot;${data.scaleway_image.debian_stretch.id}&quot;</span>
-</span><span class='line'>  <span class="nb">type</span>           <span class="o">=</span> <span class="s2">&quot;${var.worker_instance_type}&quot;</span>
-</span><span class='line'>  <span class="nv">bootscript</span>     <span class="o">=</span> <span class="s2">&quot;${data.scaleway_bootscript.debian.id}&quot;</span>
-</span><span class='line'>  <span class="nv">security_group</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_security_group.swarm_workers.id}&quot;</span>
-</span><span class='line'>  <span class="nv">public_ip</span>      <span class="o">=</span> <span class="s2">&quot;${element(scaleway_ip.swarm_worker_ip.*.ip, count.index)}&quot;</span>
-</span><span class='line'>
-</span><span class='line'>  volume <span class="o">{</span>
-</span><span class='line'>    <span class="nv">size_in_gb</span> <span class="o">=</span> 50
-</span><span class='line'>    <span class="nb">type</span>       <span class="o">=</span> <span class="s2">&quot;l_ssd&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">script</span> <span class="o">=</span> <span class="s2">&quot;scripts/mount-disk.sh&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  connection <span class="o">{</span>
-</span><span class='line'>    <span class="nb">type</span> <span class="o">=</span> <span class="s2">&quot;ssh&quot;</span>
-</span><span class='line'>    <span class="nv">user</span> <span class="o">=</span> <span class="s2">&quot;root&quot;</span>
-</span><span class='line'>    <span class="nv">private_key</span> <span class="o">=</span> <span class="s2">&quot;${file(&quot;</span>~/.ssh/id_rsa<span class="s2">&quot;)}&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;mkdir -p /etc/systemd/system/docker.service.d&quot;</span>,
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;file&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">content</span>     <span class="o">=</span> <span class="s2">&quot;${data.template_file.docker_conf.rendered}&quot;</span>
-</span><span class='line'>    <span class="nv">destination</span> <span class="o">=</span> <span class="s2">&quot;/etc/systemd/system/docker.service.d/docker.conf&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;file&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nb">source</span>      <span class="o">=</span> <span class="s2">&quot;scripts/install-docker-ce.sh&quot;</span>
-</span><span class='line'>    <span class="nv">destination</span> <span class="o">=</span> <span class="s2">&quot;/tmp/install-docker-ce.sh&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;file&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nb">source</span>      <span class="o">=</span> <span class="s2">&quot;scripts/local-persist-plugin.sh&quot;</span>
-</span><span class='line'>    <span class="nv">destination</span> <span class="o">=</span> <span class="s2">&quot;/tmp/local-persist-plugin.sh&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;chmod +x /tmp/install-docker-ce.sh&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;/tmp/install-docker-ce.sh ${var.docker_version}&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;docker swarm join --token ${data.external.swarm_tokens.result.worker} ${scaleway_server.swarm_manager.0.private_ip}:2377&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;chmod +x /tmp/local-persist-plugin.sh&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;/tmp/local-persist-plugin.sh&quot;</span>,
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">when</span> <span class="o">=</span> <span class="s2">&quot;destroy&quot;</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;docker node update --availability drain ${self.name}&quot;</span>,
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nv">on_failure</span> <span class="o">=</span> <span class="s2">&quot;continue&quot;</span>
-</span><span class='line'>
-</span><span class='line'>    connection <span class="o">{</span>
-</span><span class='line'>      <span class="nb">type</span> <span class="o">=</span> <span class="s2">&quot;ssh&quot;</span>
-</span><span class='line'>      <span class="nv">user</span> <span class="o">=</span> <span class="s2">&quot;root&quot;</span>
-</span><span class='line'>      <span class="nv">host</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_ip.swarm_manager_ip.0.ip}&quot;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">when</span> <span class="o">=</span> <span class="s2">&quot;destroy&quot;</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;docker swarm leave&quot;</span>,
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nv">on_failure</span> <span class="o">=</span> <span class="s2">&quot;continue&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  provisioner <span class="s2">&quot;remote-exec&quot;</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">when</span> <span class="o">=</span> <span class="s2">&quot;destroy&quot;</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nv">inline</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>      <span class="s2">&quot;docker node rm --force ${self.name}&quot;</span>,
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="nv">on_failure</span> <span class="o">=</span> <span class="s2">&quot;continue&quot;</span>
-</span><span class='line'>
-</span><span class='line'>    connection <span class="o">{</span>
-</span><span class='line'>      <span class="nb">type</span> <span class="o">=</span> <span class="s2">&quot;ssh&quot;</span>
-</span><span class='line'>      <span class="nv">user</span> <span class="o">=</span> <span class="s2">&quot;root&quot;</span>
-</span><span class='line'>      <span class="nv">host</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_ip.swarm_manager_ip.0.ip}&quot;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>data <span class="s2">&quot;external&quot;</span> <span class="s2">&quot;swarm_tokens&quot;</span> <span class="o">{</span>
-</span><span class='line'>  <span class="nv">program</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;./scripts/fetch-tokens.sh&quot;</span><span class="o">]</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">query</span> <span class="o">=</span> <span class="o">{</span>
-</span><span class='line'>    <span class="nv">host</span> <span class="o">=</span> <span class="s2">&quot;${scaleway_ip.swarm_manager_ip.0.ip}&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="nv">depends_on</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;scaleway_server.swarm_manager&quot;</span><span class="o">]</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our config for the docker daemon: <code>conf/docker.tpl</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>Service<span class="o">]</span>
-</span><span class='line'><span class="nv">ExecStart</span><span class="o">=</span>
-</span><span class='line'><span class="nv">ExecStart</span><span class="o">=</span>/usr/bin/dockerd -H fd:// <span class="se">\</span>
-</span><span class='line'>  -H tcp://<span class="k">${</span><span class="nv">ip</span><span class="k">}</span>:2375 <span class="se">\</span>
-</span><span class='line'>  --storage-driver<span class="o">=</span>overlay2 <span class="se">\</span>
-</span><span class='line'>  --dns 8.8.4.4 --dns 8.8.8.8 <span class="se">\</span>
-</span><span class='line'>  --log-driver json-file <span class="se">\</span>
-</span><span class='line'>  --log-opt max-size<span class="o">=</span>50m --log-opt max-file<span class="o">=</span><span class="m">10</span> <span class="se">\</span>
-</span><span class='line'>  --experimental<span class="o">=</span><span class="nb">true</span> <span class="se">\</span>
-</span><span class='line'>  --metrics-addr 172.17.0.1:9323
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our script to mount our additional disk: <code>scripts/mount-disk.sh</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/bin/bash</span>
-</span><span class='line'>apt update
-</span><span class='line'>apt install xfsprogs attr -y
-</span><span class='line'>mkfs -t xfs /dev/vdb
-</span><span class='line'><span class="nb">echo</span> <span class="s2">&quot;/dev/vdb /mnt xfs defaults 0 0&quot;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>mount -a
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our script to install docker: <code>scripts/install-docker-ce.sh</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
-</span><span class='line'>
-</span><span class='line'><span class="nv">DOCKER_VERSION</span><span class="o">=</span><span class="nv">$1</span>
-</span><span class='line'><span class="nv">DEBIAN_FRONTEND</span><span class="o">=</span>noninteractive apt-get -qq update
-</span><span class='line'>apt-get -qq install apt-transport-https ca-certificates curl software-properties-common
-</span><span class='line'>curl -fsSL https://download.docker.com/linux/debian/gpg <span class="p">|</span> sudo apt-key add -
-</span><span class='line'>add-apt-repository <span class="s2">&quot;deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable&quot;</span>
-</span><span class='line'>
-</span><span class='line'>apt-get -q update -y
-</span><span class='line'>apt-get -q install -y docker-ce<span class="o">=</span><span class="nv">$DOCKER_VERSION</span> containerd.io
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our script that retrieves the swarm tokens: <code>scripts/fetch-tokens.sh</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Processing JSON in shell scripts</span>
-</span><span class='line'><span class="c"># https://www.terraform.io/docs/providers/external/data_source.html#processing-json-in-shell-scripts</span>
-</span><span class='line'>
-</span><span class='line'><span class="nb">set</span> -e
-</span><span class='line'>
-</span><span class='line'><span class="c"># Extract &quot;host&quot; argument from the input into HOST shell variable</span>
-</span><span class='line'><span class="nb">eval</span> <span class="s2">&quot;$(jq -r &#39;@sh &quot;</span><span class="nv">HOST</span><span class="o">=</span><span class="se">\(</span>.host<span class="o">)</span><span class="s2">&quot;&#39;)&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="nv">MANAGER</span><span class="o">=</span><span class="k">$(</span>ssh -o <span class="nv">StrictHostKeyChecking</span><span class="o">=</span>no -o <span class="nv">UserKnownHostsFile</span><span class="o">=</span>/dev/null root@<span class="nv">$HOST</span> docker swarm join-token manager -q<span class="k">)</span>
-</span><span class='line'><span class="nv">WORKER</span><span class="o">=</span><span class="k">$(</span>ssh -o <span class="nv">StrictHostKeyChecking</span><span class="o">=</span>no -o <span class="nv">UserKnownHostsFile</span><span class="o">=</span>/dev/null root@<span class="nv">$HOST</span> docker swarm join-token worker -q<span class="k">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># produce a json object containing the tokens</span>
-</span><span class='line'>jq -n --arg manager <span class="s2">&quot;$MANAGER&quot;</span> --arg worker <span class="s2">&quot;$WORKER&quot;</span> <span class="s1">&#39;{&quot;manager&quot;:$manager,&quot;worker&quot;:$worker}&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our script to install the <a href="https://github.com/CWSpear/local-persist">local-persist docker volume</a> plugin: <code>scripts/local-persist-plugin.sh</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
-</span><span class='line'><span class="nb">set</span> -e
-</span><span class='line'>curl -fsSL https://raw.githubusercontent.com/CWSpear/local-persist/master/scripts/install.sh <span class="p">|</span> bash
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy your Swarm</h2>
-
-<p>Note that we will be deploying 3x SMART1-M servers with Debian Stretch. At this moment the image id is the one of debian stretch but may change in the future. If you want to change the distro, update the install script, and the terraform files.</p>
-
-<p><a href="https://www.scaleway.com/docs/generate-an-api-token/">Generate API Token on Scaleway</a> then export it to your current shell:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nb">export </span><span class="nv">SCALEWAY_ORGANIZATION</span><span class="o">=</span><span class="s2">&quot;&lt;organization-id&gt;&quot;</span>
-</span><span class='line'><span class="nb">export </span><span class="nv">SCALEWAY_TOKEN</span><span class="o">=</span><span class="s2">&quot;&lt;secret&gt;&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Make sure that your ssh private key is the intended one as in the config, in my example: <code>~/.ssh/id_rsa</code> and that they are allowed in your servers <code>authorized_keys</code> file</p>
-
-<p>Create a new workspace:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>terraform new workspace swarm
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Pull down the providers and initialize:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>terraform init
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Deploy!</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>terraform apply
-</span><span class='line'>...
-</span><span class='line'>...
-</span><span class='line'>scaleway_server.swarm_worker<span class="o">[</span>0<span class="o">]</span>: Creation <span class="nb">complete </span>after 4m55s <span class="o">(</span>ID: xx-xx-xx-xx-xx<span class="o">)</span>
-</span><span class='line'>
-</span><span class='line'>Apply <span class="nb">complete</span>! Resources: <span class="m">14</span> added, <span class="m">0</span> changed, <span class="m">0</span> destroyed.
-</span><span class='line'>Outputs:
-</span><span class='line'>
-</span><span class='line'><span class="nv">swarm_manager_private_ip</span> <span class="o">=</span> 10.21.x.x
-</span><span class='line'><span class="nv">swarm_manager_public_ip</span> <span class="o">=</span> 51.xx.xx.xx
-</span><span class='line'><span class="nv">swarm_workers_private_ip</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>    swarm-worker-1,
-</span><span class='line'>    swarm-worker-2,
-</span><span class='line'>    10.20.xx.xx,
-</span><span class='line'>    10.20.xx.xx,
-</span><span class='line'><span class="o">]</span>
-</span><span class='line'><span class="nv">swarm_workers_public_ip</span> <span class="o">=</span> <span class="o">[</span>
-</span><span class='line'>    swarm-worker-1,
-</span><span class='line'>    swarm-worker-2,
-</span><span class='line'>    51.xx.xx.xx,
-</span><span class='line'>    51.xx.xx.xx,
-</span><span class='line'><span class="o">]</span>
-</span><span class='line'><span class="nv">workspace</span> <span class="o">=</span> swarm
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once your deployment is done you will be prompted with the public/private ip addresses of your nodes as seen above, you can also manually retrieve them:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>terraform terraform output
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Or for a specific node, such as the manager:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>terraform terraform output swarm-manager
-</span><span class='line'>51.xx.xx.xx
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Go ahead and ssh to your manager nodes and list the swarm nodes, boom, easy right.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker node ls
-</span><span class='line'>ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
-</span><span class='line'>2696o0vrt93x8qf2gblbfc8pf *   swarm-manager       Ready               Active              Leader              18.09.3
-</span><span class='line'>72ava7rrp2acnyadisg52n7ym     swarm-worker-1      Ready               Active                                  18.09.3
-</span><span class='line'>sy2otqn20qe9jc2v9io3a21jm     swarm-worker-2      Ready               Active                                  18.09.3
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When you want to destroy the environment:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>terraform destroy -force
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>References:</h2>
-
-<p>Big thanks goes to <a href="https://github.com/stefanprodan">@stefanprodan</a></p>
-
-<ul>
-<li><a href="https://www.terraform.io/docs/index.html">https://www.terraform.io/docs/index.html</a></li>
-<li><a href="https://docs.docker.com/engine/swarm/">https://docs.docker.com/engine/swarm/</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/5">&larr; Older</a>
@@ -4670,6 +4034,10 @@ Finally, it recovers the target index as though it were a closed index which had
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2019/07/07/making-deploying-functions-even-easier-with-faas-cli-up-using-openfaas/">Making Deploying Functions Even Easier With Faas-cli Up Using OpenFaaS</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2019/07/06/using-openfaas-with-amazon-dynamodb/">Using OpenFaas With Amazon DynamoDB</a>
       </li>
     
@@ -4683,10 +4051,6 @@ Finally, it recovers the target index as though it were a closed index which had
     
       <li class="post">
         <a href="/blog/2019/06/10/testing-out-scaleways-kapsule-their-kubernetes-as-a-service-offering/">Testing Out Scaleways Kapsule Their Kubernetes as a Service Offering</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2019/06/04/setup-a-logstash-server-for-amazon-elasticsearch-service-and-auth-with-iam/">Setup a Logstash Server for Amazon Elasticsearch Service and Auth With IAM</a>
       </li>
     
   </ul>

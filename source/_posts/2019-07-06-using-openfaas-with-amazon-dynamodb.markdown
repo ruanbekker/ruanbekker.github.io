@@ -30,6 +30,8 @@ In this tutorial we will cover a couple of things, and a summary on the to do li
 
 Our 3 functions will do very basic operations for this demonstration, but I believe this is a good starting point.
 
+All the examples of this blog post is available in [this github repository](https://github.com/ruanbekker/blog-assets/tree/master/openfaas-dynamodb)
+
 ## The Use-Case Scenario
 
 In this scenario we want to store user information into DynamoDB, we will use a hash that we will calculate using the users ID Number + Lastname. So when we have thousands or millions of items, we dont need to search through the entire table, but since we can re-calculate the sha hash, we can do a single GetItem operation to find the entry about the user in question.

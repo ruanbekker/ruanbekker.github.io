@@ -292,7 +292,11 @@ Export the OPENFAAS_URL:
 $ export OPENFAAS_URL=https://openfaas.domain.com
 ```
 
-## Create the Lookup Function:
+## One Stack File for All 3 Functions:
+
+We will create our first function to generate the yaml definition, then we will rename our generated filename to `stack.yml` then the next 2 functions, we will use the append flag to append the functions yaml to our `stack.yml` file, so that we can simply use `faas-cli up`
+
+## Create the Lookup Function: 
 
 Create a Python3 Function, and prefix it with your dockerhub user:
 
@@ -301,12 +305,21 @@ $ faas-cli new \
 --lang python3 fn-dynamodb-lookup \
 --prefix=ruanbekker \
 --gateway https://openfaas.domain.com
+
+Function created in folder: fn-foo
+Stack file written: fn-dynamodb-lookup.yml
+```
+
+As we will be using one stack file, rename the generated stack file:
+
+```bash
+$ mv fn-dynamodb-lookup.yml stack.yml
 ```
 
 Open the stack file and set the environment variables:
 
 ```bash
-$ cat fn-dynamodb-lookup.yml
+$ cat stack.yml
 provider:
   name: openfaas
   gateway: https://openfaas.domain.com
@@ -340,37 +353,31 @@ def handle(req):
     return hash_value
 ```
 
-Build, ship and deploy your function:
-
-```bash
-$ faas-cli build -f fn-dynamodb-lookup.yml && \
-faas-cli push -f fn-dynamodb-lookup.yml && \
-faas-cli deploy -f fn-dynamodb-lookup.yml
-
-Deploying: fn-dynamodb-lookup.
-Deployed. 202 Accepted.
-URL: https://openfaas.domain.com/function/fn-dynamodb-lookup
-```
-
 ## Create the Write Function:
 
-Create a Python3 Function, and prefix it with your dockerhub user:
+Create a Python3 Function, and prefix it with your dockerhub user, and use the append flag to update our stack file:
 
 ```bash
 $ faas-cli new \
 --lang python3 fn-dynamodb-write \
 --prefix=ruanbekker \
 --gateway https://openfaas.domain.com
+--append stack.yml
+
+Function created in folder: fn-dynamodb-write
+Stack file updated: stack.yml
 ```
 
 Open the stack file and set the environment variables and include the secrets that was created:
 
 ```bash
-$ cat fn-dynamodb-write.yml
+$ cat stack.yml
 provider:
   name: openfaas
   gateway: https://openfaas.domain.com
 functions:
+  fn-dynamodb-lookup:
+  # ...
   fn-dynamodb-write:
     lang: python3
     handler: ./fn-dynamodb-write
@@ -432,37 +439,33 @@ def handle(req):
     return response
 ```
 
-Build, ship and deploy your function:
-
-```bash
-$ faas-cli build -f fn-dynamodb-write.yml && \
-faas-cli push -f fn-dynamodb-write.yml && \
-faas-cli deploy -f fn-dynamodb-write.yml
-
-Deploying: fn-dynamodb-write.
-Deployed. 202 Accepted.
-URL: https://openfaas.domain.com/function/fn-dynamodb-write
-```
-
 ## Create the Get Function:
 
-Create a Python3 Function, and prefix it with your dockerhub user:
+Create a Python3 Function, and prefix it with your dockerhub user, and use the append flag to specify the stack file:
 
 ```bash
 $ faas-cli new \
 --lang python3 fn-dynamodb-get \
 --prefix=ruanbekker \
 --gateway https://openfaas.domain.com
+--append stack.yml
+
+Function created in folder: fn-dynamodb-get
+Stack file updated: stack.yml
 ```
 
 Open the stack file and set the environment variables and include the secrets that was created:
 
 ```bash
-$ cat fn-dynamodb-get.yml
+$ cat stack.yml
 provider:
   name: openfaas
   gateway: https://openfaas.domain.com
 functions:
+  fn-dynamodb-lookup:
+  # .. 
+  fn-dynamodb-write:
+  # ..
   fn-dynamodb-get:
     lang: python3
     handler: ./fn-dynamodb-get
@@ -516,12 +519,22 @@ def handle(req):
     return item_data
 ```
 
-Build, ship and deploy:
+## Build, Push and Deploy:
+
+It's time to deploy our functions and since we have all our stack info in one file, we can use `faas-cli up` which will build, push and deploy our functions.
+
+By default it expects the filename to be `stack.yml` therefore we don't need to specify the filename, but if you had a different filename, you can overwrite the default behaviour with `-f`:
 
 ```bash
-$ faas-cli build -f fn-dynamodb-get.yml && \
-faas-cli push -f fn-dynamodb-get.yml && \
-faas-cli deploy -f fn-dynamodb-get.yml
+$ faas-cli up
+
+Deploying: fn-dynamodb-lookup.
+Deployed. 202 Accepted.
+URL: https://openfaas.domain.com/function/fn-dynamodb-lookup
+
+Deploying: fn-dynamodb-write.
+Deployed. 202 Accepted.
+URL: https://openfaas.domain.com/function/fn-dynamodb-write
 
 Deploying: fn-dynamodb-get.
 Deployed. 202 Accepted.

@@ -105,5 +105,5 @@ Deployed. 202 Accepted.
 URL: https://openfaas.domain.com/function/fn-bar
 ```
 
-Simply amazing. OpenFaaS done a great job in making it as simple and easy as possible to get your functions from zero to deployed in seconds.
+Simply amazing. OpenFaaS has done a great job in making it as simple and easy as possible to get your functions from zero to deployed in seconds.
 

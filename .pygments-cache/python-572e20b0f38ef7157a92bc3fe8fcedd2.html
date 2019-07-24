@@ -1,0 +1,35 @@
+<div class="highlight"><pre><span class="kn">import</span> <span class="nn">boto3</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+
+<span class="n">aws_key</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;/var/openfaas/secrets/openfaas-aws-access-key&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+<span class="n">aws_secret</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;/var/openfaas/secrets/openfaas-aws-secret-key&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+<span class="n">dynamodb_region</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;dynamodb_region&#39;</span><span class="p">]</span>
+<span class="n">dynamodb_table</span>  <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;dynamodb_table&#39;</span><span class="p">]</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="n">dynamodb_region</span><span class="p">)</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">,</span> <span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_key</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret</span><span class="p">)</span>
+<span class="n">table</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="n">dynamodb_table</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">calc_sha</span><span class="p">(</span><span class="n">id_number</span><span class="p">,</span> <span class="n">lastname</span><span class="p">):</span>
+    <span class="n">string</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s">&quot;id&quot;</span><span class="p">:</span> <span class="n">id_number</span><span class="p">,</span> <span class="s">&quot;lastname&quot;</span><span class="p">:</span> <span class="n">lastname</span><span class="p">},</span> <span class="n">sort_keys</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+    <span class="n">hash_value</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">(</span><span class="n">string</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&quot;utf-8&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">hash_value</span>
+
+<span class="k">def</span> <span class="nf">create_timestamp</span><span class="p">():</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;%Y-%m-</span><span class="si">%d</span><span class="s">T%H:%M&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">response</span>
+
+<span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+    <span class="n">event</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+    <span class="n">unique_id</span> <span class="o">=</span> <span class="n">calc_sha</span><span class="p">(</span><span class="n">event</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">],</span> <span class="n">event</span><span class="p">[</span><span class="s">&#39;lastname&#39;</span><span class="p">])</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">put_item</span><span class="p">(</span>
+        <span class="n">Item</span><span class="o">=</span><span class="p">{</span>
+            <span class="s">&#39;hash_value&#39;</span><span class="p">:</span> <span class="n">unique_id</span><span class="p">,</span>
+            <span class="s">&#39;timestamp&#39;</span><span class="p">:</span> <span class="n">create_timestamp</span><span class="p">(),</span>
+            <span class="s">&#39;payload&#39;</span><span class="p">:</span> <span class="n">event</span><span class="p">[</span><span class="s">&#39;payload&#39;</span><span class="p">]</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">response</span>
+</pre></div>

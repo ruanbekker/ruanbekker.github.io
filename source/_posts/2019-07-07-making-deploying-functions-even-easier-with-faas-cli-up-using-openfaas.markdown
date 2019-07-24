@@ -14,7 +14,7 @@ I recently discovered that the `faas-cli` allows you to append your function's y
 
 ## The way I always did it:
 
-Usually, I will go through this flow: create, build, push, deploy, when creating 2 functions that will be in the same stack:
+.Usually, I will go through this flow: create, build, push, deploy, when creating 2 functions that will be in the same stack:
 
 ```
 $ faas-cli new --lang python3 fn-old-foo \

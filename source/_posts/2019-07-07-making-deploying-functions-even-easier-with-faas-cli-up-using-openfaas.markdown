@@ -10,11 +10,11 @@ categories: ["openfaas", "python", "serverless"]
 
 [![Say Thanks!](https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg)](https://saythanks.io/to/ruanbekker) [![Slack Status](https://linux-hackers-slack.herokuapp.com/badge.svg)](https://linux-hackers-slack.herokuapp.com/) [![Chat on Slack](https://img.shields.io/badge/chat-on_slack-orange.svg)](https://linux-hackers.slack.com/) ![GitHub followers](https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&style=social) ![Twitter Follow](https://img.shields.io/twitter/follow/ruanbekker.svg?style=social)
 
-I recently discovered that the `faas-cli` allows you to append your function's yaml to an existing file when generating a new function. And that `faas-cli up` does the build, push and deploy for you.
+a I recently discovered that the `faas-cli` allows you to append your function's yaml to an existing file when generating a new function. And that `faas-cli up` does the build, push and deploy for you.
 
 ## The way I always did it:
 
-.Usually, I will go through this flow: create, build, push, deploy, when creating 2 functions that will be in the same stack:
+Usually, I will go through this flow: create, build, push, deploy, when creating 2 functions that will be in the same stack:
 
 ```
 $ faas-cli new --lang python3 fn-old-foo \

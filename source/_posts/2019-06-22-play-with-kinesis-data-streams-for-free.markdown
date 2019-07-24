@@ -8,7 +8,7 @@ categories: ["kinesis", "streaming", "aws", "amazon", "python"]
 
 ![image](https://user-images.githubusercontent.com/567298/59969559-3f187300-9550-11e9-9e6d-7fa4dbc30198.png)
 
-Misleading title? Perhaps, depends on how you look at it. Amazon Kinesis is a fully managed, cloud-based service for real-time processing of distributed data streams. So if you're a curious mad person like me, you want to test out stuff and when you can test stuff out for free, why not.
+Misleading title?? Perhaps, depends on how you look at it. Amazon Kinesis is a fully managed, cloud-based service for real-time processing of distributed data streams. So if you're a curious mad person like me, you want to test out stuff and when you can test stuff out for free, why not.
 
 So before paying for that, why not spin something up locally, such as [Kinesisalite](https://github.com/mhart/kinesalite) which is an implementation of Amazon Kinesis built on top of LevelDB.
 

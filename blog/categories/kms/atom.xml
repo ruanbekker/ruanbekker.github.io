@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Kms | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/kms/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-09-02T18:01:08+02:00</updated>
+  <updated>2019-09-04T20:22:35+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,244 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[AWS S3 KMS and Python for Secrets Management]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/09/04/aws-s3-kms-and-python-for-secrets-management/"/>
+    <updated>2019-09-04T19:58:45+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/09/04/aws-s3-kms-and-python-for-secrets-management</id>
+    <content type="html"><![CDATA[<p><img src="https://miro.medium.com/max/2400/1*9PSzVZDHjr321CpxJHcxPQ.png" alt="" /></p>
+
+<p>So your application need to store secrets and you are looking for a home for them. In this tutorial we will see how we can use Python, S3 and KMS to build our own solution for managing secrets.</p>
+
+<p>There is SSM and Secrets Manager that probably does a better job, but my mind got curious :D</p>
+
+<h2>High Level Goal</h2>
+
+<p>From a High-Level we want to store secrets encrypted on S3 with KMS, namespaced with <strong>team/application/environment/value</strong> in json format so that our application receives the json dictionary of configured key/value pairs.</p>
+
+<p>We can leverage <strong>IAM</strong> to delegate permissions on the namespacing that we decide on, for my example the namespace will look like this on S3:</p>
+
+<pre><code>s3://s3bucket/secrets/engineering/app1/production/appconfig.json
+</code></pre>
+
+<p>We will apply <strong>IAM</strong> permissions for our user to only <strong>Put</strong> and <strong>Get</strong> on <code>secrets/engineering*</code>. So with this idea we can apply IAM permissions on groups for different departments, or even let users manage their own secrets such as:</p>
+
+<pre><code>s3://s3bucket/secrets/personal/user.name/app/appconfig.json
+</code></pre>
+
+<p>After the object has been downloaded from S3 and decrypted using KMS, the value of the object will look like this:</p>
+
+<pre><code>{u'surname': u'bekker', u'name': u'ruan', u'job_title': u'systems-development-engineer'}
+</code></pre>
+
+<h2>Requirements</h2>
+
+<p>We will create the following resources on AWS:</p>
+
+<ul>
+<li>KMS Key</li>
+<li>S3 Bucket</li>
+<li>IAM User</li>
+<li>IAM Policy</li>
+<li>Python Dependencies: Boto3</li>
+</ul>
+
+
+<h2>Provision AWS Resources</h2>
+
+<p><img src="https://miro.medium.com/max/2728/1*Lq9xaUXuNo2Nb8kQakYdsg.png" alt="" /></p>
+
+<p>First we will create our <strong>S3 Bucket</strong>,  head over to <a href="https://s3.console.aws.amazon.com/s3/home?region=eu-west-1">Amazon S3</a> create a new s3 bucket, make sure that the bucket is <strong>NOT</strong> public, by using the default configuration, you should be good.</p>
+
+<p>Once your S3 Bucket is provisioned, head over to <a href="https://console.aws.amazon.com/iam/home#/users">Amazon IAM</a> and create a IAM User, enable programmatic access, and keep your access key and secret key safe. For now we will not apply any permissions as we will come back to this step.</p>
+
+<p>Head over to <a href="https://eu-west-1.console.aws.amazon.com/kms/home?region=eu-west-1#/kms/home">Amazon KMS</a> and create a KMS Key, we will define the <strong>key administrator</strong>, which will be my user (ruan.bekker in this case) with more privileged permissions:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*EUPWbCQ8nsfbBWHQI6srYw.png" alt="" /></p>
+
+<p>and then we will define the <strong>key usage permissions</strong> (app.user in this case), which will be the user that we provisioned from the previous step, this will be the user that will encrypt and decrypt the data:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*5xA5H0qpJ1FYTG1hUjy_Tw.png" alt="" /></p>
+
+<p>Next, review the policy generated from the previous selected sections:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*bLDVPFaZUDQ4EyWjACYRUw.png" alt="" /></p>
+
+<p>Once you select finish, you will be returned to the section where your KMS Key information will be displayed, keep note of your <strong>KMS Key Alias</strong>, as we will need it later:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*aooUMS0OyEd5hopnOUrcmA.png" alt="" /></p>
+
+<h2>Create a IAM Policy for our App User</h2>
+
+<p>Next we will create the IAM Policy for the user that will encrypt/decrypt and store data in S3</p>
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3PutAndGetAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject"
+            ],
+            "Resource": "arn:aws:s3:::arn:aws:s3:::s3-bucket-name/secrets/engineering*"
+        },
+        {
+            "Sid": "KMSDecryptAndEncryptAccess",
+            "Effect": "Allow",
+            "Action": [
+                "kms:Decrypt",
+                "kms:Encrypt"
+            ],
+            "Resource": "arn:aws:kms:eu-west-1:123456789012:key/xxxx-xxxx-xxxx-xxxx-xxxx"
+        }
+    ]
+}
+</code></pre>
+
+<p>After the policy has been saved, associate the policy to the IAM User</p>
+
+<h2>Encrypt and Put to S3</h2>
+
+<p>Now we will use Python to define the data that we want to <strong>store in S3</strong>, we will then <strong>encrypt</strong> the data with <strong>KMS</strong>, use base64 to <strong>encode</strong> the ciphertext and push the encrypted value to <strong>S3</strong>, with Server Side Encryption enabled, which we will also use our KMS key.</p>
+
+<p>Install boto3 in Python:</p>
+
+<pre><code>$ pip install boto3
+</code></pre>
+
+<p>Enter the Python REPL and import the required packages, we will also save the access key and secret key as variables so that we can use it with boto3. You can also save it to the <a href="https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html">credential provider</a> and utilise the profile name:</p>
+
+<pre><code class="python">&gt;&gt;&gt; import boto3
+&gt;&gt;&gt; import json
+&gt;&gt;&gt; import base64
+&gt;&gt;&gt; aws_access_key_id='redacted'
+&gt;&gt;&gt; aws_secret_access_key='redacted'
+</code></pre>
+
+<p>Next define the data that we want to <strong>encrypt and store</strong> in S3:</p>
+
+<pre><code class="python">&gt;&gt;&gt; mydata = {
+    "name": "ruan",
+    "surname": "bekker",
+    "job_title": "systems-development-engineer"
+}
+</code></pre>
+
+<p>Next we will use KMS to encrypt the data and use base64 to encode the ciphertext:</p>
+
+<pre><code class="python">&gt;&gt;&gt; kms = boto3.Session(
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key
+).client('kms')
+&gt;&gt;&gt; ciphertext = kms.encrypt(
+    KeyId='alias/secrets-key',
+    Plaintext=json.dumps(mydata)
+)
+&gt;&gt;&gt; encoded_ciphertext = base64.b64encode(ciphertext["CiphertextBlob"])
+# preview the data
+&gt;&gt;&gt; encoded_ciphertext
+'AQICAHiKOz...42720nCleoI26UW7P89lPdwvV8Q=='
+</code></pre>
+
+<p>Next we will use S3 to push the encrypted data onto S3 in our name spaced key: <strong>secrets/engineering/app1/production/appconfig.json</strong></p>
+
+<pre><code class="python">&gt;&gt;&gt; s3 = boto3.Session(
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key,
+    region_name='eu-west-1'
+).client('s3')
+&gt;&gt;&gt; response = s3.put_object(
+    Body=encoded_ciphertext,
+    Bucket='ruan-secret-store',
+    Key='secrets/engineering/app1/production/appconfig.json',
+    ServerSideEncryption='aws:kms',
+    SSEKMSKeyId='alias/secrets-key'
+)
+</code></pre>
+
+<p>Now our object is stored in S3, encrypted with KMS and ServerSideEncryption Enabled.</p>
+
+<p>You can try to download the object and decode the base64 encoded file and you will find that its complete garbage as its encrypted.</p>
+
+<p>Next we will use S3 to Get the object and use KMS to decrypt and use base64 to decode after the object has been decrypted:</p>
+
+<pre><code class="python">&gt;&gt;&gt; response = s3.get_object(
+    Bucket='ruan-secret-store',
+    Key='secrets/engineering/app1/production/appconfig.json'
+)
+&gt;&gt;&gt; encoded_ciphertext = response['Body'].read()
+&gt;&gt;&gt; encoded_ciphertext
+'AQICAHiKOz...42720nCleoI26UW7P89lPdwvV8Q=='
+</code></pre>
+
+<p>Now let’s decode the result with base64:</p>
+
+<pre><code class="python">&gt;&gt;&gt; decoded_ciphertext = base64.b64decode(encoded_ciphertext)
+&gt;&gt;&gt; plaintext = kms.decrypt(CiphertextBlob=bytes(decoded_ciphertext))
+</code></pre>
+
+<p>Now we need to deserialize the JSON as it’s in string format:</p>
+
+<pre><code>&gt;&gt;&gt; json.loads(plaintext["Plaintext"])
+{u'surname': u'bekker', u'name': u'ruan', u'job_title': u'systems-development-engineer'}
+</code></pre>
+
+<h2>Using it in a Application</h2>
+
+<p>Let’s say you are using <strong>Docker</strong> and you want to bootstrap your application configs to your environment that you are retrieving from S3.</p>
+
+<p>We will use a <code>get_secrets.py</code> python script that will read the data into memory, decrypt and write the values in plaintext to disk, then we will use the <code>boot.sh</code> script to read the values into the environment and remove the temp file that was written to disk, then start the application since we have the values stored in our environment.</p>
+
+<p>Our <strong>&ldquo;application&rdquo;</strong> in this example will just be a line of echo to return the values for demonstration.</p>
+
+<p>The <code>get_secrets.py</code> file:</p>
+
+<pre><code class="python">import boto3
+import json
+import base64
+
+aws_access_key_id='redacted'
+aws_secret_access_key='redacted'
+
+kms = boto3.Session(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key).client('kms')
+s3 = boto3.Session(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, region_name='eu-west-1').client('s3')
+
+response = s3.get_object(Bucket='ruan-secret-store', Key='secrets/engineering/app1/production/appconfig.json')
+encoded_ciphertext = response['Body'].read()
+
+decoded_ciphertext = base64.b64decode(encoded_ciphertext)
+plaintext = kms.decrypt(CiphertextBlob=bytes(decoded_ciphertext))
+values = json.loads(plaintext["Plaintext"])
+
+with open('envs.tmp', 'w') as f:
+    for key in values.keys():
+        f.write("{}={}".format(key.upper(), values[key]) + "\n")
+</code></pre>
+
+<p>And our <code>boot.sh</code> script:</p>
+
+<pre><code class="bash">#!/usr/bin/env bash
+source ./envs.tmp
+rm -rf ./envs.tmp
+echo "Hello, my name is ${NAME} ${SURNAME}, and I am a ${JOB_TITLE}"
+</code></pre>
+
+<p>Running that will produce:</p>
+
+<pre><code>$ bash boot.sh
+Hello, my name is ruan bekker, and I am a systems-development-engineer
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>And there we have a simple and effective way of encrypting/decrypting data using S3, KMS and Python at a ridiculously cheap cost, its almost free.</p>
+
+<p>If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Using AWS SSM Parameter Store to Retrieve Secrets Encrypted by KMS Using Python]]></title>

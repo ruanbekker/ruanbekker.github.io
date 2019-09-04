@@ -106,7 +106,7 @@ Now we will use Python to define the data that we want to **store in S3**, we wi
 
 Install boto3 in Python:
 
-```
+```bash
 $ pip install boto3
 ```
 

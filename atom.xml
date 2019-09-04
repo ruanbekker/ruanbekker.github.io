@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-09-04T22:50:01+02:00</updated>
+  <updated>2019-09-05T01:08:19+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,199 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Deploy a Monitoring Stack on Docker Swarm With Grafana and Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/09/05/deploy-a-monitoring-stack-on-docker-swarm-with-grafana-and-prometheus/"/>
+    <updated>2019-09-05T00:07:52+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/09/05/deploy-a-monitoring-stack-on-docker-swarm-with-grafana-and-prometheus</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="" /></p>
+
+<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/bekkerstacks/traefik"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
+
+<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
+
+<p>In this tutorial we will deploy a monitoring stack to docker swarm, that includes Grafana, Prometheus, Node-Exporter, cAdvisor and Alertmanager.</p>
+
+<p>If you are looking for more information on Prometheus, have a look at my other <a href="https://blog.ruanbekker.com/blog/categories/prometheus/">Prometheus and Monitoring</a> blog posts.</p>
+
+<h2>What you will get out of this</h2>
+
+<p>Once you deployed the stacks, you will have the following:</p>
+
+<ul>
+<li>Access Grafana through Traefik reverse proxy</li>
+<li>Node-Exporter to expose node level metrics</li>
+<li>cAdvisor to expose container level metrics</li>
+<li>Prometheus to scrape the exposed entpoints and ingest it into Prometheus</li>
+<li>Prometheus for your Timeseries Database</li>
+<li>Alertmanager for firing alerts on configured rules</li>
+</ul>
+
+
+<p>The compose file that I will provide will have pre-populated dashboards</p>
+
+<h2>Deploy Traefik</h2>
+
+<p>Get the traefik stack sources:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/bekkerstacks/traefik
+</span><span class='line'>$ pushd traefik</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look at <a href="https://github.com/bekkerstacks/traefik/wiki/Deploy-Traefik-in-HTTPS-Mode">HTTPS Mode</a> if you want to deploy traefik on HTTPS, as I will use HTTP in this demonstration.</p>
+
+<p>Set your domain and deploy the stack:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ DOMAIN=localhost PROTOCOL=http bash deploy.sh
+</span><span class='line'>
+</span><span class='line'>Username for Traefik UI: demo
+</span><span class='line'>Password for Traefik UI: 
+</span><span class='line'>deploying traefik stack in http mode
+</span><span class='line'>Creating network public
+</span><span class='line'>Creating config proxy_traefik_htpasswd
+</span><span class='line'>Creating service proxy_traefik
+</span><span class='line'>Traefik UI is available at:
+</span><span class='line'>- http://traefik.localhost</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Your traefik service should be running:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+</span><span class='line'>0wga71zbx1pe        proxy_traefik       replicated          1/1                 traefik:1.7.14      *:80-&gt;80/tcp</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Switch back to the previous directory:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ popd</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the Monitoring Stack</h2>
+
+<p>Get the sources:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/bekkerstacks/monitoring-cpang
+</span><span class='line'>$ pushd monitoring-cpang</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you want to deploy the stack with no pre-configured dashboards, you would need to use <code>./docker-compose.html</code>, but in this case we will deploy the stack with pre-configured dashboards.</p>
+
+<p>Set the domain and deploy the stack:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker stack deploy -c alt_versions/docker-compose_http_with_dashboards.yml mon
+</span><span class='line'>
+</span><span class='line'>Creating network private
+</span><span class='line'>Creating config mon_grafana_config_datasource
+</span><span class='line'>Creating config mon_grafana_dashboard_prometheus
+</span><span class='line'>Creating config mon_grafana_dashboard_docker
+</span><span class='line'>Creating config mon_grafana_dashboard_nodes
+</span><span class='line'>Creating config mon_grafana_dashboard_blackbox
+</span><span class='line'>Creating config mon_alertmanager_config
+</span><span class='line'>Creating config mon_prometheus_config
+</span><span class='line'>Creating config mon_prometheus_rules
+</span><span class='line'>Creating service mon_blackbox-exporter
+</span><span class='line'>Creating service mon_alertmanager
+</span><span class='line'>Creating service mon_prometheus
+</span><span class='line'>Creating service mon_grafana
+</span><span class='line'>Creating service mon_cadvisor
+</span><span class='line'>Creating service mon_node-exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The endpoints is configured as <code>${service_name}.${DOMAIN}</code> so you will be able to access grafana on <code>http://grafana.localhost</code> as showed in my use-case.</p>
+
+<p>Use <code>docker stack services mon</code> to see if all the tasks has checked into its desired count then access grafana on <code>http://grafana.${DOMAIN}</code></p>
+
+<h2>Accessing Grafana</h2>
+
+<p>Access Grafana on <code>http://grafana.${DOMAIN}</code> and logon with the user admin and the password admin:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292266-4d303a00-cf6a-11e9-8a49-2ae05b1ed5c6.png" alt="image" /></p>
+
+<p>You will be asked to reset the password:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292291-5f11dd00-cf6a-11e9-8049-2abdbb0164f6.png" alt="image" /></p>
+
+<p>You will then be directed to the ui:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292317-705ae980-cf6a-11e9-928b-60b5dec7ea09.png" alt="image" /></p>
+
+<p>From the top, when you list dashboards, you will see the 3 dashboards that was pre-configured:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292334-7b157e80-cf6a-11e9-92c6-9e0698815ba7.png" alt="image" /></p>
+
+<p>When looking at the Swarm Nodes Dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64297086-82da2080-cf74-11e9-8060-f0193bfaeb13.png" alt="image" /></p>
+
+<p>The Swarm Services Dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64297656-a8ffc080-cf74-11e9-88a2-b4cec295aed5.png" alt="image" /></p>
+
+<h2>Exploring Metrics in Prometheus</h2>
+
+<p>Access prometheus on <code>http://prometheus.${DOMAIN}</code> and from the search input, you can start exploring though all the metrics that is available in prometheus:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64298324-74403900-cf75-11e9-99b7-559b02ef67b7.png" alt="image" /></p>
+
+<p>If we search for <code>node_load15</code> and select graph, we can have a quick look on how the 15 minute load average looks like for the node where the stack is running on:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64298454-e31d9200-cf75-11e9-89bb-b6fe94470166.png" alt="image" /></p>
+
+<p>Having a look at the alerts section:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64299172-7657c700-cf78-11e9-97bd-143e5fe87941.png" alt="image" /></p>
+
+<h2>Resources</h2>
+
+<p>For more information and configuration on the stack that we use, have a look at the wiki:
+- <a href="https://github.com/bekkerstacks/monitoring-cpang/wiki">https://github.com/bekkerstacks/monitoring-cpang/wiki</a></p>
+
+<p>The github repository:
+- <a href="https://github.com/bekkerstacks/monitoring-cpang">https://github.com/bekkerstacks/monitoring-cpang</a></p>
+
+<h2>Thank You</h2>
+
+<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+
+<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Deploy Traefik Using Bekker Stacks]]></title>
@@ -5741,75 +5934,6 @@
 <h2>Thanks</h2>
 
 <p>Hope this was informative. I am planning to publish a post on visualizing prometheus data with Grafana (which is EPIC!) and installing Pushgateway for custom integrations.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Fix the Following Signatures Couldnt Be Verified Because the Public Key Is Not Available With Apt]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/05/07/how-to-fix-the-following-signatures-couldnt-be-verified-because-the-public-key-is-not-available-with-apt/"/>
-    <updated>2019-05-07T12:16:31+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/05/07/how-to-fix-the-following-signatures-couldnt-be-verified-because-the-public-key-is-not-available-with-apt</id>
-    <content type="html"><![CDATA[<p>I was trying to install grafana on ubuntu when I got faced with: &ldquo;the following signatures couldn&rsquo;t be verified because the public key is not available&rdquo; error as seen below:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
-</span><span class='line'>Hit:1 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic InRelease
-</span><span class='line'>Get:2 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic-updates InRelease [88.7 kB]
-</span><span class='line'>Get:3 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic-backports InRelease [74.6 kB]
-</span><span class='line'>Get:4 http://security.ubuntu.com/ubuntu bionic-security InRelease [88.7 kB]
-</span><span class='line'>Get:5 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic-backports/universe Sources [2068 B]
-</span><span class='line'>Get:6 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic-backports/universe amd64 Packages [3492 B]
-</span><span class='line'>Get:7 https://packages.grafana.com/oss/deb stable InRelease [12.1 kB]
-</span><span class='line'>Err:7 https://packages.grafana.com/oss/deb stable InRelease
-</span><span class='line'>  The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 8C8C34C524098CB6
-</span><span class='line'>Reading package lists... Done</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In order to continue, we need to import the trusted key:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt-key adv --keyserver keyserver.ubuntu.com --recv-keys  8C8C34C524098CB6
-</span><span class='line'>Executing: /tmp/apt-key-gpghome.9xlwQh2M06/gpg.1.sh --keyserver keyserver.ubuntu.com --recv-keys 8C8C34C524098CB6
-</span><span class='line'>gpg: key 8C8C34C524098CB6: public key "Grafana &lt;info@grafana.com&gt;" imported
-</span><span class='line'>gpg: Total number processed: 1
-</span><span class='line'>gpg:               imported: 1</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that the key has been imported, we can update and continue:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update
-</span><span class='line'>Hit:1 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic InRelease
-</span><span class='line'>Hit:2 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic-updates InRelease
-</span><span class='line'>Hit:3 http://eu-west-1.ec2.archive.ubuntu.com/ubuntu bionic-backports InRelease
-</span><span class='line'>Hit:4 http://security.ubuntu.com/ubuntu bionic-security InRelease
-</span><span class='line'>Get:5 https://packages.grafana.com/oss/deb stable InRelease [12.1 kB]
-</span><span class='line'>Get:6 https://packages.grafana.com/oss/deb stable/main amd64 Packages [10.8 kB]
-</span><span class='line'>Fetched 22.9 kB in 1s (32.7 kB/s)
-</span><span class='line'>Reading package lists... Done</span></code></pre></td></tr></table></div></figure>
-
 ]]></content>
   </entry>
   

@@ -6,12 +6,13 @@ comments: true
 categories: ["traefik", "docker", "swarm", "bekkerstacks"]
 ---
 
-![](![image](https://user-images.githubusercontent.com/50801771/64287218-67b0e600-cf5f-11e9-8fe7-f36cb8e71f6f.png))
+![image](https://user-images.githubusercontent.com/50801771/64287218-67b0e600-cf5f-11e9-8fe7-f36cb8e71f6f.png)
 
 [![Say Thanks!](https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg)](https://saythanks.io/to/ruanbekker) [![Slack Status](https://linux-hackers-slack.herokuapp.com/badge.svg)](https://linux-hackers-slack.herokuapp.com/) [![Chat on Slack](https://img.shields.io/badge/chat-on_slack-orange.svg)](https://linux-hackers.slack.com/) [![GitHub followers](https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&style=social)](https://github.com/bekkerstacks/traefik) 
 
 <a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
 
+<a class="github-button" href="https://github.com/bekkerstacks/traefik" data-icon="octicon-star" aria-label="Star bekkerstacks/traefik on GitHub">Star</a>
 
 After a year or two spending quite a lot of time into docker and more specifically docker swarm, I found it quite tedious to write up docker-compose files for specific stacks that you are working on. I also felt the need for a docker swarm compose package manager.
 

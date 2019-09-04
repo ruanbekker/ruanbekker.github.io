@@ -12,8 +12,6 @@ categories: ["traefik", "docker", "swarm", "bekkerstacks"]
 
 <a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
 
-<a class="github-button" href="https://github.com/bekkerstacks/traefik" data-icon="octicon-star" aria-label="Star bekkerstacks/traefik on GitHub">Star</a>
-
 After a year or two spending quite a lot of time into docker and more specifically docker swarm, I found it quite tedious to write up docker-compose files for specific stacks that you are working on. I also felt the need for a docker swarm compose package manager.
 
 Fair enough, you store them on a central repository and then you can reuse them as you go, and that is exactly what I did, but I felt that perhaps other people have the same problem.
@@ -164,3 +162,5 @@ Have a look at the repositories on github for more info:
 ## Thank You
 
 Let me know what you think. If you liked my content, feel free to checkout my content on **[ruan.dev](https://ruan.dev/)** or follow me on twitter at **[@ruanbekker](https://twitter.com/ruanbekker)**
+
+<a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>

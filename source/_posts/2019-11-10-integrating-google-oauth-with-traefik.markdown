@@ -22,6 +22,8 @@ In this demonstration we will setup a new google application, setup the forward-
 
 Step by step tutorial has been published on my sysadmins blog, **[read more here](https://sysadmins.co.za/integrating-google-oauth-with-traefik/?referral=blog.ruanbekker.com)**
 
+[![](https://user-images.githubusercontent.com/567298/68548655-10644180-03f8-11ea-96fe-47f01b1dd635.png)](https://sysadmins.co.za/integrating-google-oauth-with-traefik/?referral=blog.ruanbekker.com)
+
 ## Thank You
 
 Let me know what you think. If you liked my content, feel free to checkout my content on **[ruan.dev](https://ruan.dev/)** or follow me on twitter at **[@ruanbekker](https://twitter.com/ruanbekker)**

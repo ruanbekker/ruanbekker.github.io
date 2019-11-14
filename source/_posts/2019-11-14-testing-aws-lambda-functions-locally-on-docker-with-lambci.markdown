@@ -18,8 +18,7 @@ We will create a basic lambda function to demonstrate how it works.
 
 ```
 $ mkdir task
-
-cat > task/lambda_function.py << EOF
+$ cat > task/lambda_function.py << EOF
 import json
 
 def lambda_handler(event, context):

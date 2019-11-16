@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Aws | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/aws/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-11-15T00:06:03+02:00</updated>
+  <updated>2019-11-16T23:55:51+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,334 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Setup a AWS EKS Kubernetes Cluster]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster/"/>
+    <updated>2019-11-16T22:31:36+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/68999066-b8c84900-08c3-11ea-9669-5c859590296c.png" alt="kubernetes-eks-aws-cluster" /></p>
+
+<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
+
+<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
+
+<p>This will be a tutorial split up in two posts, where I will show you how to provision a EKS Cluster (Elastic Kubernetes Service) on AWS and in the next post, how to deploy a web application to your cluster.</p>
+
+<h2>And then came EKS</h2>
+
+<p>As some of you may know, I&rsquo;m a massive AWS fan boy, and since AWS released their managed Kubernetes service, I was quite excited to test it out. A couple of months passed and I got the opportunity to test out on-the-job as we moved to Kubernetes.</p>
+
+<p>A couple of moths has passed, and serving multiple production workloads on EKS, and I am really impressed with the service.</p>
+
+<p>Amazon provides a vanilla Kubernetes version, they manage the master nodes and they have a extra component called the cloud controller that runs on the master nodes, which is the aws native component that talks to other aws services (as far as I can recall)</p>
+
+<h2>What are we doing today</h2>
+
+<p>We will cover this in this post:</p>
+
+<table>
+<thead>
+<tr>
+<th> <strong>Topic</strong>                                                    </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td> Deploy a EKS Cluster                                         </td>
+</tr>
+<tr>
+<td> View the resources to see what was provisioned on AWS        </td>
+</tr>
+<tr>
+<td> Interact with Kubernetes using kubectl                       </td>
+</tr>
+<tr>
+<td> Terminate a Node and verify that the ASG replaces the node   </td>
+</tr>
+<tr>
+<td> Scale down your worker nodes                                 </td>
+</tr>
+<tr>
+<td> Run a pod on your cluster                                    </td>
+</tr>
+</tbody>
+</table>
+
+
+<p>In the <a href="">next post</a> we will deploy a web service to our EKS cluster.</p>
+
+<h2>Install Pre-Requirements</h2>
+
+<p>We require <code>awscli</code>, <code>eksctl</code> and <code>kubectl</code> before we continue. I will be installing this on MacOS, but you can have a look at the following links if you are using a different operating system:</p>
+
+<ul>
+<li><a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-install.html">Install awscli</a></li>
+<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html">Install eksctl</a></li>
+<li><a href="https://kubernetes.io/docs/tasks/tools/install-kubectl/">Install kubectl</a></li>
+</ul>
+
+
+<p>Install awscli:</p>
+
+<pre><code>$ pip install awscli
+</code></pre>
+
+<p>Install kubectl:</p>
+
+<pre><code>$ brew update
+$ brew install kubernetes-cli
+</code></pre>
+
+<p>Install eksctl:</p>
+
+<pre><code>$ brew tap weaveworks/tap
+$ brew install weaveworks/tap/eksctl
+</code></pre>
+
+<h2>Deploy EKS</h2>
+
+<p>Create a SSH key if you would like to SSH to your worker nodes:</p>
+
+<pre><code>$ ssh-keygen -b 2048 -f ~/.ssh/eks -t rsa -q -N ""
+</code></pre>
+
+<p>Import your public key to EC2:</p>
+
+<pre><code>$ aws --profile dev --region eu-west-1 ec2 import-key-pair --key-name "eks" --public-key-material file://~/.ssh/eks.pub
+</code></pre>
+
+<p>Provision your cluster using eksctl. This will deploy two cloudformation stacks, one for the kubernetes cluster, and one for the node group.</p>
+
+<p>I am creating a kubernetes cluster with 3 nodes of instance type (t2.small) and using version 1.14:</p>
+
+<pre><code>$ eksctl --profile dev --region eu-west-1 create cluster --name my-eks-cluster --version 1.14 --nodes 3 --node-type t2.small --ssh-public-key eks
+
+[ℹ]  eksctl version 0.9.0
+[ℹ]  using region eu-west-1
+[ℹ]  setting availability zones to [eu-west-1a eu-west-1b eu-west-1c]
+[ℹ]  subnets for eu-west-1a - public:192.168.0.0/19 private:192.168.96.0/19
+[ℹ]  subnets for eu-west-1b - public:192.168.32.0/19 private:192.168.128.0/19
+[ℹ]  subnets for eu-west-1c - public:192.168.64.0/19 private:192.168.160.0/19
+[ℹ]  nodegroup "ng-f27f560e" will use "ami-059c6874350e63ca9" [AmazonLinux2/1.14]
+[ℹ]  using Kubernetes version 1.14
+[ℹ]  creating EKS cluster "my-eks-cluster" in "eu-west-1" region
+[ℹ]  will create 2 separate CloudFormation stacks for cluster itself and the initial nodegroup
+[ℹ]  if you encounter any issues, check CloudFormation console or try 'eksctl utils describe-stacks --region=eu-west-1 --cluster=my-eks-cluster'
+[ℹ]  CloudWatch logging will not be enabled for cluster "my-eks-cluster" in "eu-west-1"
+[ℹ]  you can enable it with 'eksctl utils update-cluster-logging --region=eu-west-1 --cluster=my-eks-cluster'
+[ℹ]  Kubernetes API endpoint access will use default of {publicAccess=true, privateAccess=false} for cluster "my-eks-cluster" in "eu-west-1"
+[ℹ]  2 sequential tasks: { create cluster control plane "my-eks-cluster", create nodegroup "ng-f27f560e" }
+[ℹ]  building cluster stack "eksctl-my-eks-cluster-cluster"
+[ℹ]  deploying stack "eksctl-my-eks-cluster-cluster"
+[ℹ]  building nodegroup stack "eksctl-my-eks-cluster-nodegroup-ng-f27f560e"
+[ℹ]  --nodes-min=3 was set automatically for nodegroup ng-f27f560e
+[ℹ]  --nodes-max=3 was set automatically for nodegroup ng-f27f560e
+[ℹ]  deploying stack "eksctl-my-eks-cluster-nodegroup-ng-f27f560e"
+[+]  all EKS cluster resources for "my-eks-cluster" have been created
+[+]  saved kubeconfig as "/Users/ruan/.kube/config"
+[ℹ]  adding identity "arn:aws:iam::000000000000:role/eksctl-my-eks-cluster-nodegroup-n-NodeInstanceRole-SNVIW5C3J3SM" to auth ConfigMap
+[ℹ]  nodegroup "ng-f27f560e" has 0 node(s)
+[ℹ]  waiting for at least 3 node(s) to become ready in "ng-f27f560e"
+[ℹ]  nodegroup "ng-f27f560e" has 3 node(s)
+[ℹ]  node "ip-192-168-42-186.eu-west-1.compute.internal" is ready
+[ℹ]  node "ip-192-168-75-87.eu-west-1.compute.internal" is ready
+[ℹ]  node "ip-192-168-8-167.eu-west-1.compute.internal" is ready
+[ℹ]  kubectl command should work with "/Users/ruan/.kube/config", try 'kubectl get nodes'
+[+]  EKS cluster "my-eks-cluster" in "eu-west-1" region is ready
+</code></pre>
+
+<p>Now that our EKS cluster has been provisioned, let&rsquo;s browse through our AWS Management Console to understand what was provisioned.</p>
+
+<h2>View the Provisioned Resources</h2>
+
+<p>If we have a look at the Cloudformation stacks, we can see the two stacks that I mentioned previously:</p>
+
+<p><img width="1057" alt="image" src="https://user-images.githubusercontent.com/567298/68996480-58c1aa80-08a3-11ea-95c1-0fcf0bc1863b.png"></p>
+
+<p>Navigating to our EC2 Instances dashboard, we can see the three worker nodes that we provisioned. Remember that AWS manages the master nodes and we cant see them.</p>
+
+<p><img width="1106" alt="image" src="https://user-images.githubusercontent.com/567298/68996520-ea311c80-08a3-11ea-8ea3-e9e481e4ba6f.png"></p>
+
+<p>We have a ASG (Auto Scaling Group) associated with our worker nodes, nodegroup. We can make use of autoscaling and also have desired state, so we will test this out later where we will delete a worker node and verify if it gets replaced:</p>
+
+<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/68996551-2e242180-08a4-11ea-8df6-7b962b9aa03a.png"></p>
+
+<h2>Navigate using Kubectl:</h2>
+
+<p>Eksctl already applied the kubeconfig to <code>~/.kube/config</code>, so we can start using kubectl. Let&rsquo;s start by viewing the nodes:</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                           STATUS   ROLES    AGE     VERSION
+ip-192-168-42-186.eu-west-1.compute.internal   Ready    &lt;none&gt;   8m50s   v1.14.7-eks-1861c5
+ip-192-168-75-87.eu-west-1.compute.internal    Ready    &lt;none&gt;   8m55s   v1.14.7-eks-1861c5
+ip-192-168-8-167.eu-west-1.compute.internal    Ready    &lt;none&gt;   8m54s   v1.14.7-eks-1861c5
+</code></pre>
+
+<p>Viewing our pods from our <code>kube-system</code> namespace (we dont have any pods in our default namespace at the moment):</p>
+
+<pre><code>$ kubectl get pods --namespace kube-system
+NAME                       READY   STATUS    RESTARTS   AGE
+aws-node-btfbk             1/1     Running   0          11m
+aws-node-c6ktk             1/1     Running   0          11m
+aws-node-wf8mc             1/1     Running   0          11m
+coredns-759d6fc95f-ljxzf   1/1     Running   0          17m
+coredns-759d6fc95f-s6lg6   1/1     Running   0          17m
+kube-proxy-db46b           1/1     Running   0          11m
+kube-proxy-ft4mc           1/1     Running   0          11m
+kube-proxy-s5q2w           1/1     Running   0          11m
+</code></pre>
+
+<p>And our services from all our namespaces:</p>
+
+<pre><code>$ kubectl get services --all-namespaces
+NAMESPACE     NAME         TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)         AGE
+default       kubernetes   ClusterIP   10.100.0.1    &lt;none&gt;        443/TCP         19m
+kube-system   kube-dns     ClusterIP   10.100.0.10   &lt;none&gt;        53/UDP,53/TCP   19m
+</code></pre>
+
+<h2>Testing the ASG</h2>
+
+<p>Let&rsquo;s view our current nodes in our cluster, then select the first node, delete it and verify if the ASG replaces that node.</p>
+
+<p>First, view the nodes and select one node&rsquo;s address:</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                           STATUS   ROLES    AGE   VERSION
+ip-192-168-42-186.eu-west-1.compute.internal   Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
+ip-192-168-75-87.eu-west-1.compute.internal    Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
+ip-192-168-8-167.eu-west-1.compute.internal    Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
+</code></pre>
+
+<p>Use the awscli to lookup the EC2 instance id, as we will need this id to delete the node:</p>
+
+<pre><code>$ aws --profile dev ec2 describe-instances --query 'Reservations[*].Instances[?PrivateDnsName==`ip-192-168-42-186.eu-west-1.compute.internal`].[InstanceId][]' --output text
+i-0d016de17a46d5178
+</code></pre>
+
+<p>Now that we have the EC2 instance id, delete the node:</p>
+
+<pre><code>$ aws --profile dev ec2 terminate-instances --instance-id i-0d016de17a46d51782
+{
+    "TerminatingInstances": [
+        {
+            "CurrentState": {
+                "Code": 32,
+                "Name": "shutting-down"
+            },
+            "InstanceId": "i-0d016de17a46d5178",
+            "PreviousState": {
+                "Code": 16,
+                "Name": "running"
+            }
+        }
+    ]
+}
+</code></pre>
+
+<p>Now that we have deleted the EC2 instance, view the nodes and you will see the node has been terminated:</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                          STATUS   ROLES    AGE   VERSION
+ip-192-168-75-87.eu-west-1.compute.internal   Ready    &lt;none&gt;   41m   v1.14.7-eks-1861c5
+ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   41m   v1.14.7-eks-1861c5
+</code></pre>
+
+<p>Allow about a minute so that the ASG can replace the node, and when you list again you will see that the ASG replaced the node :</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                          STATUS   ROLES    AGE   VERSION
+ip-192-168-42-61.eu-west-1.compute.internal   Ready    &lt;none&gt;   50s   v1.14.7-eks-1861c5
+ip-192-168-75-87.eu-west-1.compute.internal   Ready    &lt;none&gt;   42m   v1.14.7-eks-1861c5
+ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   42m   v1.14.7-eks-1861c5
+</code></pre>
+
+<h2>Run a Pod</h2>
+
+<p>Run a busybox pod on your EKS cluster:</p>
+
+<pre><code>$ kubectl run --rm -it --generator run-pod/v1 my-busybox-pod --image busybox -- /bin/sh
+</code></pre>
+
+<p>You will be dropped into a shell:</p>
+
+<pre><code>/ # busybox | head -1
+BusyBox v1.31.1 (2019-10-28 18:40:01 UTC) multi-call binary.
+</code></pre>
+
+<p>And exit the shell:</p>
+
+<pre><code>/ # exit
+Session ended, resume using 'kubectl attach my-busybox-pod -c my-busybox-pod -i -t' command when the pod is running
+pod "my-busybox-pod" deleted
+</code></pre>
+
+<h2>Scaling Nodes</h2>
+
+<p>While I will not be covering auto-scaling in this post, we can manually scale the worker node count. Let&rsquo;s scale it down to 1 node.</p>
+
+<p>First we need to get the EKS cluster name:</p>
+
+<pre><code>$ eksctl --profile dev --region eu-west-1 get clusters
+NAME        REGION
+my-eks-cluster  eu-west-1
+</code></pre>
+
+<p>Then we need the node group id:</p>
+
+<pre><code>$ eksctl --profile dev --region eu-west-1 get nodegroup --cluster my-eks-cluster
+CLUSTER     NODEGROUP   CREATED         MIN SIZE    MAX SIZE    DESIRED CAPACITY    INSTANCE TYPE   IMAGE ID
+my-eks-cluster  ng-f27f560e 2019-11-16T16:55:41Z    3       3       3           t2.small    ami-059c6874350e63ca9
+</code></pre>
+
+<p>Now that we have the node group id, we can scale the node count:</p>
+
+<pre><code>$ eksctl --profile dev --region eu-west-1 scale nodegroup --cluster my-eks-cluster --nodes 1 ng-f27f560e
+
+[ℹ]  scaling nodegroup stack "eksctl-my-eks-cluster-nodegroup-ng-f27f560e" in cluster eksctl-my-eks-cluster-cluster
+[ℹ]  scaling nodegroup, desired capacity from 3 to 1, min size from 3 to 1
+</code></pre>
+
+<p>Now when we use kubectl to view the nodes, we will see we only have 1 worker node:</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                          STATUS   ROLES    AGE   VERSION
+ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   73m   v1.14.7-eks-1861c5
+</code></pre>
+
+<h2>Clean Up</h2>
+
+<p>If you want to follow along deploying a web application to your EKS cluster before we terminate the cluster, have a look at <a href="">Part 2 - EKS Tutorial</a> before continuing.</p>
+
+<p>Once you are ready to terminate your EKS cluster, you can go ahead and terminate the cluster:</p>
+
+<pre><code>$ eksctl --profile dev --region eu-west-1 delete cluster --name my-eks-cluster
+
+[ℹ]  eksctl version 0.9.0
+[ℹ]  using region eu-west-1
+[ℹ]  deleting EKS cluster "my-eks-cluster"
+[+]  kubeconfig has been updated
+[ℹ]  cleaning up LoadBalancer services
+[ℹ]  2 sequential tasks: { delete nodegroup "ng-f27f560e", delete cluster control plane "my-eks-cluster" [async] }
+[ℹ]  will delete stack "eksctl-my-eks-cluster-nodegroup-ng-f27f560e"
+[ℹ]  waiting for stack "eksctl-my-eks-cluster-nodegroup-ng-f27f560e" to get deleted
+[ℹ]  will delete stack "eksctl-my-eks-cluster-cluster"
+[+]  all cluster resources were deleted
+</code></pre>
+
+<h2>Further Reading on Kubernetes</h2>
+
+<p>This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:
+* <a href="https://eksworkshop.com/introduction/">EKSWorkshop</a></p>
+
+<h2>Thank You</h2>
+
+<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+
+<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Testing AWS Lambda Functions Locally on Docker With LambCi]]></title>
@@ -935,291 +1263,6 @@ Item not found
 <li><a href="https://docs.openfaas.com/contributing/get-started/">OpenFaaS: Getting Started</a></li>
 <li><a href="https://docs.openfaas.com/reference/secrets/">OpenFaaS: Secrets</a></li>
 </ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Play With Kinesis Data Streams for Free]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/06/22/play-with-kinesis-data-streams-for-free/"/>
-    <updated>2019-06-22T23:35:19+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/06/22/play-with-kinesis-data-streams-for-free</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/59969559-3f187300-9550-11e9-9e6d-7fa4dbc30198.png" alt="image" /></p>
-
-<p>Misleading title?? Perhaps, depends on how you look at it. Amazon Kinesis is a fully managed, cloud-based service for real-time processing of distributed data streams. So if you&rsquo;re a curious mad person like me, you want to test out stuff and when you can test stuff out for free, why not.</p>
-
-<p>So before paying for that, why not spin something up locally, such as <a href="https://github.com/mhart/kinesalite">Kinesisalite</a> which is an implementation of Amazon Kinesis built on top of LevelDB.</p>
-
-<p>Kinesis overview:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/59969540-caddcf80-954f-11e9-8e3d-23c932d35ef1.png" alt="image" /></p>
-
-<h2>What will we be doing?</h2>
-
-<p>In this tutorial we will setup a local kinesis instance using docker then do the following:</p>
-
-<ul>
-<li>Create a Kinesis Stream, List, Describe, PutRecord, GetRecords using Python&rsquo;s Boto3 Interface</li>
-<li>Write a Python Producer and Consumer</li>
-<li>Write and Read Records from our Local Kinesis Stream</li>
-</ul>
-
-
-<h2>Building Kinesis Local on Docker</h2>
-
-<p>If you would like to skip this step, you can use my docker image: <a href="https://hub.docker.com/r/ruanbekker/kinesis-local">ruanbekker/kinesis-local:latest</a></p>
-
-<p>Our Dockerfile:</p>
-
-<pre><code>FROM node:8.16.0-stretch-slim
-
-RUN apt update &amp;&amp; apt install build-essential python-minimal -y
-RUN npm install --unsafe-perm -g kinesalite
-RUN apt-get clean
-
-CMD ["kinesalite", "--port", "4567", "--createStreaMs", "5"]
-</code></pre>
-
-<p>Build:</p>
-
-<pre><code>$ docker build -t kinesis-local .
-</code></pre>
-
-<p>Run and expose port 4567:</p>
-
-<pre><code>$ docker run -it -p 4567:4567 kinesis-local:latest
-</code></pre>
-
-<h2>Interact with Kinesis Local:</h2>
-
-<p>In this next steps we will setup our environment, which will only require <code>python</code> and <code>boto3</code>. To keep things isolated, I will do this with a docker container:</p>
-
-<pre><code>$ docker run -it python:3.7-alpine sh
-</code></pre>
-
-<p>Now we need to install boto3 and enter the python repl:</p>
-
-<pre><code>$ pip3 install boto3
-$ python3
-Python 3.7.3 (default, May 11 2019, 02:00:41)
-[GCC 8.3.0] on linux
-Type "help", "copyright", "credits" or "license" for more information.
-&gt;&gt;&gt;
-</code></pre>
-
-<p>Import boto and create the connection to our kinesis local instance:</p>
-
-<pre><code>&gt;&gt;&gt; import boto3
-&gt;&gt;&gt; client = boto3.Session(
-    region_name='eu-west-1').client('kinesis', aws_access_key_id='', aws_secret_access_key='', endpoint_url='http://localhost:4567'
-)
-</code></pre>
-
-<p>Let&rsquo;s list our streams and as expected, we should have zero streams available:</p>
-
-<pre><code>&gt;&gt;&gt; client.list_streams()
-{u'StreamNames': [], u'HasMoreStreams': False, 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': '637xx', 'HTTPHeaders': {'x-amzn-requestid': '6xx', 'content-length': '41', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:17:34 GMT', 'content-type': 'application/x-amz-json-1.1'}}}
-</code></pre>
-
-<p>Let&rsquo;s create a stream named <code>mystream</code> with 1 primary shard:</p>
-
-<pre><code>&gt;&gt;&gt; client.create_stream(StreamName='mystream', ShardCount=1)
-</code></pre>
-
-<p>Let&rsquo;s list our streams again:</p>
-
-<pre><code>&gt;&gt;&gt; client.list_streams()
-{u'StreamNames': [u'mystream'], u'HasMoreStreams': False, 'ResponseMetadata': ...
-</code></pre>
-
-<p>Let&rsquo;s put some data in our kinesis stream, we will push a payload with the body: <code>{"name": "ruan"}</code> to our kinesis stream with partition key: <code>a01</code> which is used for sharding:</p>
-
-<pre><code>&gt;&gt;&gt; response = client.put_record(StreamName='mystream', Data=json.dumps({"name": "ruan"}), PartitionKey='a01')
-&gt;&gt;&gt; response
-{u'ShardId': u'shardId-000000000000', 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': 'cb0xx', 'HTTPHeaders': {'x-amzn-requestid': 'xx', 'content-length': '110', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:20:27 GMT', 'content-type': 'application/x-amz-json-1.1'}}, u'SequenceNumber': u'490xx'}
-</code></pre>
-
-<p>Now that we have data in our stream we need to read data from our kinesis stream. Before data can be read from the stream we need to obtain the shard iterator for the shard we are interested in. A shard iterator represents the position of the stream and shard from which the consumer will read, in this case we will call the get_shard_operator method and passing the stream name, shard id and shard iterator type.</p>
-
-<p>There are 2 comman iterator types:</p>
-
-<ul>
-<li>TRIM_HORIZON: Points to the last untrimmed record in the shard</li>
-<li>LATEST: Reads the most recent data in the shard</li>
-</ul>
-
-
-<p>We will use TRIM_HORIZON in this case, get the shard iterator id:</p>
-
-<pre><code>&gt;&gt;&gt; shard_id = response['ShardId']
-&gt;&gt;&gt; response = client.get_shard_iterator(StreamName='mystream', ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')
-&gt;&gt;&gt; response
-{u'ShardIterator': u'AAAxx=', 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': '22dxx', 'HTTPHeaders': {'x-amzn-requestid': '22dxx', 'content-length': '224', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:22:55 GMT', 'content-type': 'application/x-amz-json-1.1'}}}
-</code></pre>
-
-<p>Now that we have the shard iterator id, we can call the get_records method with the shard iterator id, to read the data from the stream:</p>
-
-<pre><code>&gt;&gt;&gt; shard_iterator = response['ShardIterator']
-&gt;&gt;&gt; response = client.get_records(ShardIterator=shard_iterator)
-&gt;&gt;&gt; response
-{u'Records': [{u'Data': '{"name": "ruan"}', u'PartitionKey': u'a01', u'ApproximateArrivalTimestamp': datetime.datetime(2019, 6, 22, 21, 20, 27, 937000, tzinfo=tzlocal()), u'SequenceNumber': u'495xx'}], 'ResponseMetadata': {'RetryAttempts': 0, 'HTTPStatusCode': 200, 'RequestId': '2b6xx', 'HTTPHeaders': {'x-amzn-requestid': '2b6xx', 'content-length': '441', 'x-amz-id-2': 'xx', 'connection': 'keep-alive', 'date': 'Sat, 22 Jun 2019 19:30:19 GMT', 'content-type': 'application/x-amz-json-1.1'}}, u'NextShardIterator': u'AAAxx=', u'MillisBehindLatest': 0}
-</code></pre>
-
-<p>To loop and parse through the response to make it more readable:</p>
-
-<pre><code>&gt;&gt;&gt; for record in response['Records']:
-...     if 'Data' in record:
-...         json.loads(record['Data'])
-...
-{u'name': u'ruan'}
-</code></pre>
-
-<p>Once we are done, we can delete our stream:</p>
-
-<pre><code>&gt;&gt;&gt; client.delete_stream(StreamName='mystream')
-</code></pre>
-
-<p>Now that we have the basics, lets create our producer and consumer for a demonstration on pushing data to a kinesis stream from one process and consuming it from another process. As this demonstration we will be producing and consuming data from the same laptop, in real use-cases, you will do them from seperate servers and using Amazon Kinesis.</p>
-
-<h2>Our Kinesis Producer</h2>
-
-<p>The following will create a Kinesis Local Stream and Write 25 JSON Documents to our stream:</p>
-
-<pre><code class="python">import boto3
-import random
-import json
-import time
-
-names = ['james', 'stefan', 'pete', 'tom', 'frank', 'peter', 'ruan']
-
-session = boto3.Session(region_name='eu-west-1')
-client = session.client(
-    'kinesis', 
-    aws_access_key_id='', 
-    aws_secret_access_key='', 
-    endpoint_url='http://localhost:4567'
-)
-
-list_streams = client.list_streams()
-
-if 'mystream' not in list_streams['StreamNames']:
-    client.create_stream(StreamName='mystream', ShardCount=1)
-    time.sleep(1)
-
-count = 0
-print("Starting at {}".format(time.strftime("%H:%m:%S")))
-
-while count != 25:
-    count += 1
-    response = client.put_record(
-        StreamName='mystream', 
-        Data=json.dumps({
-            "number": count, 
-            "name": random.choice(names), 
-            "age": random.randint(20,50)}
-        ), 
-        PartitionKey='a01'
-    )
-    time.sleep(1)
-
-print("Finished at {}".format(time.strftime("%H:%m:%S")))
-</code></pre>
-
-<h2>Our Kinesis Local Consumer:</h2>
-
-<p>This will read 5 records at a time from our stream, you will notice if you run them on the same time it will only read one at a time as the producer only writes one per second.</p>
-
-<pre><code class="python">import boto3
-import json
-import time
-import os
-
-session = boto3.Session(region_name='eu-west-1')
-client = session.client(
-    'kinesis', 
-    aws_access_key_id='', 
-    aws_secret_access_key='', 
-    endpoint_url='http://localhost:4567'
-)
-
-stream_details = client.describe_stream(StreamName='mystream')
-shard_id = stream_details['StreamDescription']['Shards'][0]['ShardId']
-
-response = client.get_shard_iterator(
-    StreamName='mystream', 
-    ShardId=shard_id, 
-    ShardIteratorType='TRIM_HORIZON'
-)
-
-shard_iterator = response['ShardIterator']
-
-while True:
-    response = client.get_records(ShardIterator=shard_iterator, Limit=5)
-    shard_iterator = response['NextShardIterator']
-    for record in response['Records']:
-        if 'Data' in record and len(record['Data']) &gt; 0:
-            print(json.loads(record['Data']))
-    time.sleep(0.75)
-</code></pre>
-
-<h2>Demo Time!</h2>
-
-<p>Now that we have our <code>producer.py</code> and <code>consumer.py</code>, lets test this out.</p>
-
-<p>Start the server:</p>
-
-<pre><code>$ docker run -it -p 4567:4567 ruanbekker/kinesis-local:latest
-Listening at http://:::4567
-</code></pre>
-
-<p>Run the Producer from your Python Environment:</p>
-
-<pre><code>$ python producer.py
-Starting at 00:06:16
-Finished at 00:06:42
-</code></pre>
-
-<p>Run the Consumer from your Python Environment:</p>
-
-<pre><code>$ python consumer.py
-Starting Consuming at 00:06:31
-{u'age': 30, u'number': 1, u'name': u'pete'}
-{u'age': 23, u'number': 2, u'name': u'ruan'}
-{u'age': 22, u'number': 3, u'name': u'peter'}
-{u'age': 45, u'number': 4, u'name': u'stefan'}
-{u'age': 49, u'number': 5, u'name': u'tom'}
-{u'age': 47, u'number': 6, u'name': u'pete'}
-{u'age': 35, u'number': 7, u'name': u'stefan'}
-{u'age': 45, u'number': 8, u'name': u'ruan'}
-{u'age': 38, u'number': 9, u'name': u'frank'}
-{u'age': 20, u'number': 10, u'name': u'tom'}
-{u'age': 38, u'number': 11, u'name': u'james'}
-{u'age': 20, u'number': 12, u'name': u'james'}
-{u'age': 38, u'number': 13, u'name': u'tom'}
-{u'age': 25, u'number': 14, u'name': u'tom'}
-{u'age': 20, u'number': 15, u'name': u'peter'}
-{u'age': 50, u'number': 16, u'name': u'james'}
-{u'age': 29, u'number': 17, u'name': u'james'}
-{u'age': 42, u'number': 18, u'name': u'pete'}
-{u'age': 25, u'number': 19, u'name': u'pete'}
-{u'age': 36, u'number': 20, u'name': u'tom'}
-{u'age': 45, u'number': 21, u'name': u'peter'}
-{u'age': 39, u'number': 22, u'name': u'ruan'}
-{u'age': 43, u'number': 23, u'name': u'tom'}
-{u'age': 38, u'number': 24, u'name': u'pete'}
-{u'age': 40, u'number': 25, u'name': u'frank'}
-Finshed Consuming at 00:06:35
-</code></pre>
-
-<h2>Thanks</h2>
-
-<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a></p>
-
-<p>Hope that was useful, feel free to check out <a href="https://aws.amazon.com/kinesis/">Amazon&rsquo;s Kinesis</a> out if you are planning to run this in any non-testing environment</p>
-
-<center>
-        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
-</center>
 
 ]]></content>
   </entry>

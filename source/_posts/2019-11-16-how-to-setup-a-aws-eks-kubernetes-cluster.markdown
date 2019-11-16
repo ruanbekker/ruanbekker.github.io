@@ -48,7 +48,7 @@ We require `awscli`, `eksctl` and `kubectl` before we continue. I will be instal
 
 Install awscli:
 
-```
+```bash
 $ pip install awscli
 ```
 
@@ -84,7 +84,7 @@ Provision your cluster using eksctl. This will deploy two cloudformation stacks,
 
 I am creating a kubernetes cluster with 3 nodes of instance type (t2.small) and using version 1.14:
 
-```
+```bash
 $ eksctl --profile dev --region eu-west-1 create cluster --name my-eks-cluster --version 1.14 --nodes 3 --node-type t2.small --ssh-public-key eks
 
 [ℹ]  eksctl version 0.9.0
@@ -318,7 +318,7 @@ $ eksctl --profile dev --region eu-west-1 delete cluster --name my-eks-cluster
 ## Further Reading on Kubernetes
 
 This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:
-* [EKSWorkshop](https://eksworkshop.com/introduction/)
+- [EKSWorkshop](https://eksworkshop.com/introduction/)
 
 ## Thank You
 

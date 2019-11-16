@@ -2,7 +2,7 @@
 layout: post
 title: "How To Setup a AWS EKS Kubernetes Cluster"
 date: 2019-11-16 22:31:36 +0200
-description: "Ruan Bekker shows you how to deploy a Kubernetes Cluster on Amazon Web Services with their EKS offering"
+description: "How to deploy a Kubernetes Cluster on Amazon Web Services with their EKS offering"
 comments: true
 categories: ["aws", "kubernetes", "eks"] 
 ---

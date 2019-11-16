@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Eks | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/eks/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2019-11-17T00:01:25+02:00</updated>
+  <updated>2019-11-17T00:23:24+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,168 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Deploy a Webapp on a AWS EKS Kubernetes Cluster]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/"/>
+    <updated>2019-11-17T00:21:19+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/68999897-f59a3d00-08cf-11ea-83c7-8624e6048106.png" alt="kubernetes-eks-deploy-webapp" /></p>
+
+<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
+
+<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
+
+<p>In our previous post, <a href="https://blog.ruanbekker.com/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster/">Part 1 - Setup a EKS Cluster</a> we went through the steps on how to Setup a EKS Cluster.</p>
+
+<h2>What are we doing today</h2>
+
+<p>In this post, we will deploy a sample web application to EKS and access our application using a ELB that EKS provides us.</p>
+
+<h2>Deployment Manifests</h2>
+
+<p>We will have two manifests that we will deploy to Kubernetes, a deployment manifest that will hold the information about our application and a service manifest that will hold the information about the service load balancer.</p>
+
+<p>The deployment manifest, you will notice that we are specifying that we want 3 containers, we are using labels so that our service and deployment can find each other and we are using a basic http web application that will listen on port 8000 inside the container:</p>
+
+<pre><code class="bash">$ cat deployment.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-hostname-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: my-app-container
+          image: ruanbekker/hostname
+          ports:
+          - name: http
+            containerPort: 8000
+</code></pre>
+
+<p>The service manifest, you will notice that we are specifying <code>type: LoadBalancer</code> in our service manifest, this will tell EKS to provision a ELB for your application so that we can access our application from the internet.</p>
+
+<p>You will see that the selector is specifying <code>my-app</code> which we also provided in our deployment.yml so that our service know where to find our backend application. We are also stating that the service is listening on port 80, and will forward its traffic to our deployment on port 8000:</p>
+
+<pre><code class="bash">$ cat service.yml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-hostname-app-service
+  labels:
+    app: my-app
+spec:
+  ports:
+  - port: 80
+    targetPort: 8000
+  selector:
+    app: my-app
+  type: LoadBalancer
+</code></pre>
+
+<h2>Deployment Time</h2>
+
+<p>Deploy our application:</p>
+
+<pre><code class="bash">$ kubectl apply -f deployment.yml
+deployment.apps/my-hostname-app created
+</code></pre>
+
+<p>Deploy our service:</p>
+
+<pre><code class="bash">$ kubectl apply -f service.yml
+service/my-hostname-app-service created
+</code></pre>
+
+<p>Now when we look at our deployment, we should see that 3 replicas of our application is running:</p>
+
+<pre><code class="bash">$ kubectl get deployments
+NAME              READY   UP-TO-DATE   AVAILABLE   AGE
+my-hostname-app   3/3     3            3           4m38s
+</code></pre>
+
+<p>To see the pods of that deployment, look at the pods:</p>
+
+<pre><code class="bash">$ kubectl get pods
+NAME                               READY   STATUS    RESTARTS   AGE
+my-hostname-app-5dcd48dfc5-2j8zm   1/1     Running   0          24s
+my-hostname-app-5dcd48dfc5-58vkc   1/1     Running   0          24s
+my-hostname-app-5dcd48dfc5-cmjwj   1/1     Running   0          24s
+</code></pre>
+
+<p>As we have more than one service in our EKS cluster, we can specify the labels that we have applied on our manifests to filter what we want to see (<code>app: my-app</code>):</p>
+
+<pre><code class="bash">$ kubectl get service --selector app=my-app
+NAME                      TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)        AGE
+my-hostname-app-service   LoadBalancer   10.100.114.166   a460661ce089b11ea97cd06dd7513db6-669054126.eu-west-1.elb.amazonaws.com   80:30648/TCP   2m29s
+</code></pre>
+
+<p>As we can see EKS provisioned a ELB for us, and we can access the application by making a HTTP request:</p>
+
+<pre><code class="bash">$ curl -i http://a460661ce089b11ea97cd06dd7513db6-669054126.eu-west-1.elb.amazonaws.com
+HTTP/1.1 200 OK
+Date: Sat, 16 Nov 2019 18:05:27 GMT
+Content-Length: 43
+Content-Type: text/plain; charset=utf-8
+
+Hostname: my-hostname-app-5dcd48dfc5-2j8zm
+</code></pre>
+
+<h2>Scaling our Deployment</h2>
+
+<p>Let&rsquo;s scale our deployment to 5 replicas:</p>
+
+<pre><code class="bash">$ kubectl scale deployment/my-hostname-app --replicas 5
+deployment.extensions/my-hostname-app scaled
+</code></pre>
+
+<p>After all the pods has been deployed, you should be able to see the 5 out of 5 pods that we provisioned, should be running:</p>
+
+<pre><code class="bash">$ kubectl get deployments
+NAME              READY   UP-TO-DATE   AVAILABLE   AGE
+my-hostname-app   5/5     5            5           5m7s
+</code></pre>
+
+<p>We can then also see the pods that our deployment is referencing:</p>
+
+<pre><code class="bash">$ kubectl get pods
+NAME                               READY   STATUS    RESTARTS   AGE
+my-hostname-app-5dcd48dfc5-2j8zm   1/1     Running   0          6m8s
+my-hostname-app-5dcd48dfc5-58vkc   1/1     Running   0          6m8s
+my-hostname-app-5dcd48dfc5-cmjwj   1/1     Running   0          6m8s
+my-hostname-app-5dcd48dfc5-m4xcq   1/1     Running   0          67s
+my-hostname-app-5dcd48dfc5-zf6xl   1/1     Running   0          68s
+</code></pre>
+
+<h2>Further Reading on Kubernetes</h2>
+
+<p>This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:</p>
+
+<ul>
+<li><a href="https://eksworkshop.com/introduction/">EKSWorkshop</a></li>
+<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/worker.html">Worker Nodes Documentation</a></li>
+<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/eks-guestbook.html">Guestbook Kubernetes Sample Application</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+
+<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
+
+
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Setup a AWS EKS Kubernetes Cluster]]></title>

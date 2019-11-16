@@ -13,7 +13,7 @@ categories: ["aws", "kubernetes", "eks"]
 
 <a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
 
-This will be a tutorial split up in two posts, where I will show you how to provision a EKS Cluster (Elastic Kubernetes Service) on AWS and in the next post, how to deploy a web application to your cluster.
+This will be a tutorial split up in two posts, where I will show you how to provision a EKS Cluster (Elastic Kubernetes Service) on AWS and in the [next post](https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/), how to deploy a web application to your cluster ([Part2 - Deploy a Web App to EKS](https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/).)
 
 ## And then came EKS
 
@@ -36,7 +36,7 @@ We will cover this in this post:
 | Scale down your worker nodes                                 |
 | Run a pod on your cluster                                    |
 
-In the [next post]() we will deploy a web service to our EKS cluster.
+In the [next post](https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/) we will deploy a web service to our EKS cluster.
 
 ## Install Pre-Requirements
 
@@ -296,7 +296,7 @@ ip-192-168-8-167.eu-west-1.compute.internal   Ready    <none>   73m   v1.14.7-ek
 
 ## Clean Up
 
-If you want to follow along deploying a web application to your EKS cluster before we terminate the cluster, have a look at [Part 2 - EKS Tutorial]() before continuing.
+If you want to follow along deploying a web application to your EKS cluster before we terminate the cluster, have a look at [Part 2 - EKS Tutorial](https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/) before continuing.
 
 Once you are ready to terminate your EKS cluster, you can go ahead and terminate the cluster:
 

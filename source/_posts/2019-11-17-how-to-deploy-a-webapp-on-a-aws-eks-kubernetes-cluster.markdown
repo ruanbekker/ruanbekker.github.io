@@ -1,6 +1,7 @@
 ---
 layout: post
 title: "How To Deploy a Webapp on a AWS EKS Kubernetes Cluster"
+description: "Now that we have our EKS cluster running, let's deploy a web application to our Kubernetes Cluster"
 date: 2019-11-17 00:21:19 +0200
 comments: true
 categories: ["aws", "eks", "kubernetes", "docker"] 

@@ -266,7 +266,9 @@ Let me know what you think. If you liked my content, feel free to checkout my co
 
 <center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
 
-Feel free to have a look at my [Developer T-Shirt Range](https://bekkerclothing.com/collections/developer):
+<br>
+
+Feel free to have a look at my **[Developer T-Shirt Range](https://bekkerclothing.com/collections/developer):**
 
 <div id='product-component-1574559271268'></div>
 <script type="text/javascript">

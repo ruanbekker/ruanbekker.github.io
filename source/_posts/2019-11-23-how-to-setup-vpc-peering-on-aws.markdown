@@ -1,6 +1,7 @@
 ---
 layout: post
 title: "How to Setup VPC Peering on AWS"
+description: "I will demonstrate how to create a VPC Peering Connection between Two AWS Accounts and how to route traffic between them"
 date: 2019-11-23 09:09:40 +0200
 comments: true
 categories: ["aws", "networks", "vpc"]

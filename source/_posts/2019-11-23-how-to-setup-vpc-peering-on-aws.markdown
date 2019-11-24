@@ -73,7 +73,7 @@ Go ahead and create a subnet where you will need to specify the VPC that you cre
 
 Do this for the other two subnets as well and then when you are done, it may look more or less like this:
 
-<img width="1290" alt="051767FD-2D52-48BD-B495-01ACB431B358" src="https://user-images.githubusercontent.com/567298/69486797-26421f80-0e58-11ea-93bb-17d19d4ec88e.png">
+<img width="1290" alt="051767FD-2D52-48BD-B495-01ACB431B358" src="https://user-images.githubusercontent.com/567298/69487635-3660fb80-0e66-11ea-8b59-71364414d3ae.png">
 
 Repeat this process that you have three subnets for your **blue** account as well:
 
@@ -89,7 +89,7 @@ Head over to your **green** account's VPC section and select "Peering Connection
 
 Create a new peering connection, we will first need to name our peering connection, select the source VPC which will be our green account's VPC, since the VPC that we want to peer with is in another account, get the AWS Account ID from the **blue** account, and select "Another account" and provide the account id that we want to peer with, select the AWS Region and provide the VPC ID of the **blue** account:
 
-<img width="1291" alt="1BDCB500-7BF0-4C5F-B171-9E09463A956A" src="https://user-images.githubusercontent.com/567298/69486867-6bb31c80-0e59-11ea-91d6-2fcd79b99fd7.png">
+<img width="1291" alt="1BDCB500-7BF0-4C5F-B171-9E09463A956A" src="https://user-images.githubusercontent.com/567298/69487659-817b0e80-0e66-11ea-83b6-4ec7c941804f.png">
 
 Once you create the peering connection, you will find the peering request details:
 
@@ -188,7 +188,7 @@ Select the IP, hit "Actions" and select "Associate Address", then select the EC2
 
 You should know see that the EC2 instance has a Public IP assigned to it:
 
-<img width="1045" alt="DBB880CB-FDB1-40F2-BE3A-799720B1D06D" src="https://user-images.githubusercontent.com/567298/69487322-7329f400-0e60-11ea-8946-ab68fb9b24bf.png">
+<img width="1048" alt="FE545350-0A45-453C-9855-4F65CC0783C6" src="https://user-images.githubusercontent.com/567298/69487694-d7e84d00-0e66-11ea-8cec-ad8142f01b9b.png">
 
 ## Test Network Connectivity 
 

@@ -151,9 +151,9 @@ Let me know what you think. If you liked my content, feel free to checkout my co
 
 <center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
 
-<p>
+<br>
 
-I've recently started a **"[Beveloper Range](https://bekkerclothing.com/collections/developer)"** t-shirts, let me know what you think:
+I've recently started a [Developer Range](https://bekkerclothing.com/collections/developer) t-shirts, let me know what you think:
 
 <div id='product-component-1574800622582'></div>
 <script type="text/javascript">

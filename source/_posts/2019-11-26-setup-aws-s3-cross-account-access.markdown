@@ -134,14 +134,14 @@ $ aws --profile green sts get-caller-identity
 Now let's upload an object to S3 using our blue profile:
 
 ```
-$ aws --profile production s3 cp foo s3://ruanbekker-prod-s3-bucket/
+$ aws --profile blue s3 cp foo s3://ruanbekker-prod-s3-bucket/
 upload: ./foo to s3://ruanbekker-prod-s3-bucket/foo
 ```
 
 Let's verify if we can see the object:
 
 ```
-$ aws --profile production s3 ls s3://ruanbekker-prod-s3-bucket/
+$ aws --profile blue s3 ls s3://ruanbekker-prod-s3-bucket/
 2019-10-03 22:13:30      14582 foo
 ```
 

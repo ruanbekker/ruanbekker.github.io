@@ -10,6 +10,8 @@ categories: ["python", "multiprocessing"]
 
 While I was using multiprocessing, I found out that global variables are not shared between processes.
 
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+
 ## Example of the Issue
 
 Let me first provide an example of the issue that I was facing. 

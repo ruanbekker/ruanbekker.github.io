@@ -10,6 +10,8 @@ categories: ["prometheus", "metrics", "monitoring", "blackbox"]
 
 Blackbox Exporter by Prometheus allows probing over endpoints such as http, https, icmp, tcp and dns.
 
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+
 ## What will we be doing
 
 In this tutorial we will install the blackbox exporter on linux. Im assuming that you have already [set up prometheus](https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/).

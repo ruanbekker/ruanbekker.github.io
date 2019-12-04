@@ -10,17 +10,8 @@ categories: ["glusterfs", "storage", "clustering"]
 
 In one of my earlier posts on [GlusterFS](https://sysadmins.co.za/tag/glusterfs), we went through the steps on how to setup a [Distributed Storage Volume](https://sysadmins.co.za/setup-a-distributed-storage-volume-with-glusterfs/), where the end result was to have scalable storage, where size was the requirement.
 
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script><p>
-    
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+
 ## What will we be doing today with GlusterFS?
 
 Today, we will be going through the steps on how to setup a Replicated Storage Volume with GlusterFS, where we will have 3 GlusterFS Nodes, and using the replication factor of 3. 

@@ -12,13 +12,7 @@ Today we will setup a Site to Site ipsec VPN with Strongswan, which will be conf
 
 After our tunnels are established, we will be able to reach the private ips over the vpn tunnels.
 
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
 
 ## Get the Dependencies:
 

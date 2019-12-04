@@ -10,6 +10,8 @@ categories: ["mongodb", "golang", "databases", "programming"]
 
 While looking into working with mongodb using golang, I found it quite frustrating getting it up and running and decided to make a quick post about it.
 
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+
 ## What are we doing?
 
 Examples using the golang driver for mongodb to connect, read, update and delete documents from mongodb.

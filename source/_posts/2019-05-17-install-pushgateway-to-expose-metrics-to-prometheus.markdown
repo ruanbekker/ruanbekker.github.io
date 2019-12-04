@@ -11,6 +11,8 @@ In most cases when we want to scrape a node for metrics, we will install node-ex
 
 Pushgateway allows you to push custom metrics to push gateway's endpoint, then we configure prometheus to scrape push gateway to consume the exposed metrics into prometheus.
 
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+
 ## Pre-Requirements
 
 If you have not set up [Prometheus](https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/), head over to **[this blogpost](https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/)** to set up prometheus on Linux.

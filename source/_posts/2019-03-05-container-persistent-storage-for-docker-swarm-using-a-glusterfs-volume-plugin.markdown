@@ -12,6 +12,8 @@ From one of my previous posts I demonstrated how to provide persistent storage f
 
 I've stumbled upon one AWESOME GlusterFS Volume Plugin for Docker by [@trajano](https://github.com/trajano/docker-volume-plugins/tree/master/glusterfs-volume-plugin), please have a look at his repository. I've been waiting for some time for one solid glusterfs volume plugin, and it works great.
 
+<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+
 ## What we will be doing today
 
 We will setup a 3 node replicated glusterfs volume and show how easy it is to install the volume plugin and then demonstrate how storage from our swarms containers are persisted.

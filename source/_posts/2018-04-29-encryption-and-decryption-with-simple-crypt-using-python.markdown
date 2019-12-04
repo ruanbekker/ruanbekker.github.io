@@ -7,7 +7,7 @@ categories: ["python", "cryptography", "encryption", "decryption", "simple-crypt
 ---
 Today I wanted to encrypt sensitive information to not expose passwords, hostnames etc. I wanted to have a way to encrypt my strings with a master password and stumbled upon Simple Crypt.
 
-[![bekker-clothing-developer-tshirts](https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png)](https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad)
+[![bekker-clothing-developer-tshirts](https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png)](https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad){:target="_blank"}
 
 ## Simple Crypt
 

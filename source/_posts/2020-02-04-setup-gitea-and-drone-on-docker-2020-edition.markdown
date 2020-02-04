@@ -18,7 +18,17 @@ Get the docker-compose.yml:
 $ wget -O docker-compose.yml https://gist.githubusercontent.com/ruanbekker/27d2cb2e3f4194ee5cfe2bcdc9c4bf52/raw/25590a23e87190a871d70fd57ab461ce303cd286/2020.02.04-gitea-drone_docker-compose.yml
 ```
 
-Verify the environment variables and adjust the defaults if you want to change something, then deploy:
+Verify the environment variables and adjust the defaults if you want to change something, if you want your git clone ssh url to point to a dns name as well as the url for gitea, then change the following to your dns:
+
+```
+  gitea:
+    ...
+    environment:
+      - ROOT_URL=http://gi.myresolvable.dns:3000
+      - SSH_DOMAIN=git.myresolvable.dns
+```
+
+then deploy:
 
 ```
 $ docker-compose up -d

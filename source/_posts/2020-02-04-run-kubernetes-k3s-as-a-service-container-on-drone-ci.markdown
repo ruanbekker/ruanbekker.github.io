@@ -6,13 +6,17 @@ comments: true
 categories: ["kubernetes", "drone", "cicd", "devops"] 
 ---
 
-Drone services allow you to run a service container and will be available for the duration of your build, which is great if you want a ephemeral service to test your applications against. 
+[Drone services](https://docs.drone.io/pipeline/docker/syntax/services/) allow you to run a service container and will be available for the duration of your build, which is great if you want a ephemeral service to test your applications against. 
 
-Today we will experiment with services on drone and will deploy a k3s cluster as a drone service and interact with our cluster using kubectl.
+Today we will experiment with services on [drone](https://github.com/drone/drone)  and will deploy a [k3s](https://github.com/rancher/k3s) (a kubernetes distribution built by rancher) cluster as a drone service and interact with our cluster using kubectl.
 
 I will be using multiple pipelines, where we will first deploy our "dev cluster", when it's up, we will use kubectl to interact with the cluster, once that is done, we will deploy our "staging cluster" and do the same.
 
 This is very basic and we are not doing anything special, but this is a starting point and you can do pretty much whatever you want.
+
+## What is Drone
+
+If you are not aware of Drone, Drone is a container-native continious deliver platform built on Go and you can check them out [here: github.com/drone](https://github.com/drone/drone)
 
 ## Setup Gitea and Drone
 

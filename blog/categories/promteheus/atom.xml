@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Promteheus | Ruan Bekker's Blog]]></title>
+  <link href="http://blog.ruanbekker.com/blog/categories/promteheus/atom.xml" rel="self"/>
+  <link href="http://blog.ruanbekker.com/"/>
+  <updated>2020-02-04T22:04:28+02:00</updated>
+  <id>http://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Setup Thanos on Docker: A Highly Available Prometheus]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/01/setup-thanos-on-docker-a-highly-available-prometheus/"/>
+    <updated>2020-02-01T01:28:12+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/01/setup-thanos-on-docker-a-highly-available-prometheus</id>
+    <content type="html"><![CDATA[<p>Today we will look at Thanos, a open source, highly available prometheus setup with long term storage capabilites, that we will run on docker to simplify the setup.</p>
+
+<p>Note that running this proof of concept does not make it highly available as we will run everything on one host, but it will give you a feel what Thanos is about. In a future post, I will setup Thanos in a multi node environment.</p>
+
+<h2>Prometheus</h2>
+
+<p>If you are not familiar with <a href="https://prometheus.io">Prometheus</a>, then have a look at their documentation, but in short, prometheus is a open source monitoring system and time series database developed by soundcloud.</p>
+
+<p>Prometheus is a monitoring system includes a rich, multidimensional data model, a concise and powerful query language called PromQL, an efficient embedded timeseries database, and over 150 integrations with third-party systems.</p>
+
+<h2>Thanos</h2>
+
+<p>Thanos is a highly available prometheus setup with long term storage capabilities.</p>
+
+<p>Thanos allows you to ship your data to S3/Minio for long storage capabilites, so you could for example only store your &ldquo;live&rdquo; data on prometheus for 2 weeks, then everything older than that gets sent to object storage such as amazon s3 or minio. This helps your prometheus instance not to be flooded with data or prevents you from running out of storage space. The nice thing is, when you query for data older than 2 weeks, it will fetch the data from object storage.</p>
+
+<p>Thanos has a global query view, which essentially means you can query your prometheus metrics from one endpoint backed by multiple prometheus servers or cluster.</p>
+
+<p>You can still use the same tools such as Grafana as it utilizes the same Prometheus Query API.</p>
+
+<p>Thanos provides downsampling and compaction, so that you downsample your historical data for massive query speedup when querying large time ranges.</p>
+
+<h2>Thanos Components</h2>
+
+<p>Thanos is a clustered system of components which can be categorized as follows:</p>
+
+<ul>
+<li><p>Metric sources</p>
+
+<ul>
+<li>Thanos provides two components that act as data sources: Prometheus Sidecar and Rule Nodes</li>
+<li>Sidecar implements gRPC service on top of Prometheus</li>
+<li>Rule Node directly implements it on top of the Prometheus storage engine it is running</li>
+<li>Data sources that persist their data for long term storage, do so via the Prometheus 2.0 storage engine</li>
+<li>Storage engine periodically produces immutable blocks of data for a fixed time range</li>
+<li>A blocks top-level directory includes chunks, index and meta.json files</li>
+<li>Chunk files hold a few hundred MB worth of chunks each</li>
+<li>The index file holds all information needed to lookup specific series by their labels and the positions of their chunks.</li>
+<li>The <code>meta.json</code> file holds metadata about block like stats, time range, and compaction level</li>
+</ul>
+</li>
+<li><p>Stores</p>
+
+<ul>
+<li>A Store Node acts as a Gateway to block data that is stored in an object storage bucket</li>
+<li>It implements the same gRPC API as Data Sources to provide access to all metric data found in the bucket</li>
+<li>Continuously synchronizes which blocks exist in the bucket and translates requests for metric data into object storage requests</li>
+<li>Implements various strategies to minimize the number of requests to the object storage</li>
+<li>Prometheus 2.0 storage layout is optimized for minimal read amplification</li>
+<li>At this time of writing, only index data is cached</li>
+<li>Stores and Data Sources are the same, store nodes and data sources expose the same gRPC Store API</li>
+<li>Store API allows to look up data by a set of label matchers and a time range</li>
+<li>It then returns compressed chunks of samples as they are found in the block data</li>
+<li>So it&rsquo;s purely a data retrieval API and does not provide complex query execution</li>
+</ul>
+</li>
+<li><p>Query Layer</p>
+
+<ul>
+<li>Queriers are stateless and horizontally scalable instances that implement PromQL on top of the Store APIs exposed in the cluster</li>
+<li>Queriers participate in the cluster to be able to resiliently discover all data sources and store nodes</li>
+<li>Rule nodes in return can discover query nodes to evaluate recording and alerting rules</li>
+<li>Based on the metadata of store and source nodes, they attempt to minimize the request fanout to fetch data for a particular query</li>
+<li>The only scalable components of Thanos is the query nodes as none of the Thanos components provide sharding</li>
+<li>Scaling of storage capacity is ensured by relying on an external object storage system</li>
+<li>Store, rule, and compactor nodes are all expected to scale significantly within a single instance or high availability pair</li>
+</ul>
+</li>
+</ul>
+
+
+<p>The information from above was retrieved from their <a href="https://thanos.io/design.md/">website</a>, feel free to check them out if you want to read more on the concepts of thanos.</p>
+
+<p>The Architecture Overview of Thanos looks like this:</p>
+
+<p><img src="https://github.com/thanos-io/thanos/blob/master/docs/img/arch.jpg?raw=true" alt="" /></p>
+
+<h2>What are we doing today</h2>
+
+<p>We will setup a Thanos Cluster with Minio, Node-Exporter, Grafana on Docker. Our Thanos setup will consist of 3 prometheus containers, each one running with a sidecar container, a store container, 2 query containers, then we have the remotewrite and receive containers which node-exporter will use to ship its metrics to.</p>
+
+<p>The minio container will be used as our long-term storage and the mc container will be used to initialize the storage bucket which is used by thanos.</p>
+
+<h2>Deploy the Cluster</h2>
+
+<p>Below is the docker-compose.yml and the script to generate the configs for thanos:</p>
+
+<script src="https://gist.github.com/ruanbekker/acd1b17d3aea4c71031e72dfc8ebbb4d.js"></script>
+
+
+<p>Once you have saved the compose as <code>docker-compose.yml</code> and the script as <code>configs.sh</code> you can create the configs:</p>
+
+<pre><code>$ bash configs.sh
+</code></pre>
+
+<p>The script from above creates the data directory and place all the configs that thanos will use in there. Next deploy the thanos cluster:</p>
+
+<pre><code>$ docker-compose -f docker-compose.yml up
+</code></pre>
+
+<p>It should look something like this:</p>
+
+<pre><code>$ docker-compose -f docker-compose.yml up
+Starting node-exporter ... done
+Starting minio         ... done
+Starting grafana        ... done
+Starting prometheus0    ... done
+Starting prometheus1     ... done
+Starting thanos-receive  ... done
+Starting thanos-store    ... done
+Starting prometheus2     ... done
+Starting mc             ... done
+Starting thanos-sidecar0 ... done
+Starting thanos-sidecar1     ... done
+Starting thanos-sidecar2     ... done
+Starting thanos-remote-write ... done
+Starting thanos-query1       ... done
+Starting thanos-query0       ... done
+Attaching to node-exporter, minio, grafana, mc, prometheus0, prometheus1, thanos-store, prometheus2, thanos-receive, thanos-sidecar0, thanos-sidecar1, thanos-sidecar2, thanos-remote-write, thanos-query0, thanos-query1
+</code></pre>
+
+<p>Access the Query UI, which looks identical to the Prometheus UI:
+- <a href="http://localhost:10904/graph">http://localhost:10904/graph</a></p>
+
+<p>It will look more or less like this:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/73583506-4e26b280-449b-11ea-96ca-9b0cefec0acd.png"></p>
+
+<p>When we access minio on:
+- <a href="http://localhost:9000/minio">http://localhost:9000/minio</a></p>
+
+<p>And under the thanos bucket you will see the objects being persisted:</p>
+
+<p><img width="1278" alt="image" src="https://user-images.githubusercontent.com/567298/73583542-7ca48d80-449b-11ea-955c-7b1e766229a3.png"></p>
+
+<p>When we access grafana on:
+- <a href="http://localhost:3000/">http://localhost:3000/</a></p>
+
+<p>Select datasources, add a prometheus datasource and select the endpoint: <code>http://query0:10904</code>, which should look like this:</p>
+
+<p><img width="618" alt="image" src="https://user-images.githubusercontent.com/567298/73583601-d73de980-449b-11ea-9a71-c94e8184336f.png"></p>
+
+<p>When we create a dashboard, you can test a query with <code>thanos_sidecar_prometheus_up</code> and it should look something like this:</p>
+
+<p><img width="1279" alt="image" src="https://user-images.githubusercontent.com/567298/73583684-49aec980-449c-11ea-97bd-35145ff8330c.png"></p>
+]]></content>
+  </entry>
+  
+</feed>

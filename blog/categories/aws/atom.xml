@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Aws | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/aws/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-04T23:04:59+02:00</updated>
+  <updated>2020-02-04T23:44:37+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,137 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Run Localstack as a Service Container for AWS Mock Services on Drone CI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci/"/>
+    <updated>2020-02-04T23:43:30+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a basic pipeline in drone to make use of service containers, we will provision localstack so that we can provision AWS mock services.</p>
+
+<p>We will create a kinesis stream on localstack, when the service is up, we will create a stream, put 100 records in the stream, read them from the stream and delete the kinesis stream.</p>
+
+<h2>Gitea and Drone Stack</h2>
+
+<p>If you don’t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
+
+<h2>Create the Drone Config</h2>
+
+<p>In gitea, I have created a new git repository and created my drone config as <code>.drone.yml</code> with this pipeline config:</p>
+
+<pre><code>---
+kind: pipeline
+type: docker
+name: localstack
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: wait-for-localstack
+    image: busybox
+    commands:
+      - sleep 10
+
+  - name: list-kinesis-streams
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis list-streams
+
+  - name: create-kinesis-streams
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis create-stream --stream-name mystream --shard-count 1
+
+  - name: describe-kinesis-streams
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis describe-stream --stream-name mystream
+
+  - name: put-record-into-kinesis
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - for record in $$(seq 1 100); do aws --endpoint-url=http://localstack:4568 kinesis put-record --stream-name mystream --partition-key 123 --data testdata_$$record ; done
+
+  - name: get-record-from-kinesis
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - SHARD_ITERATOR=$$(aws --endpoint-url=http://localstack:4568 kinesis get-shard-iterator --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON --stream-name mystream --query 'ShardIterator' --output text)
+      - for each in $$(aws --endpoint-url=http://localstack:4568 kinesis get-records --shard-iterator $$SHARD_ITERATOR | jq -cr '.Records[].Data'); do echo $each | base64 -d ; echo "" ; done
+
+  - name: delete-kinesis-stream
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis delete-stream --stream-name mystream
+
+services:
+  - name: localstack
+    image: localstack/localstack
+    privileged: true
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - name: docker-socket
+        path: /var/run/docker.sock
+      - name: localstack-vol
+        path: /tmp/localstack
+    ports:
+      - 8080
+
+volumes:
+- name: localstack-vol
+  temp: {}
+- name: docker-socket
+  host:
+    path: /var/run/docker.sock
+</code></pre>
+
+<p>To explain what we are doing, we are bringing up localstack as a service container, then using the aws cli tools we point to the localstack kinesis endpoint, creating a kinesis stream, put 100 records to the stream, then we read from the stream and delete thereafter.</p>
+
+<h2>Trigger the Pipeline</h2>
+
+<p>Then I head to drone activate my new git repository and select the repository as &ldquo;Trusted&rdquo;. I commited a dummy file to trigger the pipeline and it should look like this:</p>
+
+<p><img width="893" alt="image" src="https://user-images.githubusercontent.com/567298/73788817-63a32180-47a6-11ea-96c7-6abba7af2b27.png"></p>
+
+<p>List Streams:</p>
+
+<p><img width="974" alt="image" src="https://user-images.githubusercontent.com/567298/73788860-73bb0100-47a6-11ea-9c80-f2b8bfc18d53.png"></p>
+
+<p>Put Records:</p>
+
+<p><img width="896" alt="image" src="https://user-images.githubusercontent.com/567298/73788895-87666780-47a6-11ea-8d90-2c454ec9174a.png"></p>
+
+<p>Delete Stream:</p>
+
+<p><img width="924" alt="image" src="https://user-images.githubusercontent.com/567298/73788988-aebd3480-47a6-11ea-85d9-9ed7424c648b.png"></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup AWS S3 Cross Account Access]]></title>
@@ -1090,70 +1221,6 @@ ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   73m   v1.1
 
 <p>This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:
 - <a href="https://eksworkshop.com/introduction/">EKSWorkshop</a></p>
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Testing AWS Lambda Functions Locally on Docker With LambCi]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/11/14/testing-aws-lambda-functions-locally-on-docker-with-lambci/"/>
-    <updated>2019-11-14T23:57:10+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/11/14/testing-aws-lambda-functions-locally-on-docker-with-lambci</id>
-    <content type="html"><![CDATA[<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>I discovered a Docker image called <strong>LambCi</strong> that allows you to test lambda functions locally on docker and wanted to share with you how it works.</p>
-
-<h2>Python Lambda Function</h2>
-
-<p>We will create a basic lambda function to demonstrate how it works.</p>
-
-<pre><code>$ mkdir task
-$ cat &gt; task/lambda_function.py &lt;&lt; EOF
-import json
-
-def lambda_handler(event, context):
-    if event:
-
-        try:
-            event['name']
-            name = event['name']
-            output_string = 'My name is {}'.format(name.capitalize())
-
-        except KeyError:
-            output_string = 'A name was not defined in the event payload'
-
-    return output_string
-EOF
-</code></pre>
-
-<p>Now that we&rsquo;ve created the function, run the docker container with the parameters of the functions handler method and the event parameters:</p>
-
-<pre><code>$ docker run --rm -v "$PWD/task":/var/task lambci/lambda:python3.7 lambda_function.lambda_handler '{"name": "ruan"}'
-START RequestId: 70025895-1233-1362-8006-c2784b5d80b6 Version: $LATEST
-END RequestId: 70025895-1233-1362-8006-c2784b5d80b6
-REPORT RequestId: 70025895-1233-1362-8006-c2784b5d80b6  Duration: 7.51 ms   Billed Duration: 100 ms Memory Size: 1536 MB    Max Memory Used: 23 MB
-"My name is Ruan"
-</code></pre>
-
-<p>And another call:</p>
-
-<pre><code>$ docker run --rm -v "$PWD/task":/var/task lambci/lambda:python3.7 lambda_function.lambda_handler '{"nam": "ruan"}'
-START RequestId: f7ab2e97-05db-1184-a009-11b92638534f Version: $LATEST
-END RequestId: f7ab2e97-05db-1184-a009-11b92638534f
-REPORT RequestId: f7ab2e97-05db-1184-a009-11b92638534f  Duration: 5.32 ms   Billed Duration: 100 ms Memory Size: 1536 MB    Max Memory Used: 23 MB
-"A name was not defined in the event payload"
-</code></pre>
-
-<p>Checkout the dockerhub page for more info:
-- <a href="https://hub.docker.com/r/lambci/lambda/">https://hub.docker.com/r/lambci/lambda/</a></p>
 
 <h2>Thank You</h2>
 

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Devops | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/devops/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-04T23:04:59+02:00</updated>
+  <updated>2020-02-04T23:44:37+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,137 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Run Localstack as a Service Container for AWS Mock Services on Drone CI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci/"/>
+    <updated>2020-02-04T23:43:30+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a basic pipeline in drone to make use of service containers, we will provision localstack so that we can provision AWS mock services.</p>
+
+<p>We will create a kinesis stream on localstack, when the service is up, we will create a stream, put 100 records in the stream, read them from the stream and delete the kinesis stream.</p>
+
+<h2>Gitea and Drone Stack</h2>
+
+<p>If you don’t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
+
+<h2>Create the Drone Config</h2>
+
+<p>In gitea, I have created a new git repository and created my drone config as <code>.drone.yml</code> with this pipeline config:</p>
+
+<pre><code>---
+kind: pipeline
+type: docker
+name: localstack
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: wait-for-localstack
+    image: busybox
+    commands:
+      - sleep 10
+
+  - name: list-kinesis-streams
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis list-streams
+
+  - name: create-kinesis-streams
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis create-stream --stream-name mystream --shard-count 1
+
+  - name: describe-kinesis-streams
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis describe-stream --stream-name mystream
+
+  - name: put-record-into-kinesis
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - for record in $$(seq 1 100); do aws --endpoint-url=http://localstack:4568 kinesis put-record --stream-name mystream --partition-key 123 --data testdata_$$record ; done
+
+  - name: get-record-from-kinesis
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - SHARD_ITERATOR=$$(aws --endpoint-url=http://localstack:4568 kinesis get-shard-iterator --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON --stream-name mystream --query 'ShardIterator' --output text)
+      - for each in $$(aws --endpoint-url=http://localstack:4568 kinesis get-records --shard-iterator $$SHARD_ITERATOR | jq -cr '.Records[].Data'); do echo $each | base64 -d ; echo "" ; done
+
+  - name: delete-kinesis-stream
+    image: ruanbekker/awscli
+    environment:
+      AWS_ACCESS_KEY_ID: 123
+      AWS_SECRET_ACCESS_KEY: xyz
+      AWS_DEFAULT_REGION: eu-west-1
+    commands:
+      - aws --endpoint-url=http://localstack:4568 kinesis delete-stream --stream-name mystream
+
+services:
+  - name: localstack
+    image: localstack/localstack
+    privileged: true
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - name: docker-socket
+        path: /var/run/docker.sock
+      - name: localstack-vol
+        path: /tmp/localstack
+    ports:
+      - 8080
+
+volumes:
+- name: localstack-vol
+  temp: {}
+- name: docker-socket
+  host:
+    path: /var/run/docker.sock
+</code></pre>
+
+<p>To explain what we are doing, we are bringing up localstack as a service container, then using the aws cli tools we point to the localstack kinesis endpoint, creating a kinesis stream, put 100 records to the stream, then we read from the stream and delete thereafter.</p>
+
+<h2>Trigger the Pipeline</h2>
+
+<p>Then I head to drone activate my new git repository and select the repository as &ldquo;Trusted&rdquo;. I commited a dummy file to trigger the pipeline and it should look like this:</p>
+
+<p><img width="893" alt="image" src="https://user-images.githubusercontent.com/567298/73788817-63a32180-47a6-11ea-96c7-6abba7af2b27.png"></p>
+
+<p>List Streams:</p>
+
+<p><img width="974" alt="image" src="https://user-images.githubusercontent.com/567298/73788860-73bb0100-47a6-11ea-9c80-f2b8bfc18d53.png"></p>
+
+<p>Put Records:</p>
+
+<p><img width="896" alt="image" src="https://user-images.githubusercontent.com/567298/73788895-87666780-47a6-11ea-8d90-2c454ec9174a.png"></p>
+
+<p>Delete Stream:</p>
+
+<p><img width="924" alt="image" src="https://user-images.githubusercontent.com/567298/73788988-aebd3480-47a6-11ea-85d9-9ed7424c648b.png"></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Run Kubernetes (K3s) as a Service Container on Drone CI]]></title>
@@ -444,355 +575,6 @@ hello RUAN
 <h2>Read More</h2>
 
 <p>Read more on environment variables in ansible in their <a href="https://docs.ansible.com/ansible/latest/plugins/lookup/env.html">documentation</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using Concourse CI to Deploy to Docker Swarm]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/05/04/using-concourse-ci-to-deploy-to-docker-swarm/"/>
-    <updated>2019-05-04T23:11:17+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/05/04/using-concourse-ci-to-deploy-to-docker-swarm</id>
-    <content type="html"><![CDATA[<p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
-
-<p>In this tutorial we will use Concourse to Deploy our application to Docker Swarm.</p>
-
-<h2>The Flow</h2>
-
-<ul>
-<li>Our application code resides on Github</li>
-<li>The pipeline triggers when a commit is pushed to the master branch</li>
-<li>The pipeline will automatically deploy to the staging environment</li>
-<li>The pipeline requires a manual trigger to deploy to prod</li>
-<li>Note: Staging and Prod on the same swarm for demonstration</li>
-</ul>
-
-
-<p>The code for this tutorial is available on my <strong><a href="https://github.com/ruanbekker/concourse-swarm-app-demo">github repository</a></strong></p>
-
-<h2>Application Structure</h2>
-
-<p>The application structure for our code looks like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57184912-1d412f00-6ec3-11e9-85e9-6517d83e96e8.png" alt="" /></p>
-
-<h2>Pipeline Walktrough</h2>
-
-<p>Our <code>ci/pipeline.yml</code></p>
-
-<pre><code class="yaml">resources:
-  - name: main-repo
-    type: git
-    source:
-      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
-      branch: master
-      private_key: ((github_private_key))
-
-  - name: main-repo-staging
-    type: git
-    source:
-      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
-      branch: master
-      private_key: ((github_private_key))
-      paths:
-        - config/staging/*
-
-  - name: main-repo-prod
-    type: git
-    source:
-      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
-      branch: master
-      private_key: ((github_private_key))
-      paths:
-        - config/prod/*
-
-  - name: slack-alert
-    type: slack-notification
-    source:
-      url: ((slack_notification_url))
-
-  - name: version-staging
-    type: semver
-    source:
-      driver: git
-      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
-      private_key: ((github_private_key))
-      file: version-staging
-      branch: version-staging
-
-  - name: version-prod
-    type: semver
-    source:
-      driver: git
-      uri: git@github.com:ruanbekker/concourse-swarm-app-demo.git
-      private_key: ((github_private_key))
-      file: version-prod
-      branch: version-prod
-
-resource_types:
-  - name: slack-notification
-    type: docker-image
-    source:
-      repository: cfcommunity/slack-notification-resource
-      tag: v1.3.0
-
-jobs:
-  - name: bump-staging-version
-    plan:
-    - get: main-repo-staging
-      trigger: true
-    - get: version-staging
-    - put: version-staging
-      params:
-        bump: major
-
-  - name: bump-prod-version
-    plan:
-    - get: main-repo-prod
-      trigger: true
-    - get: version-prod
-    - put: version-prod
-      params:
-        bump: major
-
-  - name: deploy-staging
-    plan:
-    - get: main-repo-staging
-    - get: main-repo
-    - get: version-staging
-      passed:
-      - bump-staging-version
-      trigger: true
-    - task: deploy-staging
-      params:
-        DOCKER_SWARM_HOSTNAME: ((docker_swarm_staging_host))
-        DOCKER_SWARM_KEY: ((docker_swarm_key))
-        DOCKER_HUB_USER: ((docker_hub_user))
-        DOCKER_HUB_PASSWORD: ((docker_hub_password))
-        SERVICE_NAME: app-staging
-        SWARM: staging
-        ENVIRONMENT: staging
-        AWS_ACCESS_KEY_ID: ((aws_access_key_id))
-        AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
-        AWS_DEFAULT_REGION: ((aws_region))
-      config:
-        platform: linux
-        image_resource:
-          type: docker-image
-          source:
-            repository: rbekker87/build-tools
-            tag: latest
-            username: ((docker_hub_user))
-            password: ((docker_hub_password))
-        inputs:
-        - name: main-repo-staging
-        - name: main-repo
-        - name: version-staging
-        run:
-          path: /bin/sh
-          args:
-            - -c
-            - |
-              ./main-repo/ci/scripts/deploy.sh
-      on_failure:
-        put: slack-alert
-        params:
-          channel: '#system_events'
-          username: 'concourse'
-          icon_emoji: ':concourse:'
-          silent: true
-          text: |
-            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED :rage: - TestApp Deploy to staging-swarm failed
-            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
-      on_success:
-        put: slack-alert
-        params:
-          channel: '#system_events'
-          username: 'concourse'
-          icon_emoji: ':concourse:'
-          silent: true
-          text: |
-            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS :aww_yeah: - TestApp Deploy to staging-swarm succeeded
-            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
-
-  - name: deploy-prod
-    plan:
-    - get: main-repo-prod
-    - get: main-repo
-    - get: version-prod
-      passed:
-      - bump-prod-version
-    - task: deploy-prod
-      params:
-        DOCKER_SWARM_HOSTNAME: ((docker_swarm_prod_host))
-        DOCKER_SWARM_KEY: ((docker_swarm_key))
-        DOCKER_HUB_USER: ((docker_hub_user))
-        DOCKER_HUB_PASSWORD: ((docker_hub_password))
-        SERVICE_NAME: app-prod
-        SWARM: prod
-        ENVIRONMENT: production
-        AWS_ACCESS_KEY_ID: ((aws_access_key_id))
-        AWS_SECRET_ACCESS_KEY: ((aws_secret_access_key))
-        AWS_DEFAULT_REGION: ((aws_region))
-      config:
-        platform: linux
-        image_resource:
-          type: docker-image
-          source:
-            repository: rbekker87/build-tools
-            tag: latest
-            username: ((docker_hub_user))
-            password: ((docker_hub_password))
-        inputs:
-        - name: main-repo-prod
-        - name: main-repo
-        - name: version-prod
-        run:
-          path: /bin/sh
-          args:
-            - -c
-            - |
-              ./main-repo/ci/scripts/deploy.sh
-      on_failure:
-        put: slack-alert
-        params:
-          channel: '#system_events'
-          username: 'concourse'
-          icon_emoji: ':concourse:'
-          silent: true
-          text: |
-            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) FAILED :rage: - TestApp Deploy to prod-swarm failed
-            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
-      on_success:
-        put: slack-alert
-        params:
-          channel: '#system_events'
-          username: 'concourse'
-          icon_emoji: ':concourse:'
-          silent: true
-          text: |
-            *$BUILD_PIPELINE_NAME/$BUILD_JOB_NAME* ($BUILD_NAME) SUCCESS :aww_yeah: - TestApp Deploy to prod-swarm succeeded
-            http://ci.example.local/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME
-</code></pre>
-
-<p>Our <code>ci/credentials.yml</code> which will hold all our secret info, which will remain local:</p>
-
-<pre><code>username: yourdockerusername
-password: yourdockerpassword
-docker_swarm_prod_host: 10.20.30.40
-...
-</code></pre>
-
-<p>The first step of our deploy will invoke a shell script that will establish a ssh tunnel to the docker host, mounting the docker socket to a tcp local port, then exporting the docker host port to the tunneled port, <code>ci/scripts/deploy.sh</code>:</p>
-
-<pre><code>#!/usr/bin/env sh
-
-export DOCKER_HOST="localhost:2376"
-
-echo "${DOCKER_SWARM_KEY}" | sed -e 's/\(KEY-----\)\s/\1\n/g; s/\s\(-----END\)/\n\1/g' | sed -e '2s/\s\+/\n/g' &gt; key.pem
-chmod 600 key.pem
-
-screen -S \
-  sshtunnel -m -d sh -c \
-  "ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -i ./key.pem -NL localhost:2376:/var/run/docker.sock root@$DOCKER_SWARM_HOSTNAME"
-
-sleep 5
-docker login -u "${DOCKER_HUB_USER}" -p "${DOCKER_HUB_PASSWORD}"
-docker stack deploy --prune -c ./main-repo/ci/docker/docker-compose.${ENVIRONMENT}.yml $SERVICE_NAME --with-registry-auth
-
-if [ $? != "0" ]
-  then
-    echo "deploy failure for: $SERVICE_NAME"
-    screen -S sshtunnel -X quit
-    exit 1
-  else
-    set -x
-    echo "deploy success for: $SERVICE_NAME"
-    screen -S sshtunnel -X quit
-fi
-</code></pre>
-
-<p>The deploy script references the docker-compose files, first our <code>ci/docker/docker-compose.staging.yml</code>:</p>
-
-<pre><code>version: "3.4"
-
-services:
-  web:
-    image: ruanbekker/web-center-name
-    environment:
-      - APP_ENVIRONMENT=Staging
-    ports:
-      - 81:5000
-    networks:
-      - web_net
-    deploy:
-      mode: replicated
-      replicas: 2
-
-networks:
-  web_net: {}
-</code></pre>
-
-<p>Also, our docker-compose for production, <code>ci/docker/docker-compose.production.yml</code>:</p>
-
-<pre><code>version: "3.4"
-
-services:
-  web:
-    image: ruanbekker/web-center-name
-    environment:
-      - APP_ENVIRONMENT=Production
-    ports:
-      - 80:5000
-    networks:
-      - web_net
-    deploy:
-      mode: replicated
-      replicas: 10
-
-networks:
-  web_net: {}
-</code></pre>
-
-<h2>Set the Pipeline in Concourse</h2>
-
-<p>Create 2 branches in your github repository for versioning: <code>version-staging</code> and <code>version-prod</code>, then logon to concourse and save the target:</p>
-
-<pre><code>$ fly -t ci login -n main -c http://&lt;concourse-ip&gt;
-</code></pre>
-
-<p>Set the pipeline, point the config, local variables definition and name the pipeline:</p>
-
-<pre><code>$ fly -t ci sp -n main -c ci/pipeline.yml -p &lt;pipeline-name&gt; -l ci/&lt;variables&gt;.yml
-</code></pre>
-
-<p>You will find that the pipeline will look like below and that it will be in a paused state:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/54060759-96dfd800-4206-11e9-9236-e3b86783417c.png" alt="" /></p>
-
-<p>Unpause the pipeline:</p>
-
-<pre><code>$ fly -t ci up -p swarm-demo
-</code></pre>
-
-<p>The pipeline should kick-off automatically due to the trigger that is set to true:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/54060811-cbec2a80-4206-11e9-8de7-a0b308f20cef.png" alt="" /></p>
-
-<p>Deployed automatically to staging, prod is a manual trigger:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/54060991-8e3bd180-4207-11e9-9726-2c01ca10d24a.png" alt="" /></p>
-
-<h2>Testing our Application</h2>
-
-<p>For demonstration purposes we have deployed staging on port 81 and production on port 80.</p>
-
-<p>Testing Staging on <a href="http://">http://</a><swarm-ip>:81/</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57185377-73fe3700-6eca-11e9-91d3-953e754cbde9.png" alt="" /></p>
-
-<p>Testing Production on <a href="http://">http://</a><swarm-ip>:80/</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57185383-8d06e800-6eca-11e9-8cff-c3a665f9f377.png" alt="" /></p>
 ]]></content>
   </entry>
   

@@ -9,15 +9,25 @@ footer: true
 
 Hello, World!
 
+![](https://user-images.githubusercontent.com/567298/73786009-20927f80-47a1-11ea-8dbc-06385218eac3.png)
+
 I specialize in Systems Development and I'm a Linux Fanatic, Open Source Enthusiast, and massively curious. Also like working with AWS, Docker, Kubernetes, as well as BigData Technologies such as EMR (Managed Hadoop Framework), DynamoDB, Elasticsearch, Kinesis and Data Pipeline.
+
+I am super passionate about helping people, so if theres something tech related that you want to chat about, please feel free to ping me.
+
+## Join me on Slack
+
+* Chat to me on [Slack](https://linux-hackers-slack.herokuapp.com/)
 
 ## My Other Online Platforms
 
 Below, all my other projects and online platforms:
 
 - [sysadmins.co.za](https://sysadmins.co.za)
-- [github](github.com/ruanbekker)
+- [github](https://github.com/ruanbekker)
 - [linkedin](https://www.linkedin.com/in/ruanbekker)
+- [dev.to](https://dev.to/ruanbekker/)
+- [email](mailto:ruan@ruanbekker.com)
 
 ## Get in Touch
 

@@ -162,6 +162,10 @@ Once your pipeline has finished and everything succeeded, you should see the out
 
 <img width="1068" alt="image" src="https://user-images.githubusercontent.com/567298/73784435-220e7880-479e-11ea-8f9d-a9856632302d.png">
 
-## Thank You
-
 As I mentioned earlier, we are not doing anything special but service containers allows us to do some awesome things.
+
+Thank you for reading. If you like my content, feel free to visit me at **[ruan.dev](https://ruan.dev/)** or follow me on twitter at **[@ruanbekker](https://twitter.com/ruanbekker)**
+
+[![](https://user-images.githubusercontent.com/567298/71188576-e2410f80-2289-11ea-8667-08f0c14ab7b5.png)](https://twitter.com/ruanbekker)
+
+[![ko-fi](https://www.ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A6423ZIQ)

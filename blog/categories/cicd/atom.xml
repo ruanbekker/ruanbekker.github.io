@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Cicd | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/cicd/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-04T22:14:56+02:00</updated>
+  <updated>2020-02-04T22:40:24+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,168 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Run Kubernetes (K3s) as a Service Container on Drone CI]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/04/run-kubernetes-k3s-as-a-service-container-on-drone-ci/"/>
+    <updated>2020-02-04T22:37:06+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/04/run-kubernetes-k3s-as-a-service-container-on-drone-ci</id>
+    <content type="html"><![CDATA[<p>Drone services allow you to run a service container and will be available for the duration of your build, which is great if you want a ephemeral service to test your applications against.</p>
+
+<p>Today we will experiment with services on drone and will deploy a k3s cluster as a drone service and interact with our cluster using kubectl.</p>
+
+<p>I will be using multiple pipelines, where we will first deploy our &ldquo;dev cluster&rdquo;, when it&rsquo;s up, we will use kubectl to interact with the cluster, once that is done, we will deploy our &ldquo;staging cluster&rdquo; and do the same.</p>
+
+<p>This is very basic and we are not doing anything special, but this is a starting point and you can do pretty much whatever you want.</p>
+
+<h2>Setup Gitea and Drone</h2>
+
+<p>If you don&rsquo;t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
+
+<h2>Create your Git Repo</h2>
+
+<p>Go ahead and create a git repo, you can name it anything, then it should look something like this:</p>
+
+<p><img width="1171" alt="image" src="https://user-images.githubusercontent.com/567298/73783555-90ead200-479c-11ea-8386-12518fb21b22.png"></p>
+
+<p>Create a drone configuration, <code>.drone.yml</code> my pipeline will look like this:</p>
+
+<pre><code>---
+kind: pipeline
+type: docker
+name: dev
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: wait-for-k3s
+    image: ruanbekker/build-tools
+    commands:
+      - sleep 30
+
+  - name: prepare-k3s-kubeconfig
+    image: alpine
+    volumes:
+      - name: k3s-kubeconfig
+        path: /k3s-kubeconfig
+    detach: false
+    commands:
+      - sed -i -e "s/127.0.0.1/k3s/g" /k3s-kubeconfig/kubeconfig.yaml
+
+  - name: test-kubernetes
+    image: ruanbekker/kubectl
+    volumes:
+      - name: k3s-kubeconfig
+        path: /tmp
+    environment:
+      KUBECONFIG: /tmp/kubeconfig.yaml
+    commands:
+      - kubectl get nodes -o wide
+
+services:
+  - name: k3s
+    image: rancher/k3s:v0.9.1
+    privileged: true
+    command:
+      - server
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /k3s-kubeconfig/kubeconfig.yaml
+      K3S_KUBECONFIG_MODE: 777
+    volumes:
+      - name: k3s-kubeconfig
+        path: /k3s-kubeconfig
+    ports:
+      - 6443
+
+volumes:
+- name: k3s-kubeconfig
+  temp: {}
+
+---
+kind: pipeline
+type: docker
+name: staging
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: wait-for-k3s
+    image: ruanbekker/build-tools
+    commands:
+      - sleep 30
+
+  - name: prepare-k3s-kubeconfig
+    image: alpine
+    volumes:
+      - name: k3s-kubeconfig
+        path: /k3s-kubeconfig
+    detach: false
+    commands:
+      - sed -i -e "s/127.0.0.1/k3s/g" /k3s-kubeconfig/kubeconfig.yaml
+
+  - name: test-kubernetes
+    image: ruanbekker/kubectl
+    volumes:
+      - name: k3s-kubeconfig
+        path: /tmp
+    environment:
+      KUBECONFIG: /tmp/kubeconfig.yaml
+    commands:
+      - kubectl get nodes -o wide
+
+
+services:
+  - name: k3s
+    image: rancher/k3s:v0.9.1
+    privileged: true
+    command:
+      - server
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /k3s-kubeconfig/kubeconfig.yaml
+      K3S_KUBECONFIG_MODE: 777
+    volumes:
+      - name: k3s-kubeconfig
+        path: /k3s-kubeconfig
+    ports:
+      - 6443
+
+volumes:
+- name: k3s-kubeconfig
+  temp: {}
+
+depends_on:
+- dev
+</code></pre>
+
+<p>In this pipeline you can see that the staging pipeline depends on dev, so dev pipeline will start by creating the k3s service container, once its up I am using a step just to sleep for 30 seconds to allow it to boot.</p>
+
+<p>Then I have defined a volume that will be persistent during the build time, which we will use to dump our kubeconfig file and update the hostname of our kubernetes endpoint. Once that is done our last step will set that file to the environment and use kubectl to interact with kubernetes.</p>
+
+<p>Once our dev pipeline has finished, our staging pipeline will start.</p>
+
+<h2>Activate the Repo in Drone</h2>
+
+<p>Head over to drone on port <code>80</code> and activate the newly created git repo (and make sure that you select &ldquo;Trusted&rdquo;) and you will see the activity feed being empty:</p>
+
+<p><img width="1008" alt="image" src="https://user-images.githubusercontent.com/567298/73784085-80872700-479d-11ea-9005-4cac54ac000d.png"></p>
+
+<p>Commit a dummy file to git and you should see your pipeline being triggered:</p>
+
+<p><img width="1013" alt="image" src="https://user-images.githubusercontent.com/567298/73784286-dd82dd00-479d-11ea-93f4-6363da53c1c1.png"></p>
+
+<p>Once your pipeline has finished and everything succeeded, you should see the output of your nodes in your kubernetes service container:</p>
+
+<p><img width="1068" alt="image" src="https://user-images.githubusercontent.com/567298/73784435-220e7880-479e-11ea-8f9d-a9856632302d.png"></p>
+
+<h2>Thank You</h2>
+
+<p>As I mentioned earlier, we are not doing anything special but service containers allows us to do some awesome things.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Gitea and Drone on Docker 2020 Edition]]></title>
@@ -867,220 +1029,6 @@ $ git push origin master
 <p><img src="https://user-images.githubusercontent.com/567298/56620280-af764700-6628-11e9-9d4f-c2592e6cf561.png" alt="image" /></p>
 
 <p>Absolutely Amazingness! I really love drone!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup a Drone CICD Environment on Docker With Letsencrypt]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/"/>
-    <updated>2019-04-18T18:53:49+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/56378979-ed313500-620e-11e9-9ac0-4fcd1df803e8.png" alt="drone-ci" /></p>
-
-<h2>What is Drone?</h2>
-
-<p>Drone is a self-service continuous delivery platform which can be used for CICD pipelines, devopsy stuff which is really awesome.</p>
-
-<p>With Configuration as Code, Pipelines are configured with a simple, easy‑to‑read file that you commit to your git repository such as github, gitlab, gogs, gitea etc.</p>
-
-<p>Each Pipeline step is executed inside an isolated Docker container that is automatically downloaded at runtime, if not found in cache.</p>
-
-<h2>Show me pipelines!</h2>
-
-<p>A pipeline can look as easy as:</p>
-
-<pre><code class="yaml">kind: pipeline
-steps:
-- name: test
-  image: node
-  commands:
-  - npm install
-  - npm test
-services:
-- name: database
-  image: mysql
-  ports:
-  - 3306
-</code></pre>
-
-<h2>Open for Testing!</h2>
-
-<p>I have enabled public access, so please go ahead and launch your cicd pipelines on my drone setup as I want to test the stability of it:</p>
-
-<p>==> <a href="https://drone.rbkr.xyz/">https://drone.rbkr.xyz/</a></p>
-
-<h2>What are we doing?</h2>
-
-<p>We will deploy a drone server which is responsible for the actual server and 2 drone agents which will receive instructions from the server whenever steps need to be executed. Steps run on agents.</p>
-
-<h2>Deploy the Servers</h2>
-
-<p>I&rsquo;m using VULTR to deploy 3 nodes on coreos, 1 drone server and 2 drone agents as seen below:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56371668-d0403600-61fd-11e9-8396-01c07c136518.png" alt="image" /></p>
-
-<p>Documentation:
-<a href="https://docs.drone.io/installation/github/multi-machine/">https://docs.drone.io/installation/github/multi-machine/</a>
-<a href="https://github.com/settings/developers">https://github.com/settings/developers</a></p>
-
-<p>We will use Github for version control and to delegate auth, therefore we need to register a new application on Github.</p>
-
-<p>Register New Application on Github at <a href="https://github.com/settings/developer">https://github.com/settings/developer</a> :</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56375985-22398980-6207-11e9-911d-9595f8f85db9.png" alt="register-application" /></p>
-
-<p>Get your Drone-Server Host Endpoint, and update the fields:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374721-287a3680-6204-11e9-837f-a7751651c29a.png" alt="image" /></p>
-
-<p>You will receive a Github Client ID, Secret which we will need later, which will look like this:</p>
-
-<pre><code>Client ID:
-xx
-Client Secret:
-yyy
-</code></pre>
-
-<p>Generate the shared secret which will be used on the server and agent:</p>
-
-<pre><code>$ openssl rand -hex 16
-eb83xxe19a3497f597f53044250df6yy
-</code></pre>
-
-<p>Create the Startup Script for Drone Server, which will just be a docker container running in detached mode. Note that you should use your own domain at <code>SERVER_HOST</code> and if you want to issue an certificate automatically keep <code>DRONE_TLS_AUTOCERT</code> to true.</p>
-
-<pre><code>$ cat &gt; start_drone-server.sh &lt;&lt; EOF
-#!/usr/bin/env bash
-
-set -ex
-
-GITHUB_CLIENT_ID=xx
-GITHUB_CLIENT_SECRET=yyy
-SHARED_SECRET=eb83xxe19a3497f597f53044250df6yy
-SERVER_HOST=drone.yourdomain.com
-SERVER_PROTOCOL=https
-
-docker run \
-  --volume=/var/run/docker.sock:/var/run/docker.sock \
-  --volume=/var/lib/drone:/data \
-  --env=DRONE_GITHUB_SERVER=https://github.com \
-  --env=DRONE_GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID} \
-  --env=DRONE_GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET} \
-  --env=DRONE_AGENTS_ENABLED=true \
-  --env=DRONE_RPC_SECRET=${SHARED_SECRET} \
-  --env=DRONE_SERVER_HOST=${SERVER_HOST} \
-  --env=DRONE_SERVER_PROTO=${SERVER_PROTOCOL} \
-  --env=DRONE_TLS_AUTOCERT=true \
-  --env=DRONE_USER_CREATE=username:&lt;your-github-username&gt;,admin:true \
-  --publish=80:80 \
-  --publish=443:443 \
-  --restart=always \
-  --detach=true \
-  --name=drone \
-  drone/drone:1
-EOF
-</code></pre>
-
-<p>Create the startup script for the drone agent, note that this script needs to be placed on the agent nodes:</p>
-
-<pre><code>$ cat &gt; start_drone-agent.sh &lt;&lt; EOF
-#!/usr/bin/env bash
-
-set -ex
-
-SHARED_SECRET=eb83xxe19a3497f597f53044250df6yy
-AGENT_SERVER_HOST=https://drone.yourdomain.com
-SERVER_PROTOCOL=https
-
-docker run \
-  --volume=/var/run/docker.sock:/var/run/docker.sock \
-  --env=DRONE_RPC_SERVER=${AGENT_SERVER_HOST} \
-  --env=DRONE_RPC_SECRET=${SHARED_SECRET} \
-  --env=DRONE_RUNNER_CAPACITY=2 \
-  --env=DRONE_RUNNER_NAME=${HOSTNAME} \
-  --restart=always \
-  --detach=true \
-  --name=drone-agent-02 \
-  drone/agent:1
-EOF
-</code></pre>
-
-<p>Logon to the server node and start the drone server:</p>
-
-<pre><code>$ bash start_drone-agent.sh
-</code></pre>
-
-<p>Login to the agent nodes and start the agents:</p>
-
-<pre><code>$ bash start_drone-agent.sh
-</code></pre>
-
-<p>The server should show that it&rsquo;s listening on port 80 and 443:</p>
-
-<pre><code>$ docker ps
-CONTAINER ID        IMAGE               COMMAND               CREATED             STATUS              PORTS                                      NAMES
-8ea70fc7b967        drone/drone:1       "/bin/drone-server"   12 minutes ago      Up 12 minutes       0.0.0.0:80-&gt;80/tcp, 0.0.0.0:443-&gt;443/tcp   drone
-</code></pre>
-
-<h2>Access Drone</h2>
-
-<p>Access your Drone instance on port 80 eg. <a href="http://drone.yourdomain.com">http://drone.yourdomain.com</a> you should be automatically redirected to port 443, which should direct you to a login page, which will look like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56375632-5eb8b580-6206-11e9-9ae8-92b2cd29abec.png" alt="drone-authorize" /></p>
-
-<p>Login with your github account and allow drone some time to sync your repositories:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373131-9e7c9e80-6200-11e9-83ce-e486b399468e.png" alt="image" /></p>
-
-<h2>Add drone config to your repository:</h2>
-
-<p>Clone this repository: <a href="https://github.com/ruanbekker/drone-ci-testing">https://github.com/ruanbekker/drone-ci-testing</a> which will contain the <code>.drone.yml</code> config which drone gets its instructions from.</p>
-
-<p>Select a repository to activate, (drone-ci-testing in this case) head over to settings:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373298-f1565600-6200-11e9-8262-ac3162fed4f2.png" alt="image" /></p>
-
-<p>Adding secret:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373209-c5d36b80-6200-11e9-90de-68c131480672.png" alt="image" /></p>
-
-<p>Add more secrets:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373443-3da19600-6201-11e9-85a9-083bfcbd604a.png" alt="image" /></p>
-
-<p>Your build list should be empty:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56373533-6fb2f800-6201-11e9-8fa0-ab05e546c36e.png" alt="image" /></p>
-
-<h2>Trigger a Build</h2>
-
-<p>Edit any of the files in the clone repository and you should see your build running:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374465-85c1b800-6203-11e9-8542-acd1d5729447.png" alt="image" /></p>
-
-<p>When your build has completed:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374511-a25df000-6203-11e9-9eb8-d94a777a8b4a.png" alt="image" /></p>
-
-<p>You can also find out where the step ran:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56374667-084a7780-6204-11e9-9c5b-6672f6882411.png" alt="image" /></p>
-
-<p>Run a couple of tests:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56376356-e3f09a00-6207-11e9-8ca0-16e06e7c0379.png" alt="image" /></p>
-
-<p>Get notified via slack:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56376376-eeab2f00-6207-11e9-9af9-194cb5a3023b.png" alt="image" /></p>
-
-<h2>Debugging</h2>
-
-<p>If your build fails, its most likely that you need the <code>slack_webhook</code> secret. You can remove the slack step which shouldhelp you get going with drone.</p>
-
-<h2>More on Drone</h2>
-
-<p>Have a look at <a href="https://github.com/ruanbekker/drone-ci-testing/blob/master/README.md">this document</a> for more examples or have a look at their <a href="https://docs.drone.io/">documentation</a> as well as their extensive list of <a href="http://plugins.drone.io/">plugins</a> and their <a href="https://docs.drone.io/installation/github/multi-machine/">setup documentation</a> to become familiar with their configuration.</p>
 ]]></content>
   </entry>
   

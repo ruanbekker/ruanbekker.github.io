@@ -111,10 +111,11 @@ Install the OpenFaas CLI:
 $ curl -SLsf https://cli.openfaas.com | sudo sh
 ```
 
-Export the `OPENFAAS_URL` to our ingress endpoint:
+Export the `OPENFAAS_URL` to our ingress endpoint and `OPENFAAS_PREFIX` for your dockerhub username:
 
 ```
 $ export OPENFAAS_URL=http://openfaas.localdns.xyz
+$ export OPENFAAS_PREFIX=ruanbekker # change to your username
 ```
 
 Get your credentials for the OpenFaas Gateway and login with the OpenFaas CLI:

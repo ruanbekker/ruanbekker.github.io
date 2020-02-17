@@ -19,6 +19,7 @@ Then we will make a http request to the synchronous function where we will get t
 ## Deploy OpenFaas
 
 Deploy OpenFaas on a k3d Kubernetes Cluster if you want to follow along on your laptop. You can follow this post to deploy a kubernetes cluster and deploying openfaas:
+
 - https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/
 
 ## Webhook Service
@@ -150,7 +151,7 @@ Now deploy to kubernetes:
 
 ```
 $ kubectl apply -f webhook.yml
-````
+```
 
 After a minute or so, verify that you get a response when making a http request:
 

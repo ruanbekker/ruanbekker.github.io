@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Openfaas | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/openfaas/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-12T01:18:14+02:00</updated>
+  <updated>2020-02-17T23:49:00+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,148 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Traefik Ingress for OpenFaas on Kubernetes (K3d)]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/"/>
+    <updated>2020-02-17T23:36:33+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d</id>
+    <content type="html"><![CDATA[<p>In this post we will deploy <a href="https://www.openfaas.com/">OpenFaas</a> on Kubernetes locally using <a href="https://github.com/alexellis/k3sup">k3sup</a> and <a href="https://github.com/rancher/k3d">k3d</a>, then deploy a Traefik Ingress so that we can access the OpenFaas Gateway on HTTP over the standard port 80.</p>
+
+<p>K3d is a amazing wrapper that deploys a k3s cluster on docker, and k3sup makes it very easy to provision OpenFaas to your Kubernetes cluster.</p>
+
+<h2>Deploy a Kubernetes Cluster</h2>
+
+<p>If you have not installed k3d, you can install k3d on mac with brew:</p>
+
+<pre><code>$ brew install k3d
+</code></pre>
+
+<p>We will deploy our cluster with 2 worker nodes and publish port 80 to the containers port 80:</p>
+
+<pre><code>$ k3d create --name="demo" --workers="2" --publish="80:80"
+</code></pre>
+
+<p>Point the kubeconfig to the location that k3d generated:</p>
+
+<pre><code>$ export KUBECONFIG="$(k3d get-kubeconfig --name='demo')"
+</code></pre>
+
+<h2>Deploy OpenFaas</h2>
+
+<p>First we need to get k3sup:</p>
+
+<pre><code>$ curl -sLfS https://get.k3sup.dev | sudo sh
+</code></pre>
+
+<p>Once k3sup is installed, deploy OpenFaas to your cluster:</p>
+
+<pre><code>$ k3sup app install openfaas
+</code></pre>
+
+<p>Give it a minute or so and check if everything is running:</p>
+
+<pre><code>$ kubectl get pods -n openfaas
+NAMESPACE     NAME                                 READY   STATUS      RESTARTS   AGE
+openfaas      alertmanager-546f66b6c6-qtb69        1/1     Running     0          5m
+openfaas      basic-auth-plugin-79b9878b7b-7vlln   1/1     Running     0          4m59s
+openfaas      faas-idler-db8cd9c7d-8xfpp           1/1     Running     2          4m57s
+openfaas      gateway-7dcc6d694d-dmvqn             2/2     Running     0          4m56s
+openfaas      nats-d6d574749-rt9vw                 1/1     Running     0          4m56s
+openfaas      prometheus-d99669d9b-mfxc8           1/1     Running     0          4m53s
+openfaas      queue-worker-75f44b56b9-mhhbv        1/1     Running     0          4m52s
+</code></pre>
+
+<h2>Traefik Ingress</h2>
+
+<p>In my scenario, I am using <code>openfaas.localdns.xyz</code> which resolves to <code>127.0.0.1</code>. Next we need to know to which service to route the traffic to, we can find that by:</p>
+
+<pre><code>$ kubectl get svc/gateway -n openfaas
+NAME      TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+gateway   ClusterIP   10.43.174.57   &lt;none&gt;        8080/TCP   23m
+</code></pre>
+
+<p>Below is our ingress.yml:</p>
+
+<pre><code>apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: openfaas-gateway-ingress
+  namespace: openfaas
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+  - host: openfaas.localdns.xyz
+    http:
+      paths:
+      - backend:
+          serviceName: gateway
+          servicePort: 8080
+</code></pre>
+
+<p>Apply the ingress:</p>
+
+<pre><code>$ kubectl apply -f ingress.yml
+ingress.extensions/openfaas-gateway-ingress created
+</code></pre>
+
+<p>We can the verify that our ingress is visible:</p>
+
+<pre><code>$ kubectl get ingress -n openfaas
+NAMESPACE   NAME                       HOSTS               ADDRESS      PORTS   AGE
+openfaas    openfaas-gateway-ingress   openfaas.co.local   172.25.0.4   80      28s
+</code></pre>
+
+<h2>OpenFaas CLI</h2>
+
+<p>Install the OpenFaas CLI:</p>
+
+<pre><code>$ curl -SLsf https://cli.openfaas.com | sudo sh
+</code></pre>
+
+<p>Export the <code>OPENFAAS_URL</code> to our ingress endpoint:</p>
+
+<pre><code>$ export OPENFAAS_URL=http://openfaas.localdns.xyz
+</code></pre>
+
+<p>Get your credentials for the OpenFaas Gateway and login with the OpenFaas CLI:</p>
+
+<pre><code>$ PASSWORD=$(kubectl get secret -n openfaas basic-auth -o jsonpath="{.data.basic-auth-password}" | base64 --decode; echo)
+$ echo -n $PASSWORD | faas-cli login --username admin --password-stdin
+</code></pre>
+
+<h2>Deploy a Function</h2>
+
+<p>Deploy the figlet function as an example:</p>
+
+<pre><code>$ faas-cli store deploy figlet
+
+Deployed. 202 Accepted.
+URL: http://openfaas.localdns.xyz/function/figlet
+</code></pre>
+
+<p>Invoke the function:</p>
+
+<pre><code>$ curl http://openfaas.localdns.xyz/function/figlet -d 'hello, world'
+ _          _ _                             _     _
+| |__   ___| | | ___    __      _____  _ __| | __| |
+| '_ \ / _ \ | |/ _ \   \ \ /\ / / _ \| '__| |/ _` |
+| | | |  __/ | | (_) |   \ V  V / (_) | |  | | (_| |
+|_| |_|\___|_|_|\___( )   \_/\_/ \___/|_|  |_|\__,_|
+                    |/
+</code></pre>
+
+<h2>Delete the Cluster</h2>
+
+<p>Delete your k3d Kubernetes Cluster:</p>
+
+<pre><code>$ k3d delete --name demo
+</code></pre>
+
+<h2>Thank You</h2>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install OpenFaas on K3d Kubernetes]]></title>
@@ -1060,150 +1202,6 @@ URL: http://&lt;your.gw.address&gt;:8080/function/slack-interactive
 <p>This is a real basic example of slack apps, but slack apps are really powerful. You can for example create a slack app that deploys ephemeral environments on swarm, or create change management approval workflows etc.</p>
 
 <p>I hope this was informative, I am really enjoying OpenFaas at the moment and if your have not tested it, I encourage you to try it out, its really, really amazing!</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setup a 3 Node Kubernetes Cluster on Ubuntu]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2017/12/11/setup-a-3-node-kubernetes-cluster-on-ubuntu/"/>
-    <updated>2017-12-11T16:31:47+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2017/12/11/setup-a-3-node-kubernetes-cluster-on-ubuntu</id>
-    <content type="html"><![CDATA[<p><img src="https://kumorilabs.com/img/blog/kubernetes-logo.png" alt="" /></p>
-
-<p>Setup a 3 Node Kubernetes Cluster on Ubuntu 16.04</p>
-
-<h2>What is Kubernetes?</h2>
-
-<p>As referenced from their <a href="https://kubernetes.io/">website</a>:</p>
-
-<ul>
-<li>&ldquo;Kubernetes is an open-source system for automating deployment, scaling, and management of containerized applications.&rdquo;</li>
-</ul>
-
-
-<h2>Our Setup:</h2>
-
-<p>For this setup I will be using 3 AWS EC2 Instances with Ubuntu 16.04. One node will act as the master node, and the other 2 nodes, will act as nodes, previously named minions.</p>
-
-<p>We will deploy Kubernetes on all 3 nodes, the master will be the node where we will initialize our cluster, deploy our weave network, applications and we will execute the join command on the worker nodes to join the master to form the cluster.</p>
-
-<h2>Deploy Kubernetes: Master</h2>
-
-<p>The following commands will be used to install Kubernetes, it will be executed with root permissions:</p>
-
-<pre><code class="bash">$ apt update &amp;&amp; sudo apt upgrade -y
-$ sudo apt install docker.io apt-transport-https -qy
-$ sudo apt update
-$ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-$ sudo su -c 'echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" &gt; /etc/apt/sources.list.d/app' root
-$ apt update
-$ sudo apt install kubelet kubeadm kubernetes-cni -y
-</code></pre>
-
-<p>Now we would like to set up the master by initializing the cluster:</p>
-
-<pre><code class="bash">$ sudo kubeadm init --kubernetes-version stable-1.8
-</code></pre>
-
-<p>The output will provide you with instructions to setup the configurations for the master node, and provide you with a join token for your worker nodes, remember to make not of this token string, as we will need it later for our worker nodes. As your normal user, run the following to setup the config:</p>
-
-<p>Remember to not run this as root, and as the normal user:</p>
-
-<pre><code class="bash">$ mkdir -p $HOME/.kube
-$ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-$ sudo chown $(id -u):$(id -g) $HOME/.kube/config
-</code></pre>
-
-<p>Now we need to deploy a network for our pods:</p>
-
-<pre><code class="bash">$ kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
-</code></pre>
-
-<p>Lets confirm if all our resources are in its desired state, a small snippet of the output will look like the one below:</p>
-
-<pre><code class="bash">$ kubectl get all -n kube-system
-
-...
-NAME                                          READY     STATUS    RESTARTS   AGE
-po/etcd-ip-172-31-40-211                      1/1       Running   0          6h
-po/kube-apiserver-ip-172-31-40-211            1/1       Running   0          6h
-</code></pre>
-
-<p>Once all of the resources are in its desired state, we can head along to our worker nodes, to join them to the cluster</p>
-
-<h2>Deploy Kubernetes: Worker Nodes</h2>
-
-<p>As I have 2 worker nodes, we will need to deploy the following on both of our worker nodes, first to deploy Kubernetes on our nodes with root permission:</p>
-
-<pre><code class="bash">$ apt update &amp;&amp; sudo apt upgrade -y
-$ sudo apt install docker.io apt-transport-https -qy
-$ sudo apt update
-$ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-$ sudo su -c 'echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" &gt; /etc/apt/sources.list.d/app' root
-$ apt update
-$ sudo apt install kubelet kubeadm kubernetes-cni -y
-</code></pre>
-
-<p>Once Kubernetes is installed, join the Master node by executing the join command:</p>
-
-<pre><code class="bash">$ sudo kubeadm join --token 49abf7.247d663db97f8504 172.31.40.211:6443 --discovery-token-ca-cert-hash sha256:3a3b301cfbac0995c69a0115989ea384230470d6836ae0e13e71dbdf15ffbb48
-</code></pre>
-
-<p>Do the 2 steps on the other node, then head back to the master node.</p>
-
-<h2>Verifying if All Nodes are Checked In</h2>
-
-<p>To verify if all nodes are available and reachable in the cluster:</p>
-
-<pre><code class="bash">$ kubectl get nodes
-NAME               STATUS    ROLES     AGE       VERSION
-ip-172-31-36-68    Ready     &lt;none&gt;    6h        v1.8.5
-ip-172-31-40-211   Ready     master    6h        v1.8.5
-ip-172-31-44-80    Ready     &lt;none&gt;    6h        v1.8.5
-</code></pre>
-
-<h2>Deploy Services to Kubernetes:</h2>
-
-<p>Kubernetes has Awesome Examples on their <a href="https://github.com/kubernetes/kubernetes/tree/master/examples">Github Repository</a>.</p>
-
-<p>Since the awesomeness of <a href="https://github.com/openfaas">OpenFaas</a>, I will deploy OpenFaas on Kubernetes:</p>
-
-<pre><code class="bash">$ git clone https://github.com/openfaas/faas-netes
-$ cd faas-netes
-$ kubectl apply -f faas.yml,monitoring.yml,rbac.yml
-</code></pre>
-
-<p>Give it about a minute or so, then you should see the pods running in their desired state:</p>
-
-<pre><code class="bash">$ kubectl get pods
-NAME                           READY     STATUS    RESTARTS   AGE
-alertmanager-77b4b476b-zxtcz   1/1       Running   0          4h
-crypto-7d8b7f999c-7l85k        1/1       Running   0          1h
-faas-netesd-64fb9b4dfb-hc8gh   1/1       Running   0          4h
-gateway-69c9d949f-q57zh        1/1       Running   0          4h
-prometheus-7fbfd8bfb8-d4cft    1/1       Running   0          4h
-</code></pre>
-
-<p>When we have the desired state, head over to the OpenFaas Gateway WebUI: <code>http://master-public-ip:31112/ui/</code>, select &ldquo;Deploy New Function&rdquo;, you can use your own function or select one from the store.</p>
-
-<p>I am going to use Figlet from the store, once the pod has been deployed, select the function, enter any text into the request body and select invoke. I have used my name and surname, and turns out into:</p>
-
-<pre><code class="bash"> ____                      ____       _    _             
-|  _ \ _   _  __ _ _ __   | __ )  ___| | _| | _____ _ __ 
-| |_) | | | |/ _` | '_ \  |  _ \ / _ \ |/ / |/ / _ \ '__|
-|  _ &lt;| |_| | (_| | | | | | |_) |  __/   &lt;|   &lt;  __/ |   
-|_| \_\\__,_|\__,_|_| |_| |____/ \___|_|\_\_|\_\___|_|   
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/">Kubernetes Overview</a></li>
-<li><a href="https://kubernetes.io/docs/concepts/">Kubernetes Concepts</a></li>
-<li><a href="https://blog.alexellis.io/tag/kubernetes/">Kubernetes Blogs</a></li>
-<li><a href="https://blog.alexellis.io/tag/openfaas/">OpenFaas Blogs</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

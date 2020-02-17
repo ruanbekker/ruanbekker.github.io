@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-12T01:18:14+02:00</updated>
+  <updated>2020-02-17T23:49:00+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,201 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Traefik Ingress for OpenFaas on Kubernetes (K3d)]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/"/>
+    <updated>2020-02-17T23:36:33+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d</id>
+    <content type="html"><![CDATA[<p>In this post we will deploy <a href="https://www.openfaas.com/">OpenFaas</a> on Kubernetes locally using <a href="https://github.com/alexellis/k3sup">k3sup</a> and <a href="https://github.com/rancher/k3d">k3d</a>, then deploy a Traefik Ingress so that we can access the OpenFaas Gateway on HTTP over the standard port 80.</p>
+
+<p>K3d is a amazing wrapper that deploys a k3s cluster on docker, and k3sup makes it very easy to provision OpenFaas to your Kubernetes cluster.</p>
+
+<h2>Deploy a Kubernetes Cluster</h2>
+
+<p>If you have not installed k3d, you can install k3d on mac with brew:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ brew install k3d</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We will deploy our cluster with 2 worker nodes and publish port 80 to the containers port 80:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ k3d create --name="demo" --workers="2" --publish="80:80"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Point the kubeconfig to the location that k3d generated:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export KUBECONFIG="$(k3d get-kubeconfig --name='demo')"</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy OpenFaas</h2>
+
+<p>First we need to get k3sup:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -sLfS https://get.k3sup.dev | sudo sh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once k3sup is installed, deploy OpenFaas to your cluster:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ k3sup app install openfaas</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Give it a minute or so and check if everything is running:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get pods -n openfaas
+</span><span class='line'>NAMESPACE     NAME                                 READY   STATUS      RESTARTS   AGE
+</span><span class='line'>openfaas      alertmanager-546f66b6c6-qtb69        1/1     Running     0          5m
+</span><span class='line'>openfaas      basic-auth-plugin-79b9878b7b-7vlln   1/1     Running     0          4m59s
+</span><span class='line'>openfaas      faas-idler-db8cd9c7d-8xfpp           1/1     Running     2          4m57s
+</span><span class='line'>openfaas      gateway-7dcc6d694d-dmvqn             2/2     Running     0          4m56s
+</span><span class='line'>openfaas      nats-d6d574749-rt9vw                 1/1     Running     0          4m56s
+</span><span class='line'>openfaas      prometheus-d99669d9b-mfxc8           1/1     Running     0          4m53s
+</span><span class='line'>openfaas      queue-worker-75f44b56b9-mhhbv        1/1     Running     0          4m52s</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Traefik Ingress</h2>
+
+<p>In my scenario, I am using <code>openfaas.localdns.xyz</code> which resolves to <code>127.0.0.1</code>. Next we need to know to which service to route the traffic to, we can find that by:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get svc/gateway -n openfaas
+</span><span class='line'>NAME      TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+</span><span class='line'>gateway   ClusterIP   10.43.174.57   &lt;none&gt;        8080/TCP   23m</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Below is our ingress.yml:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>apiVersion: extensions/v1beta1
+</span><span class='line'>kind: Ingress
+</span><span class='line'>metadata:
+</span><span class='line'>  name: openfaas-gateway-ingress
+</span><span class='line'>  namespace: openfaas
+</span><span class='line'>  annotations:
+</span><span class='line'>    kubernetes.io/ingress.class: traefik
+</span><span class='line'>spec:
+</span><span class='line'>  rules:
+</span><span class='line'>  - host: openfaas.localdns.xyz
+</span><span class='line'>    http:
+</span><span class='line'>      paths:
+</span><span class='line'>      - backend:
+</span><span class='line'>          serviceName: gateway
+</span><span class='line'>          servicePort: 8080</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Apply the ingress:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f ingress.yml
+</span><span class='line'>ingress.extensions/openfaas-gateway-ingress created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can the verify that our ingress is visible:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get ingress -n openfaas
+</span><span class='line'>NAMESPACE   NAME                       HOSTS               ADDRESS      PORTS   AGE
+</span><span class='line'>openfaas    openfaas-gateway-ingress   openfaas.co.local   172.25.0.4   80      28s</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>OpenFaas CLI</h2>
+
+<p>Install the OpenFaas CLI:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -SLsf https://cli.openfaas.com | sudo sh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Export the <code>OPENFAAS_URL</code> to our ingress endpoint:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export OPENFAAS_URL=http://openfaas.localdns.xyz</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get your credentials for the OpenFaas Gateway and login with the OpenFaas CLI:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ PASSWORD=$(kubectl get secret -n openfaas basic-auth -o jsonpath="{.data.basic-auth-password}" | base64 --decode; echo)
+</span><span class='line'>$ echo -n $PASSWORD | faas-cli login --username admin --password-stdin</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy a Function</h2>
+
+<p>Deploy the figlet function as an example:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ faas-cli store deploy figlet
+</span><span class='line'>
+</span><span class='line'>Deployed. 202 Accepted.
+</span><span class='line'>URL: http://openfaas.localdns.xyz/function/figlet</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Invoke the function:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://openfaas.localdns.xyz/function/figlet -d 'hello, world'
+</span><span class='line'> _          _ _                             _     _
+</span><span class='line'>| |__   ___| | | ___    __      _____  _ __| | __| |
+</span><span class='line'>| '_ \ / _ \ | |/ _ \   \ \ /\ / / _ \| '__| |/ _` |
+</span><span class='line'>| | | |  __/ | | (_) |   \ V  V / (_) | |  | | (_| |
+</span><span class='line'>|_| |_|\___|_|_|\___( )   \_/\_/ \___/|_|  |_|\__,_|
+</span><span class='line'>                    |/</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Delete the Cluster</h2>
+
+<p>Delete your k3d Kubernetes Cluster:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ k3d delete --name demo</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install OpenFaas on K3d Kubernetes]]></title>
@@ -3560,51 +3755,6 @@
 <h2>Different versions</h2>
 
 <p>Currently I have only <a href="https://hub.docker.com/r/ruanbekker/vscode/tags">python available on docker hub</a> with the requests and flask packages available. But you can fork the repository and add the upstream or packages of your choice.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Expire Objects in AWS S3 Automatically After 30 Days]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/09/12/expire-objects-in-aws-s3-automatically-after-30-days/"/>
-    <updated>2019-09-12T22:37:11+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/09/12/expire-objects-in-aws-s3-automatically-after-30-days</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/aws-logo.png" alt="" /></p>
-
-<p>In AWS S3 you can make use of lifecycle policies to manage the lifetime of your objects stored in S3.</p>
-
-<p>In this tutorial, I will show you how to delete objects automatically from S3 after 30 days.</p>
-
-<h2>Navigate to your Bucket</h2>
-
-<p>Head over to your AWS S3 bucket where you want to delete objects after they have been stored for 30 days:</p>
-
-<p><img width="1039" alt="0400F9CB-9223-4FDF-8FA5-D0BC1FA8EB71" src="https://user-images.githubusercontent.com/567298/64819546-c3f2b600-d5ae-11e9-93ba-13777e9b02b0.png"></p>
-
-<h2>Lifecycle Policies</h2>
-
-<p>Select &ldquo;Management&rdquo; and click on &ldquo;Add lifecycle rule&rdquo;:</p>
-
-<p><img width="701" alt="9BB26C7C-F251-45C4-AE44-A34459BD0F4B" src="https://user-images.githubusercontent.com/567298/64819628-f00e3700-d5ae-11e9-9740-8aa3608163a7.png"></p>
-
-<p>Set a rule name of choice and you have the option to provide a prefix if you want to delete objects based on a specific prefix. I will leave this blank as I want to delete objects in the root level of the bucket. Head to next on the following section:</p>
-
-<p><img width="700" alt="AEF8B151-3FA8-454F-AC71-778A531BD1EE" src="https://user-images.githubusercontent.com/567298/64819785-58f5af00-d5af-11e9-8485-fb0dca3a02ac.png"></p>
-
-<p>From the &ldquo;Transitions&rdquo; section, configure the transition section, by selecting to expire the current version of the object after 30 days:</p>
-
-<p><img width="701" alt="2B395671-A4C0-4E5A-82E7-00EE6579DB5A" src="https://user-images.githubusercontent.com/567298/64819851-7c205e80-d5af-11e9-98d7-7e1dd09bcfef.png"></p>
-
-<p>Review the configuration:</p>
-
-<p><img width="705" alt="F7F8E800-62FF-4156-B506-5FB9BCC148E0" src="https://user-images.githubusercontent.com/567298/64819869-893d4d80-d5af-11e9-8034-8a2e3a8939f8.png"></p>
-
-<p>When you select &ldquo;Save&rdquo;, you should be returned to the following section:</p>
-
-<p><img width="1041" alt="8421EBCE-9503-4259-92AA-DB66C6F532AF" src="https://user-images.githubusercontent.com/567298/64819895-99edc380-d5af-11e9-84b4-7f4cc69cfd2e.png"></p>
-
-<h2>Housecleaning on your S3 Bucket</h2>
-
-<p>Now 30 days after you created objects on AWS S3, they will be deleted.</p>
 ]]></content>
   </entry>
   

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Python | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/python/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-17T23:49:00+02:00</updated>
+  <updated>2020-02-18T00:23:08+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,267 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Asynchronous Function With OpenFaas]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/17/python-asynchronous-function-with-openfaas/"/>
+    <updated>2020-02-17T23:51:22+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/17/python-asynchronous-function-with-openfaas</id>
+    <content type="html"><![CDATA[<p>In this post we will explore how to use asynchronous functions in OpenFaas.</p>
+
+<h2>What are we doing</h2>
+
+<p>A synchronous request blocks the client until operation completes, where a asynchronous request doesn’t block the client, which is nice to use for long-running tasks or function invocations to run in the background through the use of NATS Streaming.</p>
+
+<p>We will be building a Python Flask API Server which will act as our webhook service. When we invoke our function by making a http request, we also include a callback url as a header which will be the address where the queue worker will post it&rsquo;s results.</p>
+
+<p>Then we will make a http request to the synchronous function where we will get the response from the function and a http request to the asynchronous function, where we will get the response from the webhook service&rsquo;s logs</p>
+
+<h2>Deploy OpenFaas</h2>
+
+<p>Deploy OpenFaas on a k3d Kubernetes Cluster if you want to follow along on your laptop. You can follow this post to deploy a kubernetes cluster and deploying openfaas:
+- <a href="https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/">https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/</a></p>
+
+<h2>Webhook Service</h2>
+
+<p>Lets build the Python Flask Webhook Service, our application code:</p>
+
+<pre><code class="python">from flask import Flask, request
+from logging.config import dictConfig
+
+dictConfig({
+    'version': 1,
+    'formatters': {'default': {
+        'format': '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+    }},
+    'handlers': {'wsgi': {
+        'class': 'logging.StreamHandler',
+        'stream': 'ext://flask.logging.wsgi_errors_stream',
+        'formatter': 'default'
+    }},
+    'root': {
+        'level': 'INFO',
+        'handlers': ['wsgi']
+    }
+})
+
+app = Flask(__name__)
+
+@app.route("/", methods=["POST", "GET"])
+def main():
+    response = {}
+
+    if request.method == "GET":
+        response["event"] = "GET"
+        app.logger.info("Received Event: GET")
+
+    if request.method == "POST":
+        response["event"] = request.get_data()
+        app.logger.info("Receveid Event: {}".format(response))
+
+    else:
+        response["event"] == "OTHER"
+
+    print("Received Event:")
+    print(response)
+    return "event: {} \n".format(response)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+</code></pre>
+
+<p>Our <code>Dockerfile</code>:</p>
+
+<pre><code>FROM python:3.7-alpine
+RUN pip install flask
+ADD app.py /app.py
+EXPOSE 5000
+CMD ["python", "/app.py"]
+</code></pre>
+
+<p>Building and Pushing to Docker Hub (or you can use my docker image):</p>
+
+<pre><code>$ docker build -t yourusername/python-flask-webhook:openfaas .
+$ docker push yourusername/python-flask-webhook:openfaas
+</code></pre>
+
+<p>Create the deployment manifest <code>webhook.yml</code> for our webhook service:</p>
+
+<pre><code>$ cat &gt; webhook.yml &lt;&lt; EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-service
+spec:
+  selector:
+    app: webhook
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+      name: web
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: webhook-ingress
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+  - host: webhook.localdns.xyz
+    http:
+      paths:
+      - backend:
+          serviceName: webhook-service
+          servicePort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: webhook
+  name: webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook
+  template:
+    metadata:
+      labels:
+        app: webhook
+    spec:
+      containers:
+      - name: webhook
+        image: ruanbekker/python-flask-webhook:openfaas
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+          name: http
+          protocol: TCP
+EOF
+</code></pre>
+
+<p>Now deploy to kubernetes:</p>
+
+<pre><code>$ kubectl apply -f webhook.yml
+</code></pre>
+
+<p>After a minute or so, verify that you get a response when making a http request:</p>
+
+<pre><code>$ curl http://webhook.localdns.xyz
+event: {'event': 'GET'}
+</code></pre>
+
+<h2>Deploy the OpenFaas Function</h2>
+
+<p>We will deploy a dockerfile type function which will return the data that we feed it:</p>
+
+<pre><code>$ faas-cli new --lang dockerfile function-async-task
+$ faas-cli up -f function-async-task.yml
+
+Deploying: function-async-task.
+
+Deployed. 202 Accepted.
+URL: http://openfaas.localdns.xyz/function/function-async-task
+</code></pre>
+
+<p>List the functions:</p>
+
+<pre><code>$ faas-cli list
+Function                        Invocations     Replicas
+function-async-task             0               1
+</code></pre>
+
+<p>Describe the function:</p>
+
+<pre><code>$ faas-cli describe function-async-task
+Name:                function-async-task
+Status:              Ready
+Replicas:            1
+Available replicas:  1
+Invocations:         0
+Image:               ruanbekker/function-async-task:latest
+Function process:
+URL:                 http://openfaas.localdns.xyz/function/function-async-task
+Async URL:           http://openfaas.localdns.xyz/async-function/function-async-task
+Labels:              faas_function : function-async-task
+Annotations:         prometheus.io.scrape : false
+</code></pre>
+
+<h2>Testing</h2>
+
+<p>Test synchronous function:</p>
+
+<pre><code>$ curl http://openfaas.localdns.xyz/function/function-async-task -d "test"
+test
+</code></pre>
+
+<p>Test asynchronous function, remember, here we need to provide the callback url which the queue worker will inform, which will be our webhook service:</p>
+
+<pre><code>$ curl -i -H "X-Callback-Url: http://webhook-service.default.svc.cluster.local:5000" http://openfaas.localdns.xyz/async-async-function/function-async-task -d "asyyyyync"
+HTTP/1.1 202 Accepted
+Content-Length: 0
+Date: Mon, 17 Feb 2020 13:57:26 GMT
+Vary: Accept-Encoding
+X-Call-Id: d757c10f-4293-4daa-bf52-bbdc17b7dea3
+X-Start-Time: 1581947846737501600
+</code></pre>
+
+<p>Check the logs of the webhook pod:</p>
+
+<pre><code>$ kubectl logs -f pod/$(kubectl get pods --selector=app=webhook --output=jsonpath="{.items..metadata.name}")
+[2020-02-17 13:57:26,774] INFO in app: Receveid Event: {'event': b'asyyyyync'}
+[2020-02-17 13:57:26,775] INFO in internal: 10.42.0.6 - - [17/Feb/2020 13:57:26] "POST / HTTP/1.1" 200 -
+</code></pre>
+
+<p>Check the logs of the queue worker:</p>
+
+<pre><code>$ kubectl logs -f deployment/queue-worker -n openfaas
+[45] Received on [faas-request]: 'sequence:45 subject:"faas-request" data:"{\"Header\":{\"Accept\":[\"*/*\"],\"Accept-Encoding\":[\"gzip\"],\"Content-Length\":[\"9\"],\"Content-Type\":[\"application/x-www-form-urlencoded\"],\"User-Agent\":[\"curl/7.54.0\"],\"X-Call-Id\":[\"d757c10f-4293-4daa-bf52-bbdc17b7dea3\"],\"X-Callback-Url\":[\"http://webhook-service.default.svc.cluster.local:5000\"],\"X-Forwarded-For\":[\"10.42.0.0\"],\"X-Forwarded-Host\":[\"openfaas.localdns.xyz\"],\"X-Forwarded-Port\":[\"80\"],\"X-Forwarded-Proto\":[\"http\"],\"X-Forwarded-Server\":[\"traefik-6787cddb4b-87zss\"],\"X-Real-Ip\":[\"10.42.0.0\"],\"X-Start-Time\":[\"1581947846737501600\"]},\"Host\":\"openfaas.localdns.xyz\",\"Body\":\"YXN5eXl5eW5j\",\"Method\":\"POST\",\"Path\":\"\",\"QueryString\":\"\",\"Function\":\"openfaas-function-cat\",\"CallbackUrl\":{\"Scheme\":\"http\",\"Opaque\":\"\",\"User\":null,\"Host\":\"webhook-service.default.svc.cluster.local:5000\",\"Path\":\"\",\"RawPath\":\"\",\"ForceQuery\":false,\"RawQuery\":\"\",\"Fragment\":\"\"}}" timestamp:1581947846738308800 '
+Invoking: openfaas-function-cat with 9 bytes, via: http://gateway.openfaas.svc.cluster.local:8080/function/openfaas-function-cat/
+Invoked: openfaas-function-cat [200] in 0.029029s
+Callback to: http://webhook-service.default.svc.cluster.local:5000
+openfaas-function-cat returned 9 bytes
+Posted result for openfaas-function-cat to callback-url: http://webhook-service.default.svc.cluster.local:5000, status: 200
+</code></pre>
+
+<p>Make 1000 Requests:</p>
+
+<pre><code>$ date &gt; time.date 
+  for x in {1..1000}
+    do 
+      curl -i -H "X-Callback-Url: http://webhook-service.default.svc.cluster.local:5000" http://openfaas.localdns.xyz/async-function/openfaas-function-cat -d "asyyyyync"
+    done
+  date &gt;&gt; time.date
+</code></pre>
+
+<p>View the log file that we wrote before we started and finished our requests:</p>
+
+<pre><code>$ cat time.date
+Mon Feb 17 16:03:16 SAST 2020
+Mon Feb 17 16:03:48 SAST 2020
+</code></pre>
+
+<p>The last request was actioned at:</p>
+
+<pre><code>[2020-02-17 14:03:52,421] INFO in internal: 10.42.0.6 - - [17/Feb/2020 14:03:52] "POST / HTTP/1.1" 200 -
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>This was a basic example to demonstrate async functions using OpenFaas</p>
+
+<h2>OpenFaas Documentation:</h2>
+
+<ul>
+<li><a href="https://docs.openfaas.com">https://docs.openfaas.com</a></li>
+<li><a href="https://docs.openfaas.com/reference/async/">https://docs.openfaas.com/reference/async/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[AWS S3 KMS and Python for Secrets Management]]></title>
@@ -699,68 +960,6 @@ print response
 <a href="https://www.syntouch.nl/custom-cloudwatch-metrics-in-python-yes-we-can/">https://www.syntouch.nl/custom-cloudwatch-metrics-in-python-yes-we-can/</a> &lt;- psutil
 <a href="https://aws.amazon.com/blogs/devops/new-how-to-better-monitor-your-custom-application-metrics-using-amazon-cloudwatch-agent/">https://aws.amazon.com/blogs/devops/new-how-to-better-monitor-your-custom-application-metrics-using-amazon-cloudwatch-agent/</a>
 <a href="https://medium.com/@mrdoro/aws-lambda-as-the-website-monitoring-tool-184b09202ae2">https://medium.com/@mrdoro/aws-lambda-as-the-website-monitoring-tool-184b09202ae2</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Validate Strings in Python With Regex]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/02/27/how-to-validate-strings-in-python-with-regex/"/>
-    <updated>2019-02-27T13:47:53+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/02/27/how-to-validate-strings-in-python-with-regex</id>
-    <content type="html"><![CDATA[<p>Let&rsquo;s say you need to validate strings in Python. Making decisions if a string is valid or not, is what we will be looking at today.</p>
-
-<script src="//ap.lijit.com/www/delivery/fpi.js?z=601358&width=300&height=250"></script>
-
-
-<p></p>
-
-<h2>The Scenario</h2>
-
-<p>We have a string that will look like this: <code>my-random-abc-string-2947104284738593726152637836291</code>. The <code>abc</code> section will always be 3 random string characters and the integers, will always be 32 integer characters, the rest will always stay the same.</p>
-
-<p>Using the <code>re</code> library, we will create our regex expression and match them up with a input string, then if they are the same, we will pass the validation check, and make a decision from there.</p>
-
-<h2>The Script</h2>
-
-<p>Our random string generator:</p>
-
-<pre><code class="python">&gt;&gt;&gt; import uuid
-&gt;&gt;&gt; import random
-&gt;&gt;&gt; letters = 'abcdefghijklmnopqrstuvwxyz'
-&gt;&gt;&gt; def generate_string():
-...     random_letters = ''.join(random.choice(letters) for x in range(3))
-...     response = 'my-random-' + random_letters + '-string_' + uuid.uuid4().hex
-...     return response
-</code></pre>
-
-<p>Our validation check:</p>
-
-<pre><code class="python">&gt;&gt;&gt; import re
-&gt;&gt;&gt; def validation_check(input_string):
-...     regex = re.compile('my-random-[a-z]{3}-string_[0-9a-z]{32}\Z', re.I)
-...     match = regex.match(str(input_string))
-...     return bool(match)
-</code></pre>
-
-<p>Doing the validation check against our data:</p>
-
-<pre><code class="python">&gt;&gt;&gt; mystring = generate_string()
-&gt;&gt;&gt; mystring
-'my-random-ngt-string_6346145281738193742120539836241'
-
-&gt;&gt;&gt; validate = validation_check(mystring)
-&gt;&gt;&gt; if validate == True:
-...     print('The string {} is valid'.format(mystring))
-... else:
-...     print('The string {} is not valid'.format(mystring))
-
-the string my-random-ngt-string_6346145281738193742120539836241 is valid
-</code></pre>
-
-<p>The function checks for a strict 32 characters in the random hex number, if you had to randomize the length, you can always use this regex:</p>
-
-<pre><code class="python">regex = re.compile('my-random-[a-z]{3}-string__[0-9]+', re.I)
-</code></pre>
 ]]></content>
   </entry>
   

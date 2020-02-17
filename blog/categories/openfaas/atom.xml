@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Openfaas | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/openfaas/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-02-17T23:49:00+02:00</updated>
+  <updated>2020-02-18T00:23:08+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,267 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Asynchronous Function With OpenFaas]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/02/17/python-asynchronous-function-with-openfaas/"/>
+    <updated>2020-02-17T23:51:22+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/02/17/python-asynchronous-function-with-openfaas</id>
+    <content type="html"><![CDATA[<p>In this post we will explore how to use asynchronous functions in OpenFaas.</p>
+
+<h2>What are we doing</h2>
+
+<p>A synchronous request blocks the client until operation completes, where a asynchronous request doesn’t block the client, which is nice to use for long-running tasks or function invocations to run in the background through the use of NATS Streaming.</p>
+
+<p>We will be building a Python Flask API Server which will act as our webhook service. When we invoke our function by making a http request, we also include a callback url as a header which will be the address where the queue worker will post it&rsquo;s results.</p>
+
+<p>Then we will make a http request to the synchronous function where we will get the response from the function and a http request to the asynchronous function, where we will get the response from the webhook service&rsquo;s logs</p>
+
+<h2>Deploy OpenFaas</h2>
+
+<p>Deploy OpenFaas on a k3d Kubernetes Cluster if you want to follow along on your laptop. You can follow this post to deploy a kubernetes cluster and deploying openfaas:
+- <a href="https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/">https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/</a></p>
+
+<h2>Webhook Service</h2>
+
+<p>Lets build the Python Flask Webhook Service, our application code:</p>
+
+<pre><code class="python">from flask import Flask, request
+from logging.config import dictConfig
+
+dictConfig({
+    'version': 1,
+    'formatters': {'default': {
+        'format': '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+    }},
+    'handlers': {'wsgi': {
+        'class': 'logging.StreamHandler',
+        'stream': 'ext://flask.logging.wsgi_errors_stream',
+        'formatter': 'default'
+    }},
+    'root': {
+        'level': 'INFO',
+        'handlers': ['wsgi']
+    }
+})
+
+app = Flask(__name__)
+
+@app.route("/", methods=["POST", "GET"])
+def main():
+    response = {}
+
+    if request.method == "GET":
+        response["event"] = "GET"
+        app.logger.info("Received Event: GET")
+
+    if request.method == "POST":
+        response["event"] = request.get_data()
+        app.logger.info("Receveid Event: {}".format(response))
+
+    else:
+        response["event"] == "OTHER"
+
+    print("Received Event:")
+    print(response)
+    return "event: {} \n".format(response)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+</code></pre>
+
+<p>Our <code>Dockerfile</code>:</p>
+
+<pre><code>FROM python:3.7-alpine
+RUN pip install flask
+ADD app.py /app.py
+EXPOSE 5000
+CMD ["python", "/app.py"]
+</code></pre>
+
+<p>Building and Pushing to Docker Hub (or you can use my docker image):</p>
+
+<pre><code>$ docker build -t yourusername/python-flask-webhook:openfaas .
+$ docker push yourusername/python-flask-webhook:openfaas
+</code></pre>
+
+<p>Create the deployment manifest <code>webhook.yml</code> for our webhook service:</p>
+
+<pre><code>$ cat &gt; webhook.yml &lt;&lt; EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-service
+spec:
+  selector:
+    app: webhook
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+      name: web
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: webhook-ingress
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+  - host: webhook.localdns.xyz
+    http:
+      paths:
+      - backend:
+          serviceName: webhook-service
+          servicePort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: webhook
+  name: webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook
+  template:
+    metadata:
+      labels:
+        app: webhook
+    spec:
+      containers:
+      - name: webhook
+        image: ruanbekker/python-flask-webhook:openfaas
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+          name: http
+          protocol: TCP
+EOF
+</code></pre>
+
+<p>Now deploy to kubernetes:</p>
+
+<pre><code>$ kubectl apply -f webhook.yml
+</code></pre>
+
+<p>After a minute or so, verify that you get a response when making a http request:</p>
+
+<pre><code>$ curl http://webhook.localdns.xyz
+event: {'event': 'GET'}
+</code></pre>
+
+<h2>Deploy the OpenFaas Function</h2>
+
+<p>We will deploy a dockerfile type function which will return the data that we feed it:</p>
+
+<pre><code>$ faas-cli new --lang dockerfile function-async-task
+$ faas-cli up -f function-async-task.yml
+
+Deploying: function-async-task.
+
+Deployed. 202 Accepted.
+URL: http://openfaas.localdns.xyz/function/function-async-task
+</code></pre>
+
+<p>List the functions:</p>
+
+<pre><code>$ faas-cli list
+Function                        Invocations     Replicas
+function-async-task             0               1
+</code></pre>
+
+<p>Describe the function:</p>
+
+<pre><code>$ faas-cli describe function-async-task
+Name:                function-async-task
+Status:              Ready
+Replicas:            1
+Available replicas:  1
+Invocations:         0
+Image:               ruanbekker/function-async-task:latest
+Function process:
+URL:                 http://openfaas.localdns.xyz/function/function-async-task
+Async URL:           http://openfaas.localdns.xyz/async-function/function-async-task
+Labels:              faas_function : function-async-task
+Annotations:         prometheus.io.scrape : false
+</code></pre>
+
+<h2>Testing</h2>
+
+<p>Test synchronous function:</p>
+
+<pre><code>$ curl http://openfaas.localdns.xyz/function/function-async-task -d "test"
+test
+</code></pre>
+
+<p>Test asynchronous function, remember, here we need to provide the callback url which the queue worker will inform, which will be our webhook service:</p>
+
+<pre><code>$ curl -i -H "X-Callback-Url: http://webhook-service.default.svc.cluster.local:5000" http://openfaas.localdns.xyz/async-async-function/function-async-task -d "asyyyyync"
+HTTP/1.1 202 Accepted
+Content-Length: 0
+Date: Mon, 17 Feb 2020 13:57:26 GMT
+Vary: Accept-Encoding
+X-Call-Id: d757c10f-4293-4daa-bf52-bbdc17b7dea3
+X-Start-Time: 1581947846737501600
+</code></pre>
+
+<p>Check the logs of the webhook pod:</p>
+
+<pre><code>$ kubectl logs -f pod/$(kubectl get pods --selector=app=webhook --output=jsonpath="{.items..metadata.name}")
+[2020-02-17 13:57:26,774] INFO in app: Receveid Event: {'event': b'asyyyyync'}
+[2020-02-17 13:57:26,775] INFO in internal: 10.42.0.6 - - [17/Feb/2020 13:57:26] "POST / HTTP/1.1" 200 -
+</code></pre>
+
+<p>Check the logs of the queue worker:</p>
+
+<pre><code>$ kubectl logs -f deployment/queue-worker -n openfaas
+[45] Received on [faas-request]: 'sequence:45 subject:"faas-request" data:"{\"Header\":{\"Accept\":[\"*/*\"],\"Accept-Encoding\":[\"gzip\"],\"Content-Length\":[\"9\"],\"Content-Type\":[\"application/x-www-form-urlencoded\"],\"User-Agent\":[\"curl/7.54.0\"],\"X-Call-Id\":[\"d757c10f-4293-4daa-bf52-bbdc17b7dea3\"],\"X-Callback-Url\":[\"http://webhook-service.default.svc.cluster.local:5000\"],\"X-Forwarded-For\":[\"10.42.0.0\"],\"X-Forwarded-Host\":[\"openfaas.localdns.xyz\"],\"X-Forwarded-Port\":[\"80\"],\"X-Forwarded-Proto\":[\"http\"],\"X-Forwarded-Server\":[\"traefik-6787cddb4b-87zss\"],\"X-Real-Ip\":[\"10.42.0.0\"],\"X-Start-Time\":[\"1581947846737501600\"]},\"Host\":\"openfaas.localdns.xyz\",\"Body\":\"YXN5eXl5eW5j\",\"Method\":\"POST\",\"Path\":\"\",\"QueryString\":\"\",\"Function\":\"openfaas-function-cat\",\"CallbackUrl\":{\"Scheme\":\"http\",\"Opaque\":\"\",\"User\":null,\"Host\":\"webhook-service.default.svc.cluster.local:5000\",\"Path\":\"\",\"RawPath\":\"\",\"ForceQuery\":false,\"RawQuery\":\"\",\"Fragment\":\"\"}}" timestamp:1581947846738308800 '
+Invoking: openfaas-function-cat with 9 bytes, via: http://gateway.openfaas.svc.cluster.local:8080/function/openfaas-function-cat/
+Invoked: openfaas-function-cat [200] in 0.029029s
+Callback to: http://webhook-service.default.svc.cluster.local:5000
+openfaas-function-cat returned 9 bytes
+Posted result for openfaas-function-cat to callback-url: http://webhook-service.default.svc.cluster.local:5000, status: 200
+</code></pre>
+
+<p>Make 1000 Requests:</p>
+
+<pre><code>$ date &gt; time.date 
+  for x in {1..1000}
+    do 
+      curl -i -H "X-Callback-Url: http://webhook-service.default.svc.cluster.local:5000" http://openfaas.localdns.xyz/async-function/openfaas-function-cat -d "asyyyyync"
+    done
+  date &gt;&gt; time.date
+</code></pre>
+
+<p>View the log file that we wrote before we started and finished our requests:</p>
+
+<pre><code>$ cat time.date
+Mon Feb 17 16:03:16 SAST 2020
+Mon Feb 17 16:03:48 SAST 2020
+</code></pre>
+
+<p>The last request was actioned at:</p>
+
+<pre><code>[2020-02-17 14:03:52,421] INFO in internal: 10.42.0.6 - - [17/Feb/2020 14:03:52] "POST / HTTP/1.1" 200 -
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>This was a basic example to demonstrate async functions using OpenFaas</p>
+
+<h2>OpenFaas Documentation:</h2>
+
+<ul>
+<li><a href="https://docs.openfaas.com">https://docs.openfaas.com</a></li>
+<li><a href="https://docs.openfaas.com/reference/async/">https://docs.openfaas.com/reference/async/</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Traefik Ingress for OpenFaas on Kubernetes (K3d)]]></title>
@@ -112,9 +373,10 @@ openfaas    openfaas-gateway-ingress   openfaas.co.local   172.25.0.4   80      
 <pre><code>$ curl -SLsf https://cli.openfaas.com | sudo sh
 </code></pre>
 
-<p>Export the <code>OPENFAAS_URL</code> to our ingress endpoint:</p>
+<p>Export the <code>OPENFAAS_URL</code> to our ingress endpoint and <code>OPENFAAS_PREFIX</code> for your dockerhub username:</p>
 
 <pre><code>$ export OPENFAAS_URL=http://openfaas.localdns.xyz
+$ export OPENFAAS_PREFIX=ruanbekker # change to your username
 </code></pre>
 
 <p>Get your credentials for the OpenFaas Gateway and login with the OpenFaas CLI:</p>
@@ -955,253 +1217,6 @@ Item not found
 <li><a href="https://docs.openfaas.com/reference/secrets/">OpenFaaS: Secrets</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Building Python Serverless Slack Apps on OpenFaas]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/02/21/building-python-serverless-slack-apps-on-openfaas/"/>
-    <updated>2019-02-21T23:29:15+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/02/21/building-python-serverless-slack-apps-on-openfaas</id>
-    <content type="html"><![CDATA[<p><img src="https://camo.githubusercontent.com/cf01eefb5b6905f3774376d6d1ed55b8f052d211/68747470733a2f2f626c6f672e616c6578656c6c69732e696f2f636f6e74656e742f696d616765732f323031372f30382f666161735f736964652e706e67" alt="" /></p>
-
-<p>If you are not familliar with OpenFaas, it&rsquo;s definitely time that you should have a look at it, plus, they are doing some pretty awesome work!</p>
-
-<script src="//ap.lijit.com/www/delivery/fpi.js?z=601358&width=300&height=250"></script>
-
-
-<p></p>
-
-<p>From their documentation: &ldquo;OpenFaaS (Functions as a Service) is a framework for building serverless functions with Docker and Kubernetes which has first class support for metrics. Any process can be packaged as a function enabling you to consume a range of web events without repetitive boiler-plate coding.&rdquo;</p>
-
-<p>Make sure to give them a visit at <a href="https://docs.openfaas.com">openfaas.com</a> and while you are there, in the world of serverless, have a look at how Alex outlines architecture and patterns he applies in a real-world example, <a href="https://www.openfaas.com/blog/serverless-single-page-app/">absolutely great read!</a></p>
-
-<h2>What are we doing today?</h2>
-
-<p>Today we will build a slack app using python which we will deploy as a function on OpenFaas!</p>
-
-<p>Our slash command will make a request to our <code>slack-request</code> function, which will respond with a json string, which will then be parsed in a slack attachment message, then based on your button decision, it will then invoke our <code>slack-interaction</code> function, which will then respond with another message that will allow you to follow the embedded link.</p>
-
-<p>The slack messages are really basic, but you can create a awesome workflow using slack apps. And the best of all, its running on OpenFaas!</p>
-
-<h2>Deploying OpenFaas</h2>
-
-<p>Docker Swarm and Kubernetes are supported, but since I am using Docker Swarm at the moment of writing, this tutorial will show how to deploy OpenFaas to your cluster. Have a look at <a href="https://docs.openfaas.com/deployment/docker-swarm/">OpenFaas Documentation</a> for more detailed information.</p>
-
-<p>Installing OpenFaas CLI for Mac:</p>
-
-<pre><code class="bash">$ brew install faas-cli
-</code></pre>
-
-<p>Deploy the OpenFaas Stack:</p>
-
-<pre><code class="bash">$ git clone https://github.com/openfaas/faas
-$ cd faas 
-$ ./deploy_stack.sh
-</code></pre>
-
-<p>Credentials: The default configuration will create credentials for you and returns instructions on how to authorize faas-cli, for demonstration it will look more or less like the following:</p>
-
-<pre><code class="bash">$ echo -n &lt;some_hash_secret&gt; | faas-cli login --username=admin --password-stdin
-</code></pre>
-
-<p>The UI will be available at: <a href="http://127.0.0.1:8080.">http://127.0.0.1:8080.</a> For this demonstration we will only use the cli.</p>
-
-<h2>Create the Functions</h2>
-
-<p>I will create 2 python functions:</p>
-
-<ul>
-<li>The <code>slack-request</code> function, which will be associated to the slash command</li>
-<li>The <code>slack-interactive</code> function, which will be used for interactivity</li>
-</ul>
-
-
-<p>Create a home directory for your functions and create 2 functions:</p>
-
-<pre><code class="bash">$ mkdir -p ~/functions &amp;&amp; cd ~/functions
-$ faas-cli new --lang python slack-request
-$ faas-cli new --lang python slack-interactive
-</code></pre>
-
-<p>Read the <a href="https://docs.openfaas.com/tutorials/first-python-function/">documentation</a> if you&rsquo;d like to learn more.</p>
-
-<p>Configure the first function:</p>
-
-<pre><code class="bash">$ vim slack-request/handler.py
-</code></pre>
-
-<p>And our function code:</p>
-
-<pre><code class="python">import json
-
-def handle(req):
-    data = {
-        "text": "Serverless Message",
-        "attachments": [{
-            "title": "The Awesome world of Serverless introduces: OpenFaas!",
-            "fields": [{
-                "title": "Amazing Level",
-                "value": "10",
-                "short": True
-            },
-        {
-                "title": "Github Stars",
-                "value": "15k +",
-                "short": True
-            }],
-            "author_name": "OpenFaas",
-            "author_icon": "",
-            "image_url": "https://blog.alexellis.io/content/images/2017/08/small.png"
-        },
-        {
-            "title": "About OpenFaas",
-            "text": "OpenFaaS is a framework for packaging code, binaries or containers as Serverless functions on any platform."
-        },
-        {
-            "fallback": "Would you recommend OpenFaas to your friends?",
-            "title": "Would you recommend OpenFaas to your friends?",
-            "callback_id": "response123",
-            "color": "#3AA3E3",
-            "attachment_type": "default",
-            "actions": [
-                {
-                    "name": "recommend",
-                    "text": "Ofcourse!",
-                    "type": "button",
-                    "value": "recommend"
-                },
-                {
-                    "name": "definitely",
-                    "text": "Most Definitely!",
-                    "type": "button",
-                    "value": "definitely"
-                }
-            ]
-        }]
-    }
-    return json.dumps(data)
-</code></pre>
-
-<p>Since our response needs to be parsed as json, we need to set the content type for our environment in our yaml configuration. Read more on it <a href="https://docs.openfaas.com/reference/yaml/">here</a>. Edit the <code>slack-request.yml</code> :</p>
-
-<pre><code class="yaml">provider:
-  name: faas
-  gateway: http://&lt;your.gw.address&gt;:8080
-functions:
-  slack-request:
-    lang: python
-    handler: ./slack-request
-    image: &lt;your-repo&gt;/slack-request:latest
-    environment:
-      content_type: application/json
-</code></pre>
-
-<p>Now we need to build our image, push it to our repository like dockerhub, then deploy to openfaas:</p>
-
-<pre><code class="bash">$ faas-cli build -f ./slack-request.yml 
-$ faas-cli push -f ./slack-request.yml 
-$ faas-cli deploy -f ./slack-request.yml
-Deploying: slack-request.
-
-Deployed. 202 Accepted.
-URL: http://your.gw.address:8080/function/slack-interactive
-</code></pre>
-
-<p>Configure the <code>slack-interactive</code> function:</p>
-
-<pre><code class="bash">$ vim slack-interactive/handler.py
-</code></pre>
-
-<p>Note that whenever your interact with the first message, a post request will be made against the interactivity request url, you will notice that I decoded the payload (but not doing anything with it), where you will find the callback_id, request_url etc. But for simplicity, I am just using a static json message to respond. Our function code:</p>
-
-<pre><code class="python">import json
-import urllib
-
-def handle(req):
-    urlstring = urllib.unquote(req).decode('utf8').strip('payload=')
-    response = json.loads(urlstring)
-    data = {
-        "attachments": [
-            {
-                "replace_original": True,
-                "response_type": "ephemeral",
-                "fallback": "Required plain-text summary of the attachment.",
-                "color": "#36a64f",
-                "pretext": "Ahh yeah! Great choice, OpenFaas is absolutely brilliant!",
-                "author_name": "",
-                "author_link": "https://github.com/openfaas/faas",
-                "author_icon": "http://flickr.com/icons/bobby.jpg",
-                "title": "OpenFaas",
-                "title_link": "https://github.com/openfaas/faas",
-                "text": "Head over to OpenFaas",
-                "image_url": "https://avatars2.githubusercontent.com/u/27013154?s=400&amp;v=4",
-                "thumb_url": "https://github.com/openfaas/faas",
-                "footer": "Slack Apps built on OpenFaas",
-                "footer_icon": "https://a.slack-edge.com/45901/marketing/img/_rebrand/meta/slack_hash_256.png",
-                "ts": 123456789
-            }
-        ]
-    }
-    return json.dumps(data)
-</code></pre>
-
-<p>We also need to set the content type to json:</p>
-
-<pre><code class="bash">provider:
-  name: faas
-  gateway: http://&lt;your.gw.address&gt;:8080
-functions:
-  slack-interactive:
-    lang: python
-    handler: ./slack-interactive
-    image: &lt;repo&gt;/slack-interactive:latest
-    environment:
-      content_type: application/json
-</code></pre>
-
-<p>Build, deploy and ship:</p>
-
-<pre><code class="bash">$ faas-cli build -f ./slack-interactive.yml 
-$ faas-cli push -f ./slack-interactive.yml
-$ faas-cli deploy -f ./slack-interactive.yml
-
-Deploying: slack-interactive.
-
-Deployed. 202 Accepted.
-URL: http://&lt;your.gw.address&gt;:8080/function/slack-interactive
-</code></pre>
-
-<p>When your functions are deployed, go ahead and create the slack app.</p>
-
-<h2>Create the Slack App</h2>
-
-<ul>
-<li>Head over to <a href="https://api.slack.com/apps">https://api.slack.com/apps</a> and create a new app</li>
-<li>Create a incoming webhook</li>
-<li>Head over to slash commands and create a new command, in my case it was <code>/supersam</code>, set the request url to the public endpoint of your function: <code>http://pub-ip:8080/function/slack-request</code></li>
-<li>Head over to interactive components, set the request url for the interactivity: <code>http://pub-ip:8080/function/slack-interactive</code></li>
-<li>If you dont have a public routable address, have a look at <a href="https://ngrok.com">ngrok</a></li>
-</ul>
-
-
-<p>Once you are set, you should be able to see the slash command integration in your slack workspace, head over to slacks <a href="https://api.slack.com/docs">documentation</a> if you run into any trouble.</p>
-
-<h2>Test your Slack App</h2>
-
-<p>Now that everything is good to go, its time to test your slack app running on OpenFaas!</p>
-
-<p>Head over to slack and run your command <code>/&lt;your-slack-slash-command&gt;</code>. You should see this output:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/53206700-56932e00-363a-11e9-8d44-dfd27f005ab0.png" alt="" /></p>
-
-<p>When you select one of the buttons, you will get a new message:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/53206764-74f92980-363a-11e9-91cb-6cfc30c74457.png" alt="" /></p>
-
-<p>This is a real basic example of slack apps, but slack apps are really powerful. You can for example create a slack app that deploys ephemeral environments on swarm, or create change management approval workflows etc.</p>
-
-<p>I hope this was informative, I am really enjoying OpenFaas at the moment and if your have not tested it, I encourage you to try it out, its really, really amazing!</p>
 ]]></content>
   </entry>
   

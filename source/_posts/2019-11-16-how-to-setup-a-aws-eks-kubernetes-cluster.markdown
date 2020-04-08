@@ -74,7 +74,7 @@ Create a SSH key if you would like to SSH to your worker nodes:
 $ ssh-keygen -b 2048 -f ~/.ssh/eks -t rsa -q -N ""
 ```
 
-Import your public key to EC2:
+Now we need to import our public key to EC2, **note** that I am referencing `--profile dev` which is my dev AWS profile. If you only have one default profile, you can use `--profile default`:
 
 ```
 $ aws --profile dev --region eu-west-1 ec2 import-key-pair --key-name "eks" --public-key-material file://~/.ssh/eks.pub

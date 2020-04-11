@@ -111,6 +111,35 @@ Listing Open files per User:
 $ lsof -u glassfish
 ```
 
+## Network Throughput
+
+You can test the network throughput between two linux hosts with `iperf`:
+
+On side-a we will start the server in TCP mode:
+
+```
+$ iperf -s
+------------------------------------------------------------
+Server listening on TCP port 5001
+TCP window size:  128 KByte (default)
+------------------------------------------------------------
+```
+
+On side-b we will start the client, which connects to the server:
+
+```
+$ iperf -c 192.168.1.213
+------------------------------------------------------------
+Client connecting to 192.168.1.213, TCP port 5001
+TCP window size: 43.8 KByte (default)
+------------------------------------------------------------
+[  3] local 192.168.0.114 port 43870 connected with 192.168.1.213 port 5001
+[ ID] Interval       Transfer     Bandwidth
+[  3]  0.0-10.0 sec  11.4 MBytes  9.54 Mbits/sec
+```
+
+We can also run this in UDP mode where the server will run `iperf -s -u` and the client will run `iperf -c host-address -u`
+
 ## Resources
 
 - [AWS: Troubleshoot VPN Latencies](https://aws.amazon.com/premiumsupport/knowledge-center/troubleshoot-vpn-packet-loss/)

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Strongswan | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/strongswan/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-04-11T11:34:51+02:00</updated>
+  <updated>2020-04-19T22:43:08+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,426 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[IPSec Site to Site VPN With Dynamic IPs With Openswan]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/04/19/ipsec-site-to-site-vpn-with-dynamic-ips-with-openswan/"/>
+    <updated>2020-04-19T20:58:17+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/04/19/ipsec-site-to-site-vpn-with-dynamic-ips-with-openswan</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a site to site ipsec vpn with strongswan and we will enable each server to discover the other vpn server via dynamic dns. We will also append to our config the ability of roadwarriors so that you will be able to connect to your homelab from any mobile or laptop device from any remote source.</p>
+
+<h2>Some background</h2>
+
+<p>Me and one of my friends decided to build a site to site vpn with strongswan so that our homelabs could be reachable to each other over private networks.</p>
+
+<p>One challenge that I thought of is that both of our internet providers don&rsquo;t support static ip addressing, so each vpn server needs to know where to connect to whenever the ip address changes.</p>
+
+<h2>What we will be doing</h2>
+
+<p>We will setup strongswan vpn on both servers and allow the private LAN ranges to be reachable for both sides. As I have a domain hosted on cloudflare, I will be using cloudflare&rsquo;s api to update the A record of each sides dns whenever the IP changes.</p>
+
+<h2>Environment</h2>
+
+<p>On my side, which I will be referring to as <strong>Side-A</strong>:</p>
+
+<pre><code>Public DNS Name: side-a.example.com
+Private Range: 192.168.0.0/24
+VPN Server IP: 192.168.0.2
+</code></pre>
+
+<p>On my friend&rsquo;s side, which I will be referring to as <strong>Side-B</strong>:</p>
+
+<pre><code>Public DNS Name: side-b.example.com
+Private Range: 192.168.1.0/24
+VPN Server IP: 192.168.1.2
+</code></pre>
+
+<h2>Cloudflare Dynamic DNS</h2>
+
+<p>You don&rsquo;t need to use Cloudflare, theres services such as dyndns.com, no-ip.com. But for this tutorial I will be using cloudflare to utilize my own domain.</p>
+
+<p>I will be using the <a href="https://github.com/LINKIWI/cloudflare-ddns-client">cloudflare-ddns-client</a></p>
+
+<p>First we need to create a API Token, head over to your dashboard: <a href="https://dash.cloudflare.com">dash.cloudflare.com</a>, head over to &ldquo;my profile&rdquo;, select &ldquo;API Tokens&rdquo;, then allow &ldquo;Read Zones&rdquo; and &ldquo;Edit DNS&rdquo;, then select &ldquo;Create Token&rdquo;. Keep the returned token value in a safe place.</p>
+
+<p>Install the pre-requirements:</p>
+
+<pre><code>$ apt install python python-dev python-pip make curl build-essential -y
+</code></pre>
+
+<p>Get the source and install:</p>
+
+<pre><code>$ git clone https://github.com/LINKIWI/cloudflare-ddns-client.git
+$ cd cloudflare-ddns-client
+$ make install
+</code></pre>
+
+<p>We will now configure the cloudflare dynamic dns client, this will be done on both sides, but will only demonstrate for side-a:</p>
+
+<pre><code>$ cloudflare-ddns --configure
+Use API token or API key to authenticate?
+Choose [T]oken or [K]ey: T
+Enter the API token you created at https://dash.cloudflare.com/profile/api-tokens.
+Required permissions are READ Account.Access: Organizations, Identity Providers, and Groups; READ Zone.Zone; EDIT Zone.DNS
+CloudFlare API token: [redacted]
+Enter the domains for which you would like to automatically update the DNS records, delimited by a single comma.
+Comma-delimited domains: side-a.example.com
+</code></pre>
+
+<p>Testing it out to ensure the A record can be updated:</p>
+
+<pre><code>$ cloudflare-ddns --update-now
+Found external IPv4: "1.x.x.x"
+Listing all zones.
+Finding all DNS records.
+Updating the A record (ID x) of (sub)domain side-a.example.com (ID x) to 1.x.x.x.
+DNS record updated successfully!
+</code></pre>
+
+<p>We can run this command from above in a cron, but I will use a bash script to only run when the public ip changed: <code>/opt/scripts/detect_ip_change.sh</code>:</p>
+
+<pre><code>#!/bin/bash
+set -ex
+MY_DDNS_HOST="side-a.example.com"
+
+if [ $(dig ${MY_DDNS_HOST} +short) == $(curl -s icanhazip.com) ];
+  then exit 0;
+  else /usr/local/bin/cloudflare-ddns --update-now;
+fi
+</code></pre>
+
+<p>Make the file executable: <code>chmod +x /opt/scripts/detect_ip_change.sh</code> then edit your cronjobs: <code>crontab -e</code> and add the script:</p>
+
+<pre><code>* * * * * /opt/scripts/detect_ip_change.sh
+</code></pre>
+
+<p>This will keep your DNS updated, this needs to be done on both sides, if you want to use dynamic dns.</p>
+
+<h2>Port Forwarding</h2>
+
+<p>We will need to forward UDP traffic from the router to the VPN server, on both sides:</p>
+
+<pre><code>Port: UDP/500 
+Target: VPN-Server-IP:500
+
+Port: UDP/4500
+Target: VPN-Server-IP:4500
+</code></pre>
+
+<h2>Create a Pre-Shared Key</h2>
+
+<p>Create a preshared key that will be used on both sides to authenticate:</p>
+
+<pre><code>$ openssl rand -base64 36
+pgDU4eKZaQNL7GNRWJPvZbaSYFn2PAFjK9vDOvxAQ85p7qc4
+</code></pre>
+
+<p>This value will be used on both sides, which we will need later.</p>
+
+<h2>Install Strongswan on Side-A</h2>
+
+<p>Install strongswan and enable the service on boot:</p>
+
+<pre><code>$ apt install strongswan -y
+$ systemctl enable strongswan
+</code></pre>
+
+<p>The left side will be the side we are configuring and the right side will be the remote side.</p>
+
+<p>Create the config: <code>/etc/ipsec.conf</code> and provide the following config:</p>
+
+<pre><code>config setup
+    charondebug="all"
+    uniqueids=yes
+    virtual_private=
+    cachecrls=no
+
+conn vpn-to-side-b
+    type=tunnel
+    authby=secret
+    left=%defaultroute
+    leftid=side-a.example.com
+    leftsubnet=192.168.0.0/24
+    right=%side-b.example.com
+    rightid=side-b.example.com
+    rightsubnet=192.168.1.0/24
+    ike=aes256-sha2_256-modp1024!
+    esp=aes256-sha2_256!
+    keyingtries=0
+    ikelifetime=1h
+    lifetime=8h
+    dpddelay=30
+    dpdtimeout=120
+    dpdaction=restart
+    auto=start
+</code></pre>
+
+<p>Create the secrets file: <code>/etc/ipsec.secrets</code>:</p>
+
+<pre><code>side-b.example.com : PSK "pgDU4eKZaQNL7GNRWJPvZbaSYFn2PAFjK9vDOvxAQ85p7qc4"
+</code></pre>
+
+<p>Append the following kernel parameters to <code>/etc/sysctl.conf</code>:</p>
+
+<pre><code>net.ipv4.ip_forward = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+</code></pre>
+
+<p>Save:</p>
+
+<pre><code>$ sysctl -p
+</code></pre>
+
+<p>We now want to add a POSTROUTING and FORWARD rule using iptables:</p>
+
+<pre><code>$ iptables -t nat -A POSTROUTING -s 192.168.1.0/24  -d 192.168.0.0/24 -j MASQUERADE
+$ iptables -A FORWARD -s 192.168.1.0/24 -d 192.168.0.0/24 -j ACCEPT
+</code></pre>
+
+<p>Now we need to route back:</p>
+
+<pre><code>$ ip route add 192.168.1.0/24 via 192.168.0.2 dev eth0
+</code></pre>
+
+<p>We want to persist the iptables and static route across reboots, so edit the <code>/etc/rc.local</code> file, if it&rsquo;s not there create it with the following values:</p>
+
+<pre><code>#!/bin/bash
+iptables -t nat -A POSTROUTING -s 192.168.1.0/24  -d 192.168.0.0/24 -j MASQUERADE
+iptables -A FORWARD -s 192.168.1.0/24 -d 192.168.0.0/24 -j ACCEPT
+ip route add 192.168.1.0/24 via 192.168.0.2 dev eth0
+exit 0
+</code></pre>
+
+<p>If you created the file, make sure to apply executable permissions:</p>
+
+<pre><code>$ chmod +x /etc/rc.local
+</code></pre>
+
+<p>Read the secrets and restart strongswan:</p>
+
+<pre><code>$ ipsec rereadsecrets
+$ systemctl restart strongswan
+</code></pre>
+
+<h2>Install Strongswan on Side-B</h2>
+
+<p>Install strongswan and enable the service on boot:</p>
+
+<pre><code>$ apt install strongswan -y
+$ systemctl enable strongswan
+</code></pre>
+
+<p>The left side will be the side we are configuring and the right side will be the remote side.</p>
+
+<p>Create the config: <code>/etc/ipsec.conf</code> and provide the following config:</p>
+
+<pre><code>config setup
+    charondebug="all"
+    uniqueids=yes
+    virtual_private=
+    cachecrls=no
+
+conn vpn-to-side-a
+    type=tunnel
+    authby=secret
+    left=%defaultroute
+    leftid=side-b.example.com
+    leftsubnet=192.168.1.0/24
+    right=%side-a.example.com
+    rightid=side-a.example.com
+    rightsubnet=192.168.0.0/24
+    ike=aes256-sha2_256-modp1024!
+    esp=aes256-sha2_256!
+    keyingtries=0
+    ikelifetime=1h
+    lifetime=8h
+    dpddelay=30
+    dpdtimeout=120
+    dpdaction=restart
+    auto=start
+</code></pre>
+
+<p>Create the secrets file: <code>/etc/ipsec.secrets</code>:</p>
+
+<pre><code>side-a.example.com : PSK "pgDU4eKZaQNL7GNRWJPvZbaSYFn2PAFjK9vDOvxAQ85p7qc4"
+</code></pre>
+
+<p>Append the following kernel parameters to <code>/etc/sysctl.conf</code>:</p>
+
+<pre><code>net.ipv4.ip_forward = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+</code></pre>
+
+<p>Save:</p>
+
+<pre><code>$ sysctl -p
+</code></pre>
+
+<p>We now want to add a POSTROUTING and FORWARD rule using iptables:</p>
+
+<pre><code>$ iptables -t nat -A POSTROUTING -s 192.168.0.0/24  -d 192.168.1.0/24 -j MASQUERADE
+$ iptables -A FORWARD -s 192.168.0.0/24 -d 192.168.1.0/24 -j ACCEPT
+</code></pre>
+
+<p>Now we need to route back:</p>
+
+<pre><code>$ ip route add 192.168.0.0/24 via 192.168.1.2 dev eth0
+</code></pre>
+
+<p>We want to persist the iptables and static route across reboots, so edit the <code>/etc/rc.local</code> file, if it&rsquo;s not there create it with the following values:</p>
+
+<pre><code>#!/bin/bash
+iptables -t nat -A POSTROUTING -s 192.168.0.0/24  -d 192.168.1.0/24 -j MASQUERADE
+iptables -A FORWARD -s 192.168.0.0/24 -d 192.168.1.0/24 -j ACCEPT
+ip route add 192.168.0.0/24 via 192.168.1.2 dev eth0
+exit 0
+</code></pre>
+
+<p>If you created the file, make sure to apply executable permissions:</p>
+
+<pre><code>$ chmod +x /etc/rc.local
+</code></pre>
+
+<p>Read the secrets and restart strongswan:</p>
+
+<pre><code>$ ipsec rereadsecrets
+$ systemctl restart strongswan
+</code></pre>
+
+<h2>Verify Status</h2>
+
+<p>Verify that the ipsec tunnel is up on side-a:</p>
+
+<pre><code>$ ipsec statusall
+
+Connections:
+  vpn-to-side-b:  %any...side-b.example.com,0.0.0.0/0,::/0  IKEv1/2
+  vpn-to-side-b:   local:  [side-a.example.com] uses pre-shared key authentication
+  vpn-to-side-b:   remote: [side-b.example.com] uses pre-shared key authentication
+  vpn-to-side-b:   child:  192.168.0.0/24 === 192.168.1.0/24 TUNNEL
+Security Associations (1 up, 0 connecting):
+  vpn-to-side-b[1]: ESTABLISHED 28 minutes ago, 192.168.0.2[side-a.example.com]...4x.x.x.214[side-b.example.com]
+  vpn-to-side-b[1]: IKEv2 SPIs: 81996170df1c927d_i e8294946491ddf08_r, pre-shared key reauthentication in 2 hours
+  vpn-to-side-b[1]: IKE proposal: AES_CBC_128/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/ECP_256
+  vpn-to-side-b{2}:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: cc4504be_i c294cb26_o
+  vpn-to-side-b{2}:  AES_CBC_128/HMAC_SHA2_256_128, 0 bytes_i, 240 bytes_o (4 pkts, 7s ago), rekeying in 18 minutes
+  vpn-to-side-b{2}:   192.168.0.0/24 === 192.168.1.0/24
+</code></pre>
+
+<p>Verify that the ipsec tunnel is up on side-b:</p>
+
+<pre><code>$ ipsec statusall
+
+Connections:
+ vpn-to-side-a:  %any...side-a.example.com,0.0.0.0/0,::/0  IKEv1/2
+ vpn-to-side-a:   local:  [side-b.example.com] uses pre-shared key authentication
+ vpn-to-side-a:   remote: [side-a.example.com] uses pre-shared key authentication
+ vpn-to-side-a:   child:  192.168.1.0/24 === 192.168.0.0/24 TUNNEL
+Security Associations (1 up, 0 connecting):
+ vpn-to-side-a[2]: ESTABLISHED 20 minutes ago, 192.168.1.2[side-b.example.com]...14x.x.x.x[side-a.example.com]
+ vpn-to-side-a[2]: IKEv2 SPIs: 81996170df1c927d_i e8294946491ddf08_r, pre-shared key reauthentication in 2 hours
+ vpn-to-side-a[2]: IKE proposal: AES_CBC_128/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/ECP_256
+ vpn-to-side-a{2}:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c294cb26_i cc4504be_o
+ vpn-to-side-a{2}:  AES_CBC_128/HMAC_SHA2_256_128, 0 bytes_i, 0 bytes_o, rekeying in 26 minutes
+ vpn-to-side-a{2}:   192.168.1.0/24 === 192.168.0.0/24
+</code></pre>
+
+<p>From side-a (192.168.0.2) ping the gateway on side-b (192.168.1.1):</p>
+
+<pre><code>$ $ ping -c2 192.168.1.1
+PING 10.3.96.2 (192.168.1.1) 56(84) bytes of data.
+64 bytes from 192.168.1.1: icmp_seq=1 ttl=62 time=11.9 ms
+</code></pre>
+
+<p>If you want to be able to reach the private range of the other side of the vpn from any device on your network, you should add a static route on your router to inform your default gateway where to route traffic to.</p>
+
+<p>In this case on side-a (192.168.0.0/24) we want to inform our default gateway to route (192.168.1.0/24) to the VPN as it knows to route that destination over the VPN.</p>
+
+<p>On side-a, on your router, add a static route:</p>
+
+<pre><code>Route: 192.168.1.0
+Subnet: 255.255.255.0
+Gateway: 192.168.0.2
+</code></pre>
+
+<p>On side-b, on your router, add a static route:</p>
+
+<pre><code>Route: 192.168.0.0
+Subnet: 255.255.255.0
+Gateway: 192.168.1.2
+</code></pre>
+
+<h2>Optional: Roadwarrior VPN Clients</h2>
+
+<p>This step is optional, but since we can access each others homelabs, we thought it would be nice to be able to access the resources from mobile devices or laptops when we are on remote locations.</p>
+
+<p>We made it that each VPN owner will connect to its own endpoint (for roadwarriors), so side-a (which will be me) will connect to its own dns endpoint to connect when away from home..</p>
+
+<p>I will only demonstrate how to append your config to add the ability for a roadwarrion vpn connection, append to the <code>/etc/ipsec.conf</code>:</p>
+
+<pre><code># ...
+conn ikev2-vpn
+    auto=add
+    type=tunnel
+    authby=secret
+    left=%any
+    leftid=side-a.roadwarrior
+    leftsubnet=0.0.0.0/0
+    right=%any
+    rightid=%any
+    rightsourceip=10.10.0.0/24
+    rightdns=192.168.0.1,8.8.8.8
+    auto=start
+</code></pre>
+
+<p>Append the secret in <code>/etc/ipsec.secrets</code>:</p>
+
+<pre><code># ...
+side-a.roadwarrior my-laptop : PSK "MySuperSecureSecret123"
+</code></pre>
+
+<p>Add the vpn ip&rsquo;s that we will assign to the roardwarrior clients to the routing table:</p>
+
+<pre><code>$ ip route add 10.10.0.0/24 via 192.168.0.2 dev eth0
+</code></pre>
+
+<p>If you only want the roadwarriors to be able to reach your network, you will only forward to the local network such as:</p>
+
+<pre><code>$ iptables -A FORWARD -s 10.10.0.0/24 -d 192.168.0.0/24 -j ACCEPT
+</code></pre>
+
+<p>But we will be forwarding traffic to all destinations:</p>
+
+<pre><code>$ iptables -A FORWARD -s 10.10.10.0/24 -d 0.0.0.0/0 -j ACCEPT
+$ iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -d 0.0.0.0/0 -j MASQUERADE
+</code></pre>
+
+<p>Remember to append the routes to <code>/etc/rc.local</code> to persist across reboots.</p>
+
+<p>Reread the secrets and restart strongswan:</p>
+
+<pre><code>$ ipsec rereadsecrets
+$ systemctl restart strongswan
+</code></pre>
+
+<p>Connecting your VPN Client, I will be using my Laptop, with the following details:</p>
+
+<pre><code>VPN Type: IKEv2
+Description: Home VPN
+Server: side-a.example.com
+Remote ID: side-a.roadwarrior
+Local ID: my-laptop
+User Authentication: None
+Secret: MySuperSecureSecret123
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>In this tutorial I demonstrated how to setup a site to site ipsec vpn between 2 sides that consists of internet connections that has dynamic ip&rsquo;s and also appending roadwarrior config so that you can connect to your homelab from anywhere in the world.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Site to Site IPsec VPN With Strongswan and PreShared Key Authentication]]></title>

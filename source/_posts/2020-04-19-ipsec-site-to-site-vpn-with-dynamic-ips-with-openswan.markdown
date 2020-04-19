@@ -432,8 +432,8 @@ $ iptables -A FORWARD -s 10.10.0.0/24 -d 192.168.0.0/24 -j ACCEPT
 But we will be forwarding traffic to all destinations:
 
 ```
-$ iptables -A FORWARD -s 10.10.10.0/24 -d 0.0.0.0/0 -j ACCEPT
-$ iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -d 0.0.0.0/0 -j MASQUERADE
+$ iptables -A FORWARD -s 10.10.0.0/24 -d 0.0.0.0/0 -j ACCEPT
+$ iptables -t nat -A POSTROUTING -s 10.10.0.0/24 -d 0.0.0.0/0 -j MASQUERADE
 ```
 
 Remember to append the routes to `/etc/rc.local` to persist across reboots.

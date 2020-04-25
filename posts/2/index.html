@@ -9,10 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="This playbook demonstrates how you can redirect shell output to a local file Inventory Our inventory.ini file: 1
-2
-[localhost]
-localhost The Script &hellip;">
+  <meta name="description" content="Today we will look at Thanos, a open source, highly available prometheus setup with long term storage capabilites, that we will run on docker to &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -125,6 +122,198 @@ localhost The Script &hellip;">
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/02/01/setup-thanos-on-docker-a-highly-available-prometheus/">Setup Thanos on Docker: A Highly Available Prometheus</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-02-01T01:28:12+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>1</span><span class='date-suffix'>st</span>, <span class='date-year'>2020</span></span> <span class='time'>1:28 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>Today we will look at Thanos, a open source, highly available prometheus setup with long term storage capabilites, that we will run on docker to simplify the setup.</p>
+
+<p>Note that running this proof of concept does not make it highly available as we will run everything on one host, but it will give you a feel what Thanos is about. In a future post, I will setup Thanos in a multi node environment.</p>
+
+<h2>Prometheus</h2>
+
+<p>If you are not familiar with <a href="https://prometheus.io">Prometheus</a>, then have a look at their documentation, but in short, prometheus is a open source monitoring system and time series database developed by soundcloud.</p>
+
+<p>Prometheus is a monitoring system includes a rich, multidimensional data model, a concise and powerful query language called PromQL, an efficient embedded timeseries database, and over 150 integrations with third-party systems.</p>
+
+<h2>Thanos</h2>
+
+<p>Thanos is a highly available prometheus setup with long term storage capabilities.</p>
+
+<p>Thanos allows you to ship your data to S3/Minio for long storage capabilites, so you could for example only store your &ldquo;live&rdquo; data on prometheus for 2 weeks, then everything older than that gets sent to object storage such as amazon s3 or minio. This helps your prometheus instance not to be flooded with data or prevents you from running out of storage space. The nice thing is, when you query for data older than 2 weeks, it will fetch the data from object storage.</p>
+
+<p>Thanos has a global query view, which essentially means you can query your prometheus metrics from one endpoint backed by multiple prometheus servers or cluster.</p>
+
+<p>You can still use the same tools such as Grafana as it utilizes the same Prometheus Query API.</p>
+
+<p>Thanos provides downsampling and compaction, so that you downsample your historical data for massive query speedup when querying large time ranges.</p>
+
+<h2>Thanos Components</h2>
+
+<p>Thanos is a clustered system of components which can be categorized as follows:</p>
+
+<ul>
+<li><p>Metric sources</p>
+
+<ul>
+<li>Thanos provides two components that act as data sources: Prometheus Sidecar and Rule Nodes</li>
+<li>Sidecar implements gRPC service on top of Prometheus</li>
+<li>Rule Node directly implements it on top of the Prometheus storage engine it is running</li>
+<li>Data sources that persist their data for long term storage, do so via the Prometheus 2.0 storage engine</li>
+<li>Storage engine periodically produces immutable blocks of data for a fixed time range</li>
+<li>A blocks top-level directory includes chunks, index and meta.json files</li>
+<li>Chunk files hold a few hundred MB worth of chunks each</li>
+<li>The index file holds all information needed to lookup specific series by their labels and the positions of their chunks.</li>
+<li>The <code>meta.json</code> file holds metadata about block like stats, time range, and compaction level</li>
+</ul>
+</li>
+<li><p>Stores</p>
+
+<ul>
+<li>A Store Node acts as a Gateway to block data that is stored in an object storage bucket</li>
+<li>It implements the same gRPC API as Data Sources to provide access to all metric data found in the bucket</li>
+<li>Continuously synchronizes which blocks exist in the bucket and translates requests for metric data into object storage requests</li>
+<li>Implements various strategies to minimize the number of requests to the object storage</li>
+<li>Prometheus 2.0 storage layout is optimized for minimal read amplification</li>
+<li>At this time of writing, only index data is cached</li>
+<li>Stores and Data Sources are the same, store nodes and data sources expose the same gRPC Store API</li>
+<li>Store API allows to look up data by a set of label matchers and a time range</li>
+<li>It then returns compressed chunks of samples as they are found in the block data</li>
+<li>So it&rsquo;s purely a data retrieval API and does not provide complex query execution</li>
+</ul>
+</li>
+<li><p>Query Layer</p>
+
+<ul>
+<li>Queriers are stateless and horizontally scalable instances that implement PromQL on top of the Store APIs exposed in the cluster</li>
+<li>Queriers participate in the cluster to be able to resiliently discover all data sources and store nodes</li>
+<li>Rule nodes in return can discover query nodes to evaluate recording and alerting rules</li>
+<li>Based on the metadata of store and source nodes, they attempt to minimize the request fanout to fetch data for a particular query</li>
+<li>The only scalable components of Thanos is the query nodes as none of the Thanos components provide sharding</li>
+<li>Scaling of storage capacity is ensured by relying on an external object storage system</li>
+<li>Store, rule, and compactor nodes are all expected to scale significantly within a single instance or high availability pair</li>
+</ul>
+</li>
+</ul>
+
+
+<p>The information from above was retrieved from their <a href="https://thanos.io/design.md/">website</a>, feel free to check them out if you want to read more on the concepts of thanos.</p>
+
+<p>The Architecture Overview of Thanos looks like this:</p>
+
+<p><img src="https://github.com/thanos-io/thanos/blob/master/docs/img/arch.jpg?raw=true" alt="" /></p>
+
+<h2>What are we doing today</h2>
+
+<p>We will setup a Thanos Cluster with Minio, Node-Exporter, Grafana on Docker. Our Thanos setup will consist of 3 prometheus containers, each one running with a sidecar container, a store container, 2 query containers, then we have the remotewrite and receive containers which node-exporter will use to ship its metrics to.</p>
+
+<p>The minio container will be used as our long-term storage and the mc container will be used to initialize the storage bucket which is used by thanos.</p>
+
+<h2>Deploy the Cluster</h2>
+
+<p>Below is the docker-compose.yml and the script to generate the configs for thanos:</p>
+
+<script src="https://gist.github.com/ruanbekker/acd1b17d3aea4c71031e72dfc8ebbb4d.js"></script>
+
+
+<p>Once you have saved the compose as <code>docker-compose.yml</code> and the script as <code>configs.sh</code> you can create the configs:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ bash configs.sh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The script from above creates the data directory and place all the configs that thanos will use in there. Next deploy the thanos cluster:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose -f docker-compose.yml up</span></code></pre></td></tr></table></div></figure>
+
+
+<p>It should look something like this:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose -f docker-compose.yml up
+</span><span class='line'>Starting node-exporter ... done
+</span><span class='line'>Starting minio         ... done
+</span><span class='line'>Starting grafana        ... done
+</span><span class='line'>Starting prometheus0    ... done
+</span><span class='line'>Starting prometheus1     ... done
+</span><span class='line'>Starting thanos-receive  ... done
+</span><span class='line'>Starting thanos-store    ... done
+</span><span class='line'>Starting prometheus2     ... done
+</span><span class='line'>Starting mc             ... done
+</span><span class='line'>Starting thanos-sidecar0 ... done
+</span><span class='line'>Starting thanos-sidecar1     ... done
+</span><span class='line'>Starting thanos-sidecar2     ... done
+</span><span class='line'>Starting thanos-remote-write ... done
+</span><span class='line'>Starting thanos-query1       ... done
+</span><span class='line'>Starting thanos-query0       ... done
+</span><span class='line'>Attaching to node-exporter, minio, grafana, mc, prometheus0, prometheus1, thanos-store, prometheus2, thanos-receive, thanos-sidecar0, thanos-sidecar1, thanos-sidecar2, thanos-remote-write, thanos-query0, thanos-query1</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Access the Query UI, which looks identical to the Prometheus UI:
+- <a href="http://localhost:10904/graph">http://localhost:10904/graph</a></p>
+
+<p>It will look more or less like this:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/73583506-4e26b280-449b-11ea-96ca-9b0cefec0acd.png"></p>
+
+<p>When we access minio on:
+- <a href="http://localhost:9000/minio">http://localhost:9000/minio</a></p>
+
+<p>And under the thanos bucket you will see the objects being persisted:</p>
+
+<p><img width="1278" alt="image" src="https://user-images.githubusercontent.com/567298/73583542-7ca48d80-449b-11ea-955c-7b1e766229a3.png"></p>
+
+<p>When we access grafana on:
+- <a href="http://localhost:3000/">http://localhost:3000/</a></p>
+
+<p>Select datasources, add a prometheus datasource and select the endpoint: <code>http://query0:10904</code>, which should look like this:</p>
+
+<p><img width="618" alt="image" src="https://user-images.githubusercontent.com/567298/73583601-d73de980-449b-11ea-9a71-c94e8184336f.png"></p>
+
+<p>When we create a dashboard, you can test a query with <code>thanos_sidecar_prometheus_up</code> and it should look something like this:</p>
+
+<p><img width="1279" alt="image" src="https://user-images.githubusercontent.com/567298/73583684-49aec980-449c-11ea-97bd-35145ff8330c.png"></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1981,499 +2170,6 @@ localhost The Script &hellip;">
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster/">How to Setup a AWS EKS Kubernetes Cluster</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-11-16T22:31:36+02:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>16</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>10:31 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/68999066-b8c84900-08c3-11ea-9669-5c859590296c.png" alt="kubernetes-eks-aws-cluster" /></p>
-
-<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>This will be a tutorial split up in two posts, where I will show you how to provision a EKS Cluster (Elastic Kubernetes Service) on AWS and in the <a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">next post</a>, how to deploy a web application to your cluster (<a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">Part2 - Deploy a Web App to EKS</a>.)</p>
-
-<h2>And then came EKS</h2>
-
-<p>As some of you may know, I&rsquo;m a massive AWS fan boy, and since AWS released their managed Kubernetes service, I was quite excited to test it out. A couple of months passed and I got the opportunity to test out on-the-job as we moved to Kubernetes.</p>
-
-<p>A couple of moths has passed, and serving multiple production workloads on EKS, and I am really impressed with the service.</p>
-
-<p>Amazon provides a vanilla Kubernetes version, they manage the master nodes and they have a extra component called the cloud controller that runs on the master nodes, which is the aws native component that talks to other aws services (as far as I can recall)</p>
-
-<h2>What are we doing today</h2>
-
-<p>We will cover this in this post:</p>
-
-<table>
-<thead>
-<tr>
-<th> <strong>Topic</strong>                                                    </th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td> Deploy a EKS Cluster                                         </td>
-</tr>
-<tr>
-<td> View the resources to see what was provisioned on AWS        </td>
-</tr>
-<tr>
-<td> Interact with Kubernetes using kubectl                       </td>
-</tr>
-<tr>
-<td> Terminate a Node and verify that the ASG replaces the node   </td>
-</tr>
-<tr>
-<td> Scale down your worker nodes                                 </td>
-</tr>
-<tr>
-<td> Run a pod on your cluster                                    </td>
-</tr>
-</tbody>
-</table>
-
-
-<p>In the <a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">next post</a> we will deploy a web service to our EKS cluster.</p>
-
-<h2>Install Pre-Requirements</h2>
-
-<p>We require <code>awscli</code>, <code>eksctl</code> and <code>kubectl</code> before we continue. I will be installing this on MacOS, but you can have a look at the following links if you are using a different operating system:</p>
-
-<ul>
-<li><a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-install.html">Install awscli</a></li>
-<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html">Install eksctl</a></li>
-<li><a href="https://kubernetes.io/docs/tasks/tools/install-kubectl/">Install kubectl</a></li>
-</ul>
-
-
-<p>Install awscli:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install awscli
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install kubectl:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew update
-</span><span class='line'><span class="nv">$ </span>brew install kubernetes-cli
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install eksctl:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew tap weaveworks/tap
-</span><span class='line'><span class="nv">$ </span>brew install weaveworks/tap/eksctl
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy EKS</h2>
-
-<p>Create a SSH key if you would like to SSH to your worker nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh-keygen -b <span class="m">2048</span> -f ~/.ssh/eks -t rsa -q -N <span class="s2">&quot;&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to import our public key to EC2, <strong>note</strong> that I am referencing <code>--profile dev</code> which is my dev AWS profile. If you only have one default profile, you can use <code>--profile default</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile dev --region eu-west-1 ec2 import-key-pair --key-name <span class="s2">&quot;eks&quot;</span> --public-key-material file://~/.ssh/eks.pub
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Provision your cluster using eksctl. This will deploy two cloudformation stacks, one for the kubernetes cluster, and one for the node group.</p>
-
-<p>I am creating a kubernetes cluster with 3 nodes of instance type (t2.small) and using version 1.14:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 create cluster --name my-eks-cluster --version 1.14 --nodes <span class="m">3</span> --node-type t2.small --ssh-public-key eks
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  eksctl version 0.9.0
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  using region eu-west-1
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  setting availability zones to <span class="o">[</span>eu-west-1a eu-west-1b eu-west-1c<span class="o">]</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  subnets <span class="k">for</span> eu-west-1a - public:192.168.0.0/19 private:192.168.96.0/19
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  subnets <span class="k">for</span> eu-west-1b - public:192.168.32.0/19 private:192.168.128.0/19
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  subnets <span class="k">for</span> eu-west-1c - public:192.168.64.0/19 private:192.168.160.0/19
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> will use <span class="s2">&quot;ami-059c6874350e63ca9&quot;</span> <span class="o">[</span>AmazonLinux2/1.14<span class="o">]</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  using Kubernetes version 1.14
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  creating EKS cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span> region
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  will create <span class="m">2</span> separate CloudFormation stacks <span class="k">for</span> cluster itself and the initial nodegroup
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  <span class="k">if</span> you encounter any issues, check CloudFormation console or try <span class="s1">&#39;eksctl utils describe-stacks --region=eu-west-1 --cluster=my-eks-cluster&#39;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  CloudWatch logging will not be enabled <span class="k">for</span> cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  you can <span class="nb">enable </span>it with <span class="s1">&#39;eksctl utils update-cluster-logging --region=eu-west-1 --cluster=my-eks-cluster&#39;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  Kubernetes API endpoint access will use default of <span class="o">{</span><span class="nv">publicAccess</span><span class="o">=</span><span class="nb">true</span>, <span class="nv">privateAccess</span><span class="o">=</span><span class="nb">false</span><span class="o">}</span> <span class="k">for</span> cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  <span class="m">2</span> sequential tasks: <span class="o">{</span> create cluster control plane <span class="s2">&quot;my-eks-cluster&quot;</span>, create nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> <span class="o">}</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  building cluster stack <span class="s2">&quot;eksctl-my-eks-cluster-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  deploying stack <span class="s2">&quot;eksctl-my-eks-cluster-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  building nodegroup stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  --nodes-min<span class="o">=</span><span class="m">3</span> was <span class="nb">set </span>automatically <span class="k">for</span> nodegroup ng-f27f560e
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  --nodes-max<span class="o">=</span><span class="m">3</span> was <span class="nb">set </span>automatically <span class="k">for</span> nodegroup ng-f27f560e
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  deploying stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  all EKS cluster resources <span class="k">for</span> <span class="s2">&quot;my-eks-cluster&quot;</span> have been created
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  saved kubeconfig as <span class="s2">&quot;/Users/ruan/.kube/config&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  adding identity <span class="s2">&quot;arn:aws:iam::000000000000:role/eksctl-my-eks-cluster-nodegroup-n-NodeInstanceRole-SNVIW5C3J3SM&quot;</span> to auth ConfigMap
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> has <span class="m">0</span> node<span class="o">(</span>s<span class="o">)</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  waiting <span class="k">for</span> at least <span class="m">3</span> node<span class="o">(</span>s<span class="o">)</span> to become ready in <span class="s2">&quot;ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> has <span class="m">3</span> node<span class="o">(</span>s<span class="o">)</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  node <span class="s2">&quot;ip-192-168-42-186.eu-west-1.compute.internal&quot;</span> is ready
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  node <span class="s2">&quot;ip-192-168-75-87.eu-west-1.compute.internal&quot;</span> is ready
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  node <span class="s2">&quot;ip-192-168-8-167.eu-west-1.compute.internal&quot;</span> is ready
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  kubectl <span class="nb">command </span>should work with <span class="s2">&quot;/Users/ruan/.kube/config&quot;</span>, try <span class="s1">&#39;kubectl get nodes&#39;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  EKS cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span> region is ready
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that our EKS cluster has been provisioned, let&rsquo;s browse through our AWS Management Console to understand what was provisioned.</p>
-
-<h2>View the Provisioned Resources</h2>
-
-<p>If we have a look at the Cloudformation stacks, we can see the two stacks that I mentioned previously:</p>
-
-<p><img width="1057" alt="image" src="https://user-images.githubusercontent.com/567298/68996480-58c1aa80-08a3-11ea-95c1-0fcf0bc1863b.png"></p>
-
-<p>Navigating to our EC2 Instances dashboard, we can see the three worker nodes that we provisioned. Remember that AWS manages the master nodes and we cant see them.</p>
-
-<p><img width="1106" alt="image" src="https://user-images.githubusercontent.com/567298/68996520-ea311c80-08a3-11ea-8ea3-e9e481e4ba6f.png"></p>
-
-<p>We have a ASG (Auto Scaling Group) associated with our worker nodes, nodegroup. We can make use of autoscaling and also have desired state, so we will test this out later where we will delete a worker node and verify if it gets replaced:</p>
-
-<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/68996551-2e242180-08a4-11ea-8df6-7b962b9aa03a.png"></p>
-
-<h2>Navigate using Kubectl:</h2>
-
-<p>Eksctl already applied the kubeconfig to <code>~/.kube/config</code>, so we can start using kubectl. Let&rsquo;s start by viewing the nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                           STATUS   ROLES    AGE     VERSION
-</span><span class='line'>ip-192-168-42-186.eu-west-1.compute.internal   Ready    &lt;none&gt;   8m50s   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal    Ready    &lt;none&gt;   8m55s   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal    Ready    &lt;none&gt;   8m54s   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Viewing our pods from our <code>kube-system</code> namespace (we dont have any pods in our default namespace at the moment):</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods --namespace kube-system
-</span><span class='line'>NAME                       READY   STATUS    RESTARTS   AGE
-</span><span class='line'>aws-node-btfbk             1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>aws-node-c6ktk             1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>aws-node-wf8mc             1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>coredns-759d6fc95f-ljxzf   1/1     Running   <span class="m">0</span>          17m
-</span><span class='line'>coredns-759d6fc95f-s6lg6   1/1     Running   <span class="m">0</span>          17m
-</span><span class='line'>kube-proxy-db46b           1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>kube-proxy-ft4mc           1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>kube-proxy-s5q2w           1/1     Running   <span class="m">0</span>          11m
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And our services from all our namespaces:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get services --all-namespaces
-</span><span class='line'>NAMESPACE     NAME         TYPE        CLUSTER-IP    EXTERNAL-IP   PORT<span class="o">(</span>S<span class="o">)</span>         AGE
-</span><span class='line'>default       kubernetes   ClusterIP   10.100.0.1    &lt;none&gt;        443/TCP         19m
-</span><span class='line'>kube-system   kube-dns     ClusterIP   10.100.0.10   &lt;none&gt;        53/UDP,53/TCP   19m
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Testing the ASG</h2>
-
-<p>Let&rsquo;s view our current nodes in our cluster, then select the first node, delete it and verify if the ASG replaces that node.</p>
-
-<p>First, view the nodes and select one node&rsquo;s address:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                           STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-42-186.eu-west-1.compute.internal   Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal    Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal    Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Use the awscli to lookup the EC2 instance id, as we will need this id to delete the node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile dev ec2 describe-instances --query <span class="s1">&#39;Reservations[*].Instances[?PrivateDnsName==`ip-192-168-42-186.eu-west-1.compute.internal`].[InstanceId][]&#39;</span> --output text
-</span><span class='line'>i-0d016de17a46d5178
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have the EC2 instance id, delete the node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile dev ec2 terminate-instances --instance-id i-0d016de17a46d51782
-</span><span class='line'><span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;TerminatingInstances&quot;</span>: <span class="o">[</span>
-</span><span class='line'>        <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;CurrentState&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Code&quot;</span>: 32,
-</span><span class='line'>                <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;shutting-down&quot;</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;InstanceId&quot;</span>: <span class="s2">&quot;i-0d016de17a46d5178&quot;</span>,
-</span><span class='line'>            <span class="s2">&quot;PreviousState&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Code&quot;</span>: 16,
-</span><span class='line'>                <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;running&quot;</span>
-</span><span class='line'>            <span class="o">}</span>
-</span><span class='line'>        <span class="o">}</span>
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have deleted the EC2 instance, view the nodes and you will see the node has been terminated:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                          STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal   Ready    &lt;none&gt;   41m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   41m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Allow about a minute so that the ASG can replace the node, and when you list again you will see that the ASG replaced the node :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                          STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-42-61.eu-west-1.compute.internal   Ready    &lt;none&gt;   50s   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal   Ready    &lt;none&gt;   42m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   42m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Run a Pod</h2>
-
-<p>Run a busybox pod on your EKS cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl run --rm -it --generator run-pod/v1 my-busybox-pod --image busybox -- /bin/sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will be dropped into a shell:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>/ <span class="c"># busybox | head -1</span>
-</span><span class='line'>BusyBox v1.31.1 <span class="o">(</span>2019-10-28 18:40:01 UTC<span class="o">)</span> multi-call binary.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And exit the shell:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>/ <span class="c"># exit</span>
-</span><span class='line'>Session ended, resume using <span class="s1">&#39;kubectl attach my-busybox-pod -c my-busybox-pod -i -t&#39;</span> <span class="nb">command </span>when the pod is running
-</span><span class='line'>pod <span class="s2">&quot;my-busybox-pod&quot;</span> deleted
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Scaling Nodes</h2>
-
-<p>While I will not be covering auto-scaling in this post, we can manually scale the worker node count. Let&rsquo;s scale it down to 1 node.</p>
-
-<p>First we need to get the EKS cluster name:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 get clusters
-</span><span class='line'>NAME      REGION
-</span><span class='line'>my-eks-cluster    eu-west-1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then we need the node group id:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 get nodegroup --cluster my-eks-cluster
-</span><span class='line'>CLUSTER       NODEGROUP   CREATED         MIN SIZE    MAX SIZE    DESIRED CAPACITY    INSTANCE TYPE   IMAGE ID
-</span><span class='line'>my-eks-cluster    ng-f27f560e 2019-11-16T16:55:41Z    3       3       3           t2.small    ami-059c6874350e63ca9
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have the node group id, we can scale the node count:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 scale nodegroup --cluster my-eks-cluster --nodes <span class="m">1</span> ng-f27f560e
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  scaling nodegroup stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span> in cluster eksctl-my-eks-cluster-cluster
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  scaling nodegroup, desired capacity from <span class="m">3</span> to 1, min size from <span class="m">3</span> to 1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when we use kubectl to view the nodes, we will see we only have 1 worker node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                          STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   73m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Clean Up</h2>
-
-<p>If you want to follow along deploying a web application to your EKS cluster before we terminate the cluster, have a look at <a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">Part 2 - EKS Tutorial</a> before continuing.</p>
-
-<p>Once you are ready to terminate your EKS cluster, you can go ahead and terminate the cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 delete cluster --name my-eks-cluster
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  eksctl version 0.9.0
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  using region eu-west-1
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  deleting EKS cluster <span class="s2">&quot;my-eks-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  kubeconfig has been updated
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  cleaning up LoadBalancer services
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  <span class="m">2</span> sequential tasks: <span class="o">{</span> delete nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span>, delete cluster control plane <span class="s2">&quot;my-eks-cluster&quot;</span> <span class="o">[</span>async<span class="o">]</span> <span class="o">}</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  will delete stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  waiting <span class="k">for</span> stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span> to get deleted
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  will delete stack <span class="s2">&quot;eksctl-my-eks-cluster-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  all cluster resources were deleted
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Further Reading on Kubernetes</h2>
-
-<p>This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:
-- <a href="https://eksworkshop.com/introduction/">EKSWorkshop</a></p>
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -2514,6 +2210,10 @@ localhost The Script &hellip;">
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter/">Nginx Metrics on Prometheus With the Nginx Log Exporter</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/04/19/ipsec-site-to-site-vpn-with-dynamic-ips-with-openswan/">IPSec Site to Site VPN With Dynamic IPs With Openswan</a>
       </li>
     
@@ -2527,10 +2227,6 @@ localhost The Script &hellip;">
     
       <li class="post">
         <a href="/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/">Traefik Ingress for OpenFaas on Kubernetes (K3d)</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/02/12/install-openfaas-on-k3d-kubernetes/">Install OpenFaas on K3d Kubernetes</a>
       </li>
     
   </ul>

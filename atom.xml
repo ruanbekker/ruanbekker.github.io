@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-04-19T22:55:59+02:00</updated>
+  <updated>2020-04-25T03:54:54+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,450 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Nginx Metrics on Prometheus With the Nginx Log Exporter]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter/"/>
+    <updated>2020-04-25T01:42:35+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter</id>
+    <content type="html"><![CDATA[<p>In this post we will setup a nginx log exporter for prometeus to get metrics of our nginx web server, such as number of requests per method, status code, processed bytes etc. Then we will configure prometheus to scrape our nginx metric endpoint and also create a basic dashbaord to visualize our data.</p>
+
+<p>If you follow along on this tutorial, it assumes that you have <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Prometheus</a> and <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana</a> up and running. But if not the embedded links will take you to the blog posts to set it up.</p>
+
+<h2>Nginx Webserver</h2>
+
+<p>Install nginx:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update
+</span><span class='line'>$ apt install nginx -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure your nginx server&rsquo;s log format to match the nginx log exporter&rsquo;s expected format, we will name it custom:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>  log_format custom   '$remote_addr - $remote_user [$time_local] '
+</span><span class='line'>                      '"$request" $status $body_bytes_sent '
+</span><span class='line'>                      '"$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Edit your main nginx config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/nginx/nginx.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This is how my complete config looks like:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>user www-data;
+</span><span class='line'>worker_processes auto;
+</span><span class='line'>pid /run/nginx.pid;
+</span><span class='line'># remote the escape char if you are going to use this config
+</span><span class='line'>include /etc/nginx/modules-enabled/\*.conf;
+</span><span class='line'>
+</span><span class='line'>events {
+</span><span class='line'>  worker_connections 768;
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>http {
+</span><span class='line'>
+</span><span class='line'>  # basic config
+</span><span class='line'>  sendfile on;
+</span><span class='line'>  tcp_nopush on;
+</span><span class='line'>  tcp_nodelay on;
+</span><span class='line'>  keepalive_timeout 65;
+</span><span class='line'>  types_hash_max_size 2048;
+</span><span class='line'>  include /etc/nginx/mime.types;
+</span><span class='line'>  default_type application/octet-stream;
+</span><span class='line'>
+</span><span class='line'>  # ssl config
+</span><span class='line'>  ssl_protocols TLSv1 TLSv1.1 TLSv1.2; 
+</span><span class='line'>  ssl_prefer_server_ciphers on;
+</span><span class='line'>
+</span><span class='line'>  # logging config
+</span><span class='line'>  log_format custom   '$remote_addr - $remote_user [$time_local] '
+</span><span class='line'>                      '"$request" $status $body_bytes_sent '
+</span><span class='line'>                      '"$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+</span><span class='line'>
+</span><span class='line'>  access_log /var/log/nginx/access.log custom;
+</span><span class='line'>  error_log /var/log/nginx/error.log;
+</span><span class='line'>
+</span><span class='line'>  # gzip
+</span><span class='line'>  gzip on;
+</span><span class='line'>
+</span><span class='line'>  # virtual host config
+</span><span class='line'>  include /etc/nginx/conf.d/myapp.conf;
+</span><span class='line'>
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I will delete the default host config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ rm -rf /etc/nginx/sites-enabled/default</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And then create my <code>/etc/nginx/conf.d/myapp.conf</code> as referenced in my main config, with the following:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>server {
+</span><span class='line'>
+</span><span class='line'>  listen 80 default_server;
+</span><span class='line'>  # remove the escape char if you are going to use this config
+</span><span class='line'>  server_name \_;
+</span><span class='line'>
+</span><span class='line'>  root /var/www/html;
+</span><span class='line'>  index index.html index.htm index.nginx-debian.html;
+</span><span class='line'>
+</span><span class='line'>  location / {
+</span><span class='line'>    try_files $uri $uri/ =404;
+</span><span class='line'>  }
+</span><span class='line'>
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you make a GET request to your server, you should see something like this in your access log:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>10x.1x.2x.1x - - [25/Apr/2020:00:31:11 +0000] "GET / HTTP/1.1" 200 396 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1 Safari/605.1.15" "-"</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Nginx Log Exporter</h2>
+
+<p>Head over to the <a href="https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases">prometheus-nginxlog-exporter releases</a> page and get the latest version, in the time of writing it is v1.4.0:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v1.4.0/prometheus-nginxlog-exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Make it executable and move it to your path:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x prometheus-nginxlog-exporter
+</span><span class='line'>$ mv prometheus-nginxlog-exporter /usr/bin/prometheus-nginxlog-exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the directory where we will place our config for our exporter:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /etc/prometheus</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the config file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/prometheus/nginxlog_exporter.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can follow the instructions from <a href="https://github.com/martin-helmich/prometheus-nginxlog-exporter">github.com/prometheus-nginxlog-exporter</a> for more information on configuration, but I will be using the following config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>listen:
+</span><span class='line'>  port: 4040
+</span><span class='line'>  address: "0.0.0.0"
+</span><span class='line'>
+</span><span class='line'>consul:
+</span><span class='line'>  enable: false
+</span><span class='line'>
+</span><span class='line'>namespaces:
+</span><span class='line'>  - name: myapp
+</span><span class='line'>    format: "$remote_addr - $remote_user [$time_local] \"$request\" $status $body_bytes_sent \"$http_referer\" \"$http_user_agent\" \"$http_x_forwarded_for\""
+</span><span class='line'>    source:
+</span><span class='line'>      files:
+</span><span class='line'>        - /var/log/nginx/access.log
+</span><span class='line'>    labels:
+</span><span class='line'>      service: "myapp"
+</span><span class='line'>      environment: "production"
+</span><span class='line'>      hostname: "myapp.example.com"
+</span><span class='line'>    histogram_buckets: [.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the systemd unit file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/systemd/system/nginxlog_exporter.service</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And my configuration that I will be using:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>[Unit]
+</span><span class='line'>Description=Prometheus Log Exporter
+</span><span class='line'>Wants=network-online.target
+</span><span class='line'>After=network-online.target
+</span><span class='line'>
+</span><span class='line'>[Service]
+</span><span class='line'>User=root
+</span><span class='line'>Group=root
+</span><span class='line'>Type=simple
+</span><span class='line'>ExecStart=/usr/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus/nginxlog_exporter.yml
+</span><span class='line'>
+</span><span class='line'>[Install]
+</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload systemd and enable the service on boot:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl daemon-reload
+</span><span class='line'>$ systemctl enable nginxlog_exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart the service:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart nginxlog_exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure that the service is running:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl status nginxlog_exporter
+</span><span class='line'>
+</span><span class='line'>● nginxlog_exporter.service - Prometheus Log Exporter
+</span><span class='line'>   Loaded: loaded (/etc/systemd/system/nginxlog_exporter.service; disabled; vendor preset: enabled)
+</span><span class='line'>   Active: active (running) since Sat 2020-04-25 00:50:06 UTC; 5s ago
+</span><span class='line'> Main PID: 4561 (prometheus-ngin)
+</span><span class='line'>    Tasks: 7 (limit: 2317)
+</span><span class='line'>   CGroup: /system.slice/nginxlog_exporter.service
+</span><span class='line'>           └─4561 /usr/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus/nginxlog_exporter.yml
+</span><span class='line'>
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter systemd[1]: Started Prometheus Log Exporter.
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: loading configuration file /etc/prometheus/nginxlog_exporter.yml
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: using configuration {Listen:{Port:4040 Address:0.0.0.0} Consul:{Enable:false Address: Datacenter: Scheme: Toke
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: starting listener for namespace myapp
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: running HTTP server on address 0.0.0.0:4040
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: 2020/04/25 00:50:06 Seeked /var/log/nginx/access.log - &{Offset:0 Whence:2}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the exporter</h2>
+
+<p>Make a couple of requests against your webserver:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ for each in {1..10}; do curl http://78.141.211.49 ; done</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So prometheus will now scrape the exporter http endpoint (<code>:4040/metrics</code>) and push the returned values into prometheus. But to get a feel on how the metrics look like, make a request to the metrics endpoint:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://localhost:4040/metrics
+</span><span class='line'>...
+</span><span class='line'># HELP myapp_http_response_count_total Amount of processed HTTP requests
+</span><span class='line'># TYPE myapp_http_response_count_total counter
+</span><span class='line'>myapp_http_response_count_total{environment="production",hostname="myapp.example.com",method="GET",service="myapp",status="200"} 10
+</span><span class='line'>myapp_http_response_count_total{environment="production",hostname="myapp.example.com",method="POST",service="myapp",status="404"} 1
+</span><span class='line'># HELP myapp_http_response_size_bytes Total amount of transferred bytes
+</span><span class='line'># TYPE myapp_http_response_size_bytes counter
+</span><span class='line'>myapp_http_response_size_bytes{environment="production",hostname="myapp.example.com",method="GET",service="myapp",status="200"} 6120
+</span><span class='line'>myapp_http_response_size_bytes{environment="production",hostname="myapp.example.com",method="POST",service="myapp",status="404"} 152
+</span><span class='line'># HELP myapp_parse_errors_total Total number of log file lines that could not be parsed
+</span><span class='line'># TYPE myapp_parse_errors_total counter
+</span><span class='line'>myapp_parse_errors_total 0
+</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see we are getting metrics such as response count total, response size, errors, etc.</p>
+
+<h2>Configure Prometheus</h2>
+
+<p>Let&rsquo;s configure prometheus to scrape this endpoint. Head over to your prometheus instance, and edit your prometheus config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/prometheus/prometheus.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note that in my config I have 2 endpoints that I am scraping, the prometheus endpoint which exists and I will be adding the nginx endpoint, so in full, this is how my config will look like:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>global:
+</span><span class='line'>  scrape_interval: 15s
+</span><span class='line'>
+</span><span class='line'>scrape_configs:
+</span><span class='line'>  - job_name: 'prometheus'
+</span><span class='line'>    scrape_interval: 5s
+</span><span class='line'>    static_configs:
+</span><span class='line'>      - targets: ['localhost:9090']
+</span><span class='line'>
+</span><span class='line'>  - job_name: 'nginx'
+</span><span class='line'>    scrape_interval: 15s
+</span><span class='line'>    static_configs:
+</span><span class='line'>      - targets: ['ip.of.nginx.exporter:4040']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart prometheus:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart prometheus</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To verify that the exporter is working as expected, head over to your prometheus ui on port 9090, and query <code>up{}</code> to see if your exporters are returning 1:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/80267654-7b51be00-86a2-11ea-98e2-a48a5c2a1e4f.png"></p>
+
+<p>We can then query prometheus with <code>myapp_http_response_count_total{service="myapp"}</code> to see the response counts:</p>
+
+<p><img width="1273" alt="image" src="https://user-images.githubusercontent.com/567298/80267823-590c7000-86a3-11ea-9098-28e37e7941d7.png"></p>
+
+<h2>Dashboarding in Grafana</h2>
+
+<p>If you don&rsquo;t have Grafana installed, you can look at my <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana Installation</a> post to get that up and running.</p>
+
+<p>If you have not created the Prometheus datasource, on Grafana, head over to the configuration section on your left, select Datasources, add a Prometheus datasource and add the following (this is assuming grafana runs on the prometheus node - which is fine for testing):</p>
+
+<p><img width="592" alt="image" src="https://user-images.githubusercontent.com/567298/80267986-48a8c500-86a4-11ea-9046-3fba601d41cf.png"></p>
+
+<p>Create a new dashboard and add a new panel:</p>
+
+<p><img width="605" alt="image" src="https://user-images.githubusercontent.com/567298/80267884-b3a5cc00-86a3-11ea-8624-797e5310de80.png"></p>
+
+<p>Let&rsquo;s query our data to show us HTTP Method and Status code per 30s: <code>rate(myapp_http_response_count_total{service="myapp"}[$__interval])</code></p>
+
+<p><img width="605" alt="image" src="https://user-images.githubusercontent.com/567298/80267884-b3a5cc00-86a3-11ea-8624-797e5310de80.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Hope you found this helpful, if you haven&rsquo;t seen my other posts on Prometheus, have a look at the following:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Prometheus</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Setup Grafana</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Node Exporter</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Setup Blackbox Exporter</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Setup Alertmanager</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Setup Pushgateway</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[IPSec Site to Site VPN With Dynamic IPs With Openswan]]></title>
@@ -4403,479 +4847,6 @@
 <center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
 
 
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Setup a AWS EKS Kubernetes Cluster]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster/"/>
-    <updated>2019-11-16T22:31:36+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/68999066-b8c84900-08c3-11ea-9669-5c859590296c.png" alt="kubernetes-eks-aws-cluster" /></p>
-
-<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>This will be a tutorial split up in two posts, where I will show you how to provision a EKS Cluster (Elastic Kubernetes Service) on AWS and in the <a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">next post</a>, how to deploy a web application to your cluster (<a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">Part2 - Deploy a Web App to EKS</a>.)</p>
-
-<h2>And then came EKS</h2>
-
-<p>As some of you may know, I&rsquo;m a massive AWS fan boy, and since AWS released their managed Kubernetes service, I was quite excited to test it out. A couple of months passed and I got the opportunity to test out on-the-job as we moved to Kubernetes.</p>
-
-<p>A couple of moths has passed, and serving multiple production workloads on EKS, and I am really impressed with the service.</p>
-
-<p>Amazon provides a vanilla Kubernetes version, they manage the master nodes and they have a extra component called the cloud controller that runs on the master nodes, which is the aws native component that talks to other aws services (as far as I can recall)</p>
-
-<h2>What are we doing today</h2>
-
-<p>We will cover this in this post:</p>
-
-<table>
-<thead>
-<tr>
-<th> <strong>Topic</strong>                                                    </th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td> Deploy a EKS Cluster                                         </td>
-</tr>
-<tr>
-<td> View the resources to see what was provisioned on AWS        </td>
-</tr>
-<tr>
-<td> Interact with Kubernetes using kubectl                       </td>
-</tr>
-<tr>
-<td> Terminate a Node and verify that the ASG replaces the node   </td>
-</tr>
-<tr>
-<td> Scale down your worker nodes                                 </td>
-</tr>
-<tr>
-<td> Run a pod on your cluster                                    </td>
-</tr>
-</tbody>
-</table>
-
-
-<p>In the <a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">next post</a> we will deploy a web service to our EKS cluster.</p>
-
-<h2>Install Pre-Requirements</h2>
-
-<p>We require <code>awscli</code>, <code>eksctl</code> and <code>kubectl</code> before we continue. I will be installing this on MacOS, but you can have a look at the following links if you are using a different operating system:</p>
-
-<ul>
-<li><a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-install.html">Install awscli</a></li>
-<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html">Install eksctl</a></li>
-<li><a href="https://kubernetes.io/docs/tasks/tools/install-kubectl/">Install kubectl</a></li>
-</ul>
-
-
-<p>Install awscli:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install awscli
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install kubectl:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew update
-</span><span class='line'><span class="nv">$ </span>brew install kubernetes-cli
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install eksctl:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew tap weaveworks/tap
-</span><span class='line'><span class="nv">$ </span>brew install weaveworks/tap/eksctl
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy EKS</h2>
-
-<p>Create a SSH key if you would like to SSH to your worker nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh-keygen -b <span class="m">2048</span> -f ~/.ssh/eks -t rsa -q -N <span class="s2">&quot;&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to import our public key to EC2, <strong>note</strong> that I am referencing <code>--profile dev</code> which is my dev AWS profile. If you only have one default profile, you can use <code>--profile default</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile dev --region eu-west-1 ec2 import-key-pair --key-name <span class="s2">&quot;eks&quot;</span> --public-key-material file://~/.ssh/eks.pub
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Provision your cluster using eksctl. This will deploy two cloudformation stacks, one for the kubernetes cluster, and one for the node group.</p>
-
-<p>I am creating a kubernetes cluster with 3 nodes of instance type (t2.small) and using version 1.14:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 create cluster --name my-eks-cluster --version 1.14 --nodes <span class="m">3</span> --node-type t2.small --ssh-public-key eks
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  eksctl version 0.9.0
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  using region eu-west-1
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  setting availability zones to <span class="o">[</span>eu-west-1a eu-west-1b eu-west-1c<span class="o">]</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  subnets <span class="k">for</span> eu-west-1a - public:192.168.0.0/19 private:192.168.96.0/19
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  subnets <span class="k">for</span> eu-west-1b - public:192.168.32.0/19 private:192.168.128.0/19
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  subnets <span class="k">for</span> eu-west-1c - public:192.168.64.0/19 private:192.168.160.0/19
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> will use <span class="s2">&quot;ami-059c6874350e63ca9&quot;</span> <span class="o">[</span>AmazonLinux2/1.14<span class="o">]</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  using Kubernetes version 1.14
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  creating EKS cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span> region
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  will create <span class="m">2</span> separate CloudFormation stacks <span class="k">for</span> cluster itself and the initial nodegroup
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  <span class="k">if</span> you encounter any issues, check CloudFormation console or try <span class="s1">&#39;eksctl utils describe-stacks --region=eu-west-1 --cluster=my-eks-cluster&#39;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  CloudWatch logging will not be enabled <span class="k">for</span> cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  you can <span class="nb">enable </span>it with <span class="s1">&#39;eksctl utils update-cluster-logging --region=eu-west-1 --cluster=my-eks-cluster&#39;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  Kubernetes API endpoint access will use default of <span class="o">{</span><span class="nv">publicAccess</span><span class="o">=</span><span class="nb">true</span>, <span class="nv">privateAccess</span><span class="o">=</span><span class="nb">false</span><span class="o">}</span> <span class="k">for</span> cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  <span class="m">2</span> sequential tasks: <span class="o">{</span> create cluster control plane <span class="s2">&quot;my-eks-cluster&quot;</span>, create nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> <span class="o">}</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  building cluster stack <span class="s2">&quot;eksctl-my-eks-cluster-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  deploying stack <span class="s2">&quot;eksctl-my-eks-cluster-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  building nodegroup stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  --nodes-min<span class="o">=</span><span class="m">3</span> was <span class="nb">set </span>automatically <span class="k">for</span> nodegroup ng-f27f560e
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  --nodes-max<span class="o">=</span><span class="m">3</span> was <span class="nb">set </span>automatically <span class="k">for</span> nodegroup ng-f27f560e
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  deploying stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  all EKS cluster resources <span class="k">for</span> <span class="s2">&quot;my-eks-cluster&quot;</span> have been created
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  saved kubeconfig as <span class="s2">&quot;/Users/ruan/.kube/config&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  adding identity <span class="s2">&quot;arn:aws:iam::000000000000:role/eksctl-my-eks-cluster-nodegroup-n-NodeInstanceRole-SNVIW5C3J3SM&quot;</span> to auth ConfigMap
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> has <span class="m">0</span> node<span class="o">(</span>s<span class="o">)</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  waiting <span class="k">for</span> at least <span class="m">3</span> node<span class="o">(</span>s<span class="o">)</span> to become ready in <span class="s2">&quot;ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span> has <span class="m">3</span> node<span class="o">(</span>s<span class="o">)</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  node <span class="s2">&quot;ip-192-168-42-186.eu-west-1.compute.internal&quot;</span> is ready
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  node <span class="s2">&quot;ip-192-168-75-87.eu-west-1.compute.internal&quot;</span> is ready
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  node <span class="s2">&quot;ip-192-168-8-167.eu-west-1.compute.internal&quot;</span> is ready
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  kubectl <span class="nb">command </span>should work with <span class="s2">&quot;/Users/ruan/.kube/config&quot;</span>, try <span class="s1">&#39;kubectl get nodes&#39;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  EKS cluster <span class="s2">&quot;my-eks-cluster&quot;</span> in <span class="s2">&quot;eu-west-1&quot;</span> region is ready
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that our EKS cluster has been provisioned, let&rsquo;s browse through our AWS Management Console to understand what was provisioned.</p>
-
-<h2>View the Provisioned Resources</h2>
-
-<p>If we have a look at the Cloudformation stacks, we can see the two stacks that I mentioned previously:</p>
-
-<p><img width="1057" alt="image" src="https://user-images.githubusercontent.com/567298/68996480-58c1aa80-08a3-11ea-95c1-0fcf0bc1863b.png"></p>
-
-<p>Navigating to our EC2 Instances dashboard, we can see the three worker nodes that we provisioned. Remember that AWS manages the master nodes and we cant see them.</p>
-
-<p><img width="1106" alt="image" src="https://user-images.githubusercontent.com/567298/68996520-ea311c80-08a3-11ea-8ea3-e9e481e4ba6f.png"></p>
-
-<p>We have a ASG (Auto Scaling Group) associated with our worker nodes, nodegroup. We can make use of autoscaling and also have desired state, so we will test this out later where we will delete a worker node and verify if it gets replaced:</p>
-
-<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/68996551-2e242180-08a4-11ea-8df6-7b962b9aa03a.png"></p>
-
-<h2>Navigate using Kubectl:</h2>
-
-<p>Eksctl already applied the kubeconfig to <code>~/.kube/config</code>, so we can start using kubectl. Let&rsquo;s start by viewing the nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                           STATUS   ROLES    AGE     VERSION
-</span><span class='line'>ip-192-168-42-186.eu-west-1.compute.internal   Ready    &lt;none&gt;   8m50s   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal    Ready    &lt;none&gt;   8m55s   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal    Ready    &lt;none&gt;   8m54s   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Viewing our pods from our <code>kube-system</code> namespace (we dont have any pods in our default namespace at the moment):</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods --namespace kube-system
-</span><span class='line'>NAME                       READY   STATUS    RESTARTS   AGE
-</span><span class='line'>aws-node-btfbk             1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>aws-node-c6ktk             1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>aws-node-wf8mc             1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>coredns-759d6fc95f-ljxzf   1/1     Running   <span class="m">0</span>          17m
-</span><span class='line'>coredns-759d6fc95f-s6lg6   1/1     Running   <span class="m">0</span>          17m
-</span><span class='line'>kube-proxy-db46b           1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>kube-proxy-ft4mc           1/1     Running   <span class="m">0</span>          11m
-</span><span class='line'>kube-proxy-s5q2w           1/1     Running   <span class="m">0</span>          11m
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And our services from all our namespaces:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get services --all-namespaces
-</span><span class='line'>NAMESPACE     NAME         TYPE        CLUSTER-IP    EXTERNAL-IP   PORT<span class="o">(</span>S<span class="o">)</span>         AGE
-</span><span class='line'>default       kubernetes   ClusterIP   10.100.0.1    &lt;none&gt;        443/TCP         19m
-</span><span class='line'>kube-system   kube-dns     ClusterIP   10.100.0.10   &lt;none&gt;        53/UDP,53/TCP   19m
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Testing the ASG</h2>
-
-<p>Let&rsquo;s view our current nodes in our cluster, then select the first node, delete it and verify if the ASG replaces that node.</p>
-
-<p>First, view the nodes and select one node&rsquo;s address:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                           STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-42-186.eu-west-1.compute.internal   Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal    Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal    Ready    &lt;none&gt;   37m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Use the awscli to lookup the EC2 instance id, as we will need this id to delete the node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile dev ec2 describe-instances --query <span class="s1">&#39;Reservations[*].Instances[?PrivateDnsName==`ip-192-168-42-186.eu-west-1.compute.internal`].[InstanceId][]&#39;</span> --output text
-</span><span class='line'>i-0d016de17a46d5178
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have the EC2 instance id, delete the node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile dev ec2 terminate-instances --instance-id i-0d016de17a46d51782
-</span><span class='line'><span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;TerminatingInstances&quot;</span>: <span class="o">[</span>
-</span><span class='line'>        <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;CurrentState&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Code&quot;</span>: 32,
-</span><span class='line'>                <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;shutting-down&quot;</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;InstanceId&quot;</span>: <span class="s2">&quot;i-0d016de17a46d5178&quot;</span>,
-</span><span class='line'>            <span class="s2">&quot;PreviousState&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Code&quot;</span>: 16,
-</span><span class='line'>                <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;running&quot;</span>
-</span><span class='line'>            <span class="o">}</span>
-</span><span class='line'>        <span class="o">}</span>
-</span><span class='line'>    <span class="o">]</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have deleted the EC2 instance, view the nodes and you will see the node has been terminated:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                          STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal   Ready    &lt;none&gt;   41m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   41m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Allow about a minute so that the ASG can replace the node, and when you list again you will see that the ASG replaced the node :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                          STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-42-61.eu-west-1.compute.internal   Ready    &lt;none&gt;   50s   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-75-87.eu-west-1.compute.internal   Ready    &lt;none&gt;   42m   v1.14.7-eks-1861c5
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   42m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Run a Pod</h2>
-
-<p>Run a busybox pod on your EKS cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl run --rm -it --generator run-pod/v1 my-busybox-pod --image busybox -- /bin/sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will be dropped into a shell:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>/ <span class="c"># busybox | head -1</span>
-</span><span class='line'>BusyBox v1.31.1 <span class="o">(</span>2019-10-28 18:40:01 UTC<span class="o">)</span> multi-call binary.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And exit the shell:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>/ <span class="c"># exit</span>
-</span><span class='line'>Session ended, resume using <span class="s1">&#39;kubectl attach my-busybox-pod -c my-busybox-pod -i -t&#39;</span> <span class="nb">command </span>when the pod is running
-</span><span class='line'>pod <span class="s2">&quot;my-busybox-pod&quot;</span> deleted
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Scaling Nodes</h2>
-
-<p>While I will not be covering auto-scaling in this post, we can manually scale the worker node count. Let&rsquo;s scale it down to 1 node.</p>
-
-<p>First we need to get the EKS cluster name:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 get clusters
-</span><span class='line'>NAME      REGION
-</span><span class='line'>my-eks-cluster    eu-west-1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then we need the node group id:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 get nodegroup --cluster my-eks-cluster
-</span><span class='line'>CLUSTER       NODEGROUP   CREATED         MIN SIZE    MAX SIZE    DESIRED CAPACITY    INSTANCE TYPE   IMAGE ID
-</span><span class='line'>my-eks-cluster    ng-f27f560e 2019-11-16T16:55:41Z    3       3       3           t2.small    ami-059c6874350e63ca9
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have the node group id, we can scale the node count:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 scale nodegroup --cluster my-eks-cluster --nodes <span class="m">1</span> ng-f27f560e
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  scaling nodegroup stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span> in cluster eksctl-my-eks-cluster-cluster
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  scaling nodegroup, desired capacity from <span class="m">3</span> to 1, min size from <span class="m">3</span> to 1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when we use kubectl to view the nodes, we will see we only have 1 worker node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                                          STATUS   ROLES    AGE   VERSION
-</span><span class='line'>ip-192-168-8-167.eu-west-1.compute.internal   Ready    &lt;none&gt;   73m   v1.14.7-eks-1861c5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Clean Up</h2>
-
-<p>If you want to follow along deploying a web application to your EKS cluster before we terminate the cluster, have a look at <a href="https://blog.ruanbekker.com/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">Part 2 - EKS Tutorial</a> before continuing.</p>
-
-<p>Once you are ready to terminate your EKS cluster, you can go ahead and terminate the cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>eksctl --profile dev --region eu-west-1 delete cluster --name my-eks-cluster
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  eksctl version 0.9.0
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  using region eu-west-1
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  deleting EKS cluster <span class="s2">&quot;my-eks-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  kubeconfig has been updated
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  cleaning up LoadBalancer services
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  <span class="m">2</span> sequential tasks: <span class="o">{</span> delete nodegroup <span class="s2">&quot;ng-f27f560e&quot;</span>, delete cluster control plane <span class="s2">&quot;my-eks-cluster&quot;</span> <span class="o">[</span>async<span class="o">]</span> <span class="o">}</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  will delete stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span>
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  waiting <span class="k">for</span> stack <span class="s2">&quot;eksctl-my-eks-cluster-nodegroup-ng-f27f560e&quot;</span> to get deleted
-</span><span class='line'><span class="o">[</span>ℹ<span class="o">]</span>  will delete stack <span class="s2">&quot;eksctl-my-eks-cluster-cluster&quot;</span>
-</span><span class='line'><span class="o">[</span>+<span class="o">]</span>  all cluster resources were deleted
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Further Reading on Kubernetes</h2>
-
-<p>This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:
-- <a href="https://eksworkshop.com/introduction/">EKSWorkshop</a></p>
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
 
 ]]></content>
   </entry>

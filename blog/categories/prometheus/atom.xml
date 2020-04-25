@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Prometheus | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/prometheus/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-04-19T22:55:59+02:00</updated>
+  <updated>2020-04-25T03:54:54+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,301 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Nginx Metrics on Prometheus With the Nginx Log Exporter]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter/"/>
+    <updated>2020-04-25T01:42:35+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter</id>
+    <content type="html"><![CDATA[<p>In this post we will setup a nginx log exporter for prometeus to get metrics of our nginx web server, such as number of requests per method, status code, processed bytes etc. Then we will configure prometheus to scrape our nginx metric endpoint and also create a basic dashbaord to visualize our data.</p>
+
+<p>If you follow along on this tutorial, it assumes that you have <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Prometheus</a> and <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana</a> up and running. But if not the embedded links will take you to the blog posts to set it up.</p>
+
+<h2>Nginx Webserver</h2>
+
+<p>Install nginx:</p>
+
+<pre><code>$ apt update
+$ apt install nginx -y
+</code></pre>
+
+<p>Configure your nginx server&rsquo;s log format to match the nginx log exporter&rsquo;s expected format, we will name it custom:</p>
+
+<pre><code>  log_format custom   '$remote_addr - $remote_user [$time_local] '
+                      '"$request" $status $body_bytes_sent '
+                      '"$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+</code></pre>
+
+<p>Edit your main nginx config:</p>
+
+<pre><code>$ vim /etc/nginx/nginx.conf
+</code></pre>
+
+<p>This is how my complete config looks like:</p>
+
+<pre><code>user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+# remote the escape char if you are going to use this config
+include /etc/nginx/modules-enabled/\*.conf;
+
+events {
+  worker_connections 768;
+}
+
+http {
+
+  # basic config
+  sendfile on;
+  tcp_nopush on;
+  tcp_nodelay on;
+  keepalive_timeout 65;
+  types_hash_max_size 2048;
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+
+  # ssl config
+  ssl_protocols TLSv1 TLSv1.1 TLSv1.2; 
+  ssl_prefer_server_ciphers on;
+
+  # logging config
+  log_format custom   '$remote_addr - $remote_user [$time_local] '
+                      '"$request" $status $body_bytes_sent '
+                      '"$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+
+  access_log /var/log/nginx/access.log custom;
+  error_log /var/log/nginx/error.log;
+
+  # gzip
+  gzip on;
+
+  # virtual host config
+  include /etc/nginx/conf.d/myapp.conf;
+
+}
+</code></pre>
+
+<p>I will delete the default host config:</p>
+
+<pre><code>$ rm -rf /etc/nginx/sites-enabled/default
+</code></pre>
+
+<p>And then create my <code>/etc/nginx/conf.d/myapp.conf</code> as referenced in my main config, with the following:</p>
+
+<pre><code>server {
+
+  listen 80 default_server;
+  # remove the escape char if you are going to use this config
+  server_name \_;
+
+  root /var/www/html;
+  index index.html index.htm index.nginx-debian.html;
+
+  location / {
+    try_files $uri $uri/ =404;
+  }
+
+}
+</code></pre>
+
+<p>When you make a GET request to your server, you should see something like this in your access log:</p>
+
+<pre><code>10x.1x.2x.1x - - [25/Apr/2020:00:31:11 +0000] "GET / HTTP/1.1" 200 396 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1 Safari/605.1.15" "-"
+</code></pre>
+
+<h2>Nginx Log Exporter</h2>
+
+<p>Head over to the <a href="https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases">prometheus-nginxlog-exporter releases</a> page and get the latest version, in the time of writing it is v1.4.0:</p>
+
+<pre><code>$ wget https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v1.4.0/prometheus-nginxlog-exporter
+</code></pre>
+
+<p>Make it executable and move it to your path:</p>
+
+<pre><code>$ chmod +x prometheus-nginxlog-exporter
+$ mv prometheus-nginxlog-exporter /usr/bin/prometheus-nginxlog-exporter
+</code></pre>
+
+<p>Create the directory where we will place our config for our exporter:</p>
+
+<pre><code>$ mkdir /etc/prometheus
+</code></pre>
+
+<p>Create the config file:</p>
+
+<pre><code>$ vim /etc/prometheus/nginxlog_exporter.yml
+</code></pre>
+
+<p>You can follow the instructions from <a href="https://github.com/martin-helmich/prometheus-nginxlog-exporter">github.com/prometheus-nginxlog-exporter</a> for more information on configuration, but I will be using the following config:</p>
+
+<pre><code>listen:
+  port: 4040
+  address: "0.0.0.0"
+
+consul:
+  enable: false
+
+namespaces:
+  - name: myapp
+    format: "$remote_addr - $remote_user [$time_local] \"$request\" $status $body_bytes_sent \"$http_referer\" \"$http_user_agent\" \"$http_x_forwarded_for\""
+    source:
+      files:
+        - /var/log/nginx/access.log
+    labels:
+      service: "myapp"
+      environment: "production"
+      hostname: "myapp.example.com"
+    histogram_buckets: [.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10]
+</code></pre>
+
+<p>Create the systemd unit file:</p>
+
+<pre><code>$ vim /etc/systemd/system/nginxlog_exporter.service
+</code></pre>
+
+<p>And my configuration that I will be using:</p>
+
+<pre><code>[Unit]
+Description=Prometheus Log Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=root
+Group=root
+Type=simple
+ExecStart=/usr/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus/nginxlog_exporter.yml
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Reload systemd and enable the service on boot:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl enable nginxlog_exporter
+</code></pre>
+
+<p>Restart the service:</p>
+
+<pre><code>$ systemctl restart nginxlog_exporter
+</code></pre>
+
+<p>Ensure that the service is running:</p>
+
+<pre><code>$ systemctl status nginxlog_exporter
+
+● nginxlog_exporter.service - Prometheus Log Exporter
+   Loaded: loaded (/etc/systemd/system/nginxlog_exporter.service; disabled; vendor preset: enabled)
+   Active: active (running) since Sat 2020-04-25 00:50:06 UTC; 5s ago
+ Main PID: 4561 (prometheus-ngin)
+    Tasks: 7 (limit: 2317)
+   CGroup: /system.slice/nginxlog_exporter.service
+           └─4561 /usr/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus/nginxlog_exporter.yml
+
+Apr 25 00:50:06 nginx-log-exporter systemd[1]: Started Prometheus Log Exporter.
+Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: loading configuration file /etc/prometheus/nginxlog_exporter.yml
+Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: using configuration {Listen:{Port:4040 Address:0.0.0.0} Consul:{Enable:false Address: Datacenter: Scheme: Toke
+Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: starting listener for namespace myapp
+Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: running HTTP server on address 0.0.0.0:4040
+Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: 2020/04/25 00:50:06 Seeked /var/log/nginx/access.log - &amp;{Offset:0 Whence:2}
+</code></pre>
+
+<h2>Test the exporter</h2>
+
+<p>Make a couple of requests against your webserver:</p>
+
+<pre><code>$ for each in {1..10}; do curl http://78.141.211.49 ; done
+</code></pre>
+
+<p>So prometheus will now scrape the exporter http endpoint (<code>:4040/metrics</code>) and push the returned values into prometheus. But to get a feel on how the metrics look like, make a request to the metrics endpoint:</p>
+
+<pre><code>$ curl http://localhost:4040/metrics
+...
+# HELP myapp_http_response_count_total Amount of processed HTTP requests
+# TYPE myapp_http_response_count_total counter
+myapp_http_response_count_total{environment="production",hostname="myapp.example.com",method="GET",service="myapp",status="200"} 10
+myapp_http_response_count_total{environment="production",hostname="myapp.example.com",method="POST",service="myapp",status="404"} 1
+# HELP myapp_http_response_size_bytes Total amount of transferred bytes
+# TYPE myapp_http_response_size_bytes counter
+myapp_http_response_size_bytes{environment="production",hostname="myapp.example.com",method="GET",service="myapp",status="200"} 6120
+myapp_http_response_size_bytes{environment="production",hostname="myapp.example.com",method="POST",service="myapp",status="404"} 152
+# HELP myapp_parse_errors_total Total number of log file lines that could not be parsed
+# TYPE myapp_parse_errors_total counter
+myapp_parse_errors_total 0
+...
+</code></pre>
+
+<p>As you can see we are getting metrics such as response count total, response size, errors, etc.</p>
+
+<h2>Configure Prometheus</h2>
+
+<p>Let&rsquo;s configure prometheus to scrape this endpoint. Head over to your prometheus instance, and edit your prometheus config:</p>
+
+<pre><code>$ vim /etc/prometheus/prometheus.yml
+</code></pre>
+
+<p>Note that in my config I have 2 endpoints that I am scraping, the prometheus endpoint which exists and I will be adding the nginx endpoint, so in full, this is how my config will look like:</p>
+
+<pre><code>global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'nginx'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['ip.of.nginx.exporter:4040']
+</code></pre>
+
+<p>Restart prometheus:</p>
+
+<pre><code>$ systemctl restart prometheus
+</code></pre>
+
+<p>To verify that the exporter is working as expected, head over to your prometheus ui on port 9090, and query <code>up{}</code> to see if your exporters are returning 1:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/80267654-7b51be00-86a2-11ea-98e2-a48a5c2a1e4f.png"></p>
+
+<p>We can then query prometheus with <code>myapp_http_response_count_total{service="myapp"}</code> to see the response counts:</p>
+
+<p><img width="1273" alt="image" src="https://user-images.githubusercontent.com/567298/80267823-590c7000-86a3-11ea-9098-28e37e7941d7.png"></p>
+
+<h2>Dashboarding in Grafana</h2>
+
+<p>If you don&rsquo;t have Grafana installed, you can look at my <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana Installation</a> post to get that up and running.</p>
+
+<p>If you have not created the Prometheus datasource, on Grafana, head over to the configuration section on your left, select Datasources, add a Prometheus datasource and add the following (this is assuming grafana runs on the prometheus node - which is fine for testing):</p>
+
+<p><img width="592" alt="image" src="https://user-images.githubusercontent.com/567298/80267986-48a8c500-86a4-11ea-9046-3fba601d41cf.png"></p>
+
+<p>Create a new dashboard and add a new panel:</p>
+
+<p><img width="605" alt="image" src="https://user-images.githubusercontent.com/567298/80267884-b3a5cc00-86a3-11ea-8624-797e5310de80.png"></p>
+
+<p>Let&rsquo;s query our data to show us HTTP Method and Status code per 30s: <code>rate(myapp_http_response_count_total{service="myapp"}[$__interval])</code></p>
+
+<p><img width="605" alt="image" src="https://user-images.githubusercontent.com/567298/80267884-b3a5cc00-86a3-11ea-8624-797e5310de80.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Hope you found this helpful, if you haven&rsquo;t seen my other posts on Prometheus, have a look at the following:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Prometheus</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Setup Grafana</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Node Exporter</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Setup Blackbox Exporter</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Setup Alertmanager</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Setup Pushgateway</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Deploy a Monitoring Stack on Docker Swarm With Grafana and Prometheus]]></title>
@@ -629,112 +924,6 @@ $ systemctl status prometheus
 <h2>Resources</h2>
 
 <p>See all <a href="https://blog.ruanbekker.com/blog/categories/prometheus/">#prometheus</a> blogposts</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Install Grafana to Visualize Your Metrics From Datasources Such as Prometheus on Linux]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/"/>
-    <updated>2019-05-17T18:08:02+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57941411-2a045080-78cf-11e9-97f9-47fb8b75a722.png" alt="image" /></p>
-
-<p>Grafana is a Open Source Dashboarding service that allows you to monitor, analyze and graph metrics from datasources such as prometheus, influxdb, elasticsearch, aws cloudwatch, and many more.</p>
-
-<p>Not only is grafana amazing, its super pretty!</p>
-
-<p>Example of how a dashboard might look like:</p>
-
-<p><img width="1279" alt="E24B39B1-23C8-44C5-959D-6E6275F8FE99" src="https://user-images.githubusercontent.com/567298/57942872-d98ef200-78d2-11e9-9370-b130bcc222f7.png"></p>
-
-<h2>What are we doing today</h2>
-
-<p>In this tutorial we will setup grafana on linux. If you have not set up <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">prometheus</a>, follow <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">this blogpost</a> to install prometheus.</p>
-
-<h2>Install Grafana</h2>
-
-<p>I will be demonstrating how to install grafana on debian, if you have another operating system, head over to <a href="https://grafana.com/docs/installation/">grafana documentation</a> for other supported operating systems.</p>
-
-<p>Get the gpg key:</p>
-
-<pre><code>$ curl https://packages.grafana.com/gpg.key | sudo apt-key add -
-</code></pre>
-
-<p>Import the public keys:</p>
-
-<pre><code>$ apt-key adv --keyserver keyserver.ubuntu.com --recv-keys  8C8C34C524098CB6 
-</code></pre>
-
-<p>Add the latest stable packages to your repository:</p>
-
-<pre><code>$ add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
-</code></pre>
-
-<p>Install a pre-requirement package:</p>
-
-<pre><code>$ apt install apt-transport-https -y
-</code></pre>
-
-<p>Update the repository index and install grafana:</p>
-
-<pre><code>$ apt update &amp;&amp; sudo apt install grafana -y
-</code></pre>
-
-<p>Once grafana is installed, start the service:</p>
-
-<pre><code>$ service grafana-server start
-</code></pre>
-
-<p>Then enable the service on boot:</p>
-
-<pre><code>$ update-rc.d grafana-server defaults
-</code></pre>
-
-<p>If you want to control the service via systemd:</p>
-
-<pre><code>$ systemctl daemon-reload
-$ systemctl start grafana-server
-$ systemctl status grafana-server
-</code></pre>
-
-<h2>Optional: Nginx Reverse Proxy</h2>
-
-<p>If you want to front your grafana instance with a nginx reverse proxy:</p>
-
-<pre><code>$ cat /etc/nginx/sites-enabled/grafana
-server {
-    listen 80;
-    server_name grafana.domain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000/;
-        proxy_redirect http://127.0.0.1:3000/ /;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-</code></pre>
-
-<p>Then restart nginx:</p>
-
-<pre><code>$ systemctl restart nginx
-</code></pre>
-
-<h2>Access Grafana</h2>
-
-<p>If you are accessing grafana directly, access grafana on <code>http://your-grafana-ip:3000/</code> and your username is <code>admin</code> and password <code>admin</code></p>
-
-<h2>Dashboarding Tutorials</h2>
-
-<p>Have a look at this screencast where the guys from grafana show you how to build dashboards:</p>
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/sKNZMtoSHN4" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-
-
-<p>Also have a look at their <a href="https://grafana.com/dashboards">public repository of dashboards</a></p>
-
-<p>For more tutorials on prometheus and metrics have a look at <strong><a href="https://blog.ruanbekker.com/blog/categories/prometheus/">#prometheus</a></strong></p>
 ]]></content>
   </entry>
   

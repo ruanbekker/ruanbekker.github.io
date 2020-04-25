@@ -301,7 +301,7 @@ Create a new dashboard and add a new panel:
 
 Let's query our data to show us HTTP Method and Status code per 30s: `rate(myapp_http_response_count_total{service="myapp"}[$__interval])`
 
-<img width="605" alt="image" src="https://user-images.githubusercontent.com/567298/80267884-b3a5cc00-86a3-11ea-8624-797e5310de80.png">
+<img width="1271" alt="image" src="https://user-images.githubusercontent.com/567298/80269073-e607f700-86ac-11ea-8d42-4814084dfb4a.png">
 
 ## Thank You
 

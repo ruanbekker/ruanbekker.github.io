@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Today we will look at Thanos, a open source, highly available prometheus setup with long term storage capabilites, that we will run on docker to &hellip;">
+  <meta name="description" content="In this tutorial we will setup a basic pipeline in drone to make use of service containers, we will provision localstack so that we can provision AWS &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -122,6 +122,695 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci/">Run Localstack as a Service Container for AWS Mock Services on Drone CI</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-02-04T23:43:30+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>11:43 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial we will setup a basic pipeline in drone to make use of service containers, we will provision localstack so that we can provision AWS mock services.</p>
+
+<p>We will create a kinesis stream on localstack, when the service is up, we will create a stream, put 100 records in the stream, read them from the stream and delete the kinesis stream.</p>
+
+<h2>Gitea and Drone Stack</h2>
+
+<p>If you don’t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
+
+<h2>Create the Drone Config</h2>
+
+<p>In gitea, I have created a new git repository and created my drone config as <code>.drone.yml</code> with this pipeline config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>---
+</span><span class='line'>kind: pipeline
+</span><span class='line'>type: docker
+</span><span class='line'>name: localstack
+</span><span class='line'>
+</span><span class='line'>platform:
+</span><span class='line'>  os: linux
+</span><span class='line'>  arch: amd64
+</span><span class='line'>
+</span><span class='line'>steps:
+</span><span class='line'>  - name: wait-for-localstack
+</span><span class='line'>    image: busybox
+</span><span class='line'>    commands:
+</span><span class='line'>      - sleep 10
+</span><span class='line'>
+</span><span class='line'>  - name: list-kinesis-streams
+</span><span class='line'>    image: ruanbekker/awscli
+</span><span class='line'>    environment:
+</span><span class='line'>      AWS_ACCESS_KEY_ID: 123
+</span><span class='line'>      AWS_SECRET_ACCESS_KEY: xyz
+</span><span class='line'>      AWS_DEFAULT_REGION: eu-west-1
+</span><span class='line'>    commands:
+</span><span class='line'>      - aws --endpoint-url=http://localstack:4568 kinesis list-streams
+</span><span class='line'>
+</span><span class='line'>  - name: create-kinesis-streams
+</span><span class='line'>    image: ruanbekker/awscli
+</span><span class='line'>    environment:
+</span><span class='line'>      AWS_ACCESS_KEY_ID: 123
+</span><span class='line'>      AWS_SECRET_ACCESS_KEY: xyz
+</span><span class='line'>      AWS_DEFAULT_REGION: eu-west-1
+</span><span class='line'>    commands:
+</span><span class='line'>      - aws --endpoint-url=http://localstack:4568 kinesis create-stream --stream-name mystream --shard-count 1
+</span><span class='line'>
+</span><span class='line'>  - name: describe-kinesis-streams
+</span><span class='line'>    image: ruanbekker/awscli
+</span><span class='line'>    environment:
+</span><span class='line'>      AWS_ACCESS_KEY_ID: 123
+</span><span class='line'>      AWS_SECRET_ACCESS_KEY: xyz
+</span><span class='line'>      AWS_DEFAULT_REGION: eu-west-1
+</span><span class='line'>    commands:
+</span><span class='line'>      - aws --endpoint-url=http://localstack:4568 kinesis describe-stream --stream-name mystream
+</span><span class='line'>
+</span><span class='line'>  - name: put-record-into-kinesis
+</span><span class='line'>    image: ruanbekker/awscli
+</span><span class='line'>    environment:
+</span><span class='line'>      AWS_ACCESS_KEY_ID: 123
+</span><span class='line'>      AWS_SECRET_ACCESS_KEY: xyz
+</span><span class='line'>      AWS_DEFAULT_REGION: eu-west-1
+</span><span class='line'>    commands:
+</span><span class='line'>      - for record in $$(seq 1 100); do aws --endpoint-url=http://localstack:4568 kinesis put-record --stream-name mystream --partition-key 123 --data testdata_$$record ; done
+</span><span class='line'>
+</span><span class='line'>  - name: get-record-from-kinesis
+</span><span class='line'>    image: ruanbekker/awscli
+</span><span class='line'>    environment:
+</span><span class='line'>      AWS_ACCESS_KEY_ID: 123
+</span><span class='line'>      AWS_SECRET_ACCESS_KEY: xyz
+</span><span class='line'>      AWS_DEFAULT_REGION: eu-west-1
+</span><span class='line'>    commands:
+</span><span class='line'>      - SHARD_ITERATOR=$$(aws --endpoint-url=http://localstack:4568 kinesis get-shard-iterator --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON --stream-name mystream --query 'ShardIterator' --output text)
+</span><span class='line'>      - for each in $$(aws --endpoint-url=http://localstack:4568 kinesis get-records --shard-iterator $$SHARD_ITERATOR | jq -cr '.Records[].Data'); do echo $each | base64 -d ; echo "" ; done
+</span><span class='line'>
+</span><span class='line'>  - name: delete-kinesis-stream
+</span><span class='line'>    image: ruanbekker/awscli
+</span><span class='line'>    environment:
+</span><span class='line'>      AWS_ACCESS_KEY_ID: 123
+</span><span class='line'>      AWS_SECRET_ACCESS_KEY: xyz
+</span><span class='line'>      AWS_DEFAULT_REGION: eu-west-1
+</span><span class='line'>    commands:
+</span><span class='line'>      - aws --endpoint-url=http://localstack:4568 kinesis delete-stream --stream-name mystream
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  - name: localstack
+</span><span class='line'>    image: localstack/localstack
+</span><span class='line'>    privileged: true
+</span><span class='line'>    environment:
+</span><span class='line'>      DOCKER_HOST: unix:///var/run/docker.sock
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: docker-socket
+</span><span class='line'>        path: /var/run/docker.sock
+</span><span class='line'>      - name: localstack-vol
+</span><span class='line'>        path: /tmp/localstack
+</span><span class='line'>    ports:
+</span><span class='line'>      - 8080
+</span><span class='line'>
+</span><span class='line'>volumes:
+</span><span class='line'>- name: localstack-vol
+</span><span class='line'>  temp: {}
+</span><span class='line'>- name: docker-socket
+</span><span class='line'>  host:
+</span><span class='line'>    path: /var/run/docker.sock</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To explain what we are doing, we are bringing up localstack as a service container, then using the aws cli tools we point to the localstack kinesis endpoint, creating a kinesis stream, put 100 records to the stream, then we read from the stream and delete thereafter.</p>
+
+<h2>Trigger the Pipeline</h2>
+
+<p>Then I head to drone activate my new git repository and select the repository as &ldquo;Trusted&rdquo;. I commited a dummy file to trigger the pipeline and it should look like this:</p>
+
+<p><img width="893" alt="image" src="https://user-images.githubusercontent.com/567298/73788817-63a32180-47a6-11ea-96c7-6abba7af2b27.png"></p>
+
+<p>List Streams:</p>
+
+<p><img width="974" alt="image" src="https://user-images.githubusercontent.com/567298/73788860-73bb0100-47a6-11ea-9c80-f2b8bfc18d53.png"></p>
+
+<p>Put Records:</p>
+
+<p><img width="896" alt="image" src="https://user-images.githubusercontent.com/567298/73788895-87666780-47a6-11ea-8d90-2c454ec9174a.png"></p>
+
+<p>Delete Stream:</p>
+
+<p><img width="924" alt="image" src="https://user-images.githubusercontent.com/567298/73788988-aebd3480-47a6-11ea-85d9-9ed7424c648b.png"></p>
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/02/04/run-kubernetes-k3s-as-a-service-container-on-drone-ci/">Run Kubernetes (K3s) as a Service Container on Drone CI</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-02-04T22:37:06+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>10:37 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><a href="https://docs.drone.io/pipeline/docker/syntax/services/">Drone services</a> allow you to run a service container and will be available for the duration of your build, which is great if you want a ephemeral service to test your applications against.</p>
+
+<p>Today we will experiment with services on <a href="https://github.com/drone/drone">drone</a>  and will deploy a <a href="https://github.com/rancher/k3s">k3s</a> (a kubernetes distribution built by rancher) cluster as a drone service and interact with our cluster using kubectl.</p>
+
+<p>I will be using multiple pipelines, where we will first deploy our &ldquo;dev cluster&rdquo;, when it&rsquo;s up, we will use kubectl to interact with the cluster, once that is done, we will deploy our &ldquo;staging cluster&rdquo; and do the same.</p>
+
+<p>This is very basic and we are not doing anything special, but this is a starting point and you can do pretty much whatever you want.</p>
+
+<h2>What is Drone</h2>
+
+<p>If you are not aware of Drone, Drone is a container-native continious deliver platform built on Go and you can check them out <a href="https://github.com/drone/drone">here: github.com/drone</a></p>
+
+<h2>Setup Gitea and Drone</h2>
+
+<p>If you don&rsquo;t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
+
+<h2>Create your Git Repo</h2>
+
+<p>Go ahead and create a git repo, you can name it anything, then it should look something like this:</p>
+
+<p><img width="1171" alt="image" src="https://user-images.githubusercontent.com/567298/73783555-90ead200-479c-11ea-8386-12518fb21b22.png"></p>
+
+<p>Create a drone configuration, <code>.drone.yml</code> my pipeline will look like this:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+<span class='line-number'>91</span>
+<span class='line-number'>92</span>
+<span class='line-number'>93</span>
+<span class='line-number'>94</span>
+<span class='line-number'>95</span>
+<span class='line-number'>96</span>
+<span class='line-number'>97</span>
+<span class='line-number'>98</span>
+<span class='line-number'>99</span>
+<span class='line-number'>100</span>
+<span class='line-number'>101</span>
+<span class='line-number'>102</span>
+<span class='line-number'>103</span>
+<span class='line-number'>104</span>
+<span class='line-number'>105</span>
+<span class='line-number'>106</span>
+<span class='line-number'>107</span>
+<span class='line-number'>108</span>
+<span class='line-number'>109</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>---
+</span><span class='line'>kind: pipeline
+</span><span class='line'>type: docker
+</span><span class='line'>name: dev
+</span><span class='line'>
+</span><span class='line'>platform:
+</span><span class='line'>  os: linux
+</span><span class='line'>  arch: amd64
+</span><span class='line'>
+</span><span class='line'>steps:
+</span><span class='line'>  - name: wait-for-k3s
+</span><span class='line'>    image: ruanbekker/build-tools
+</span><span class='line'>    commands:
+</span><span class='line'>      - sleep 30
+</span><span class='line'>
+</span><span class='line'>  - name: prepare-k3s-kubeconfig
+</span><span class='line'>    image: alpine
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: k3s-kubeconfig
+</span><span class='line'>        path: /k3s-kubeconfig
+</span><span class='line'>    detach: false
+</span><span class='line'>    commands:
+</span><span class='line'>      - sed -i -e "s/127.0.0.1/k3s/g" /k3s-kubeconfig/kubeconfig.yaml
+</span><span class='line'>
+</span><span class='line'>  - name: test-kubernetes
+</span><span class='line'>    image: ruanbekker/kubectl
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: k3s-kubeconfig
+</span><span class='line'>        path: /tmp
+</span><span class='line'>    environment:
+</span><span class='line'>      KUBECONFIG: /tmp/kubeconfig.yaml
+</span><span class='line'>    commands:
+</span><span class='line'>      - kubectl get nodes -o wide
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  - name: k3s
+</span><span class='line'>    image: rancher/k3s:v0.9.1
+</span><span class='line'>    privileged: true
+</span><span class='line'>    command:
+</span><span class='line'>      - server
+</span><span class='line'>    environment:
+</span><span class='line'>      K3S_KUBECONFIG_OUTPUT: /k3s-kubeconfig/kubeconfig.yaml
+</span><span class='line'>      K3S_KUBECONFIG_MODE: 777
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: k3s-kubeconfig
+</span><span class='line'>        path: /k3s-kubeconfig
+</span><span class='line'>    ports:
+</span><span class='line'>      - 6443
+</span><span class='line'>
+</span><span class='line'>volumes:
+</span><span class='line'>- name: k3s-kubeconfig
+</span><span class='line'>  temp: {}
+</span><span class='line'>
+</span><span class='line'>---
+</span><span class='line'>kind: pipeline
+</span><span class='line'>type: docker
+</span><span class='line'>name: staging
+</span><span class='line'>
+</span><span class='line'>platform:
+</span><span class='line'>  os: linux
+</span><span class='line'>  arch: amd64
+</span><span class='line'>
+</span><span class='line'>steps:
+</span><span class='line'>  - name: wait-for-k3s
+</span><span class='line'>    image: ruanbekker/build-tools
+</span><span class='line'>    commands:
+</span><span class='line'>      - sleep 30
+</span><span class='line'>
+</span><span class='line'>  - name: prepare-k3s-kubeconfig
+</span><span class='line'>    image: alpine
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: k3s-kubeconfig
+</span><span class='line'>        path: /k3s-kubeconfig
+</span><span class='line'>    detach: false
+</span><span class='line'>    commands:
+</span><span class='line'>      - sed -i -e "s/127.0.0.1/k3s/g" /k3s-kubeconfig/kubeconfig.yaml
+</span><span class='line'>
+</span><span class='line'>  - name: test-kubernetes
+</span><span class='line'>    image: ruanbekker/kubectl
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: k3s-kubeconfig
+</span><span class='line'>        path: /tmp
+</span><span class='line'>    environment:
+</span><span class='line'>      KUBECONFIG: /tmp/kubeconfig.yaml
+</span><span class='line'>    commands:
+</span><span class='line'>      - kubectl get nodes -o wide
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  - name: k3s
+</span><span class='line'>    image: rancher/k3s:v0.9.1
+</span><span class='line'>    privileged: true
+</span><span class='line'>    command:
+</span><span class='line'>      - server
+</span><span class='line'>    environment:
+</span><span class='line'>      K3S_KUBECONFIG_OUTPUT: /k3s-kubeconfig/kubeconfig.yaml
+</span><span class='line'>      K3S_KUBECONFIG_MODE: 777
+</span><span class='line'>    volumes:
+</span><span class='line'>      - name: k3s-kubeconfig
+</span><span class='line'>        path: /k3s-kubeconfig
+</span><span class='line'>    ports:
+</span><span class='line'>      - 6443
+</span><span class='line'>
+</span><span class='line'>volumes:
+</span><span class='line'>- name: k3s-kubeconfig
+</span><span class='line'>  temp: {}
+</span><span class='line'>
+</span><span class='line'>depends_on:
+</span><span class='line'>- dev</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In this pipeline you can see that the staging pipeline depends on dev, so dev pipeline will start by creating the k3s service container, once its up I am using a step just to sleep for 30 seconds to allow it to boot.</p>
+
+<p>Then I have defined a volume that will be persistent during the build time, which we will use to dump our kubeconfig file and update the hostname of our kubernetes endpoint. Once that is done our last step will set that file to the environment and use kubectl to interact with kubernetes.</p>
+
+<p>Once our dev pipeline has finished, our staging pipeline will start.</p>
+
+<h2>Activate the Repo in Drone</h2>
+
+<p>Head over to drone on port <code>80</code> and activate the newly created git repo (and make sure that you select &ldquo;Trusted&rdquo;) and you will see the activity feed being empty:</p>
+
+<p><img width="1008" alt="image" src="https://user-images.githubusercontent.com/567298/73784085-80872700-479d-11ea-9005-4cac54ac000d.png"></p>
+
+<p>Commit a dummy file to git and you should see your pipeline being triggered:</p>
+
+<p><img width="1013" alt="image" src="https://user-images.githubusercontent.com/567298/73784286-dd82dd00-479d-11ea-93f4-6363da53c1c1.png"></p>
+
+<p>Once your pipeline has finished and everything succeeded, you should see the output of your nodes in your kubernetes service container:</p>
+
+<p><img width="1068" alt="image" src="https://user-images.githubusercontent.com/567298/73784435-220e7880-479e-11ea-8f9d-a9856632302d.png"></p>
+
+<p>As I mentioned earlier, we are not doing anything special but service containers allows us to do some awesome things.</p>
+
+<p>Thank you for reading. If you like my content, feel free to visit me at <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+
+<p><a href="https://twitter.com/ruanbekker"><img src="https://user-images.githubusercontent.com/567298/71188576-e2410f80-2289-11ea-8667-08f0c14ab7b5.png" alt="" /></a></p>
+
+<p><a href="https://ko-fi.com/A6423ZIQ"><img src="https://www.ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" /></a></p>
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">Setup Gitea and Drone on Docker 2020 Edition</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-02-04T21:58:39+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>9:58 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>This post will show how to setup gitea and drone on a docker host with docker-compose. The drone example in this tutorial will be very basic, but in future posts I will focus more on pipeline examples using drone.</p>
+
+<p>As this post I will use to link back for those who needs to setup the stack first.</p>
+
+<h2>Deploy Gitea and Drone</h2>
+
+<p>Get the docker-compose.yml:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget -O docker-compose.yml https://gist.githubusercontent.com/ruanbekker/27d2cb2e3f4194ee5cfe2bcdc9c4bf52/raw/25590a23e87190a871d70fd57ab461ce303cd286/2020.02.04-gitea-drone_docker-compose.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify the environment variables and adjust the defaults if you want to change something, if you want your git clone ssh url to point to a dns name as well as the url for gitea, then change the following to your dns:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>  gitea:
+</span><span class='line'>    ...
+</span><span class='line'>    environment:
+</span><span class='line'>      - ROOT_URL=http://gi.myresolvable.dns:3000
+</span><span class='line'>      - SSH_DOMAIN=git.myresolvable.dns</span></code></pre></td></tr></table></div></figure>
+
+
+<p>then deploy:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up -d</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Access your Stack</h2>
+
+<p>The default port for Gitea in this setup is port <code>3000</code>:</p>
+
+<p><img width="1273" alt="image" src="https://user-images.githubusercontent.com/567298/73778916-9b08d280-4794-11ea-88a6-8aafcd6e2656.png"></p>
+
+<p>Initial configuration will be pre-populated from our environment variables:</p>
+
+<p><img width="859" alt="image" src="https://user-images.githubusercontent.com/567298/73778973-b378ed00-4794-11ea-8615-d8deeee07b32.png"></p>
+
+<p>From the additional settings section, create your admin user (this user is referenced in our docker-compose as well)</p>
+
+<p><img width="871" alt="image" src="https://user-images.githubusercontent.com/567298/73779102-df946e00-4794-11ea-9177-712904e9dbee.png"></p>
+
+<p>Because I am using gitea as my hostname, you will be redirected to <code>http://gitea:3000/user/login</code>, if you don&rsquo;t have a host entry setup for that it will fail, but you can just replace your servers ip in the request url and it will take you to the login screen, and after logging on, you should see this screen:</p>
+
+<p><img width="1269" alt="image" src="https://user-images.githubusercontent.com/567298/73779494-752ffd80-4795-11ea-9c34-ff9eee269b0c.png"></p>
+
+<p>Access drone on port 80, you will be directed to the login screen:</p>
+
+<p><img width="773" alt="image" src="https://user-images.githubusercontent.com/567298/73779560-9395f900-4795-11ea-8f90-e420aa4c383d.png"></p>
+
+<p>Use the same credentials that you have used to sign up with gitea, and after logging on, you should see this:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/73779651-b2948b00-4795-11ea-9939-51531467b600.png"></p>
+
+<p>If ever your login does not work, just delete the drone access token on gitea (gitea:3000/user/settings/applications)</p>
+
+<h2>Create a Git Repository</h2>
+
+<p>On gitea, create a new git repository:</p>
+
+<p><img width="698" alt="image" src="https://user-images.githubusercontent.com/567298/73779800-fdae9e00-4795-11ea-9422-938a24c08eb3.png"></p>
+
+<p>You should now see your git repository:</p>
+
+<p><img width="1005" alt="image" src="https://user-images.githubusercontent.com/567298/73779843-10c16e00-4796-11ea-98c6-2f70519146f0.png"></p>
+
+<p>Create a new file <code>.drone.yml</code> with the following content:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>kind: pipeline
+</span><span class='line'>name: hello-world
+</span><span class='line'>type: docker
+</span><span class='line'>
+</span><span class='line'>steps:
+</span><span class='line'>  - name: say-hello
+</span><span class='line'>    image: busybox
+</span><span class='line'>    commands:
+</span><span class='line'>      - echo hello-world</span></code></pre></td></tr></table></div></figure>
+
+
+<p>It should look like this:</p>
+
+<p><img width="1019" alt="image" src="https://user-images.githubusercontent.com/567298/73779989-4fefbf00-4796-11ea-8e65-8441d3440d19.png"></p>
+
+<h2>Configure Drone</h2>
+
+<p>Commit the file in your git repository and head over to drone (which should be available on port <code>80</code>) and select &ldquo;Sync&rdquo;, after a couple of seconds you should see the git repository:</p>
+
+<p><img width="860" alt="image" src="https://user-images.githubusercontent.com/567298/73780087-7f063080-4796-11ea-92ce-3d216c4e4097.png"></p>
+
+<p>Select &ldquo;Activate&rdquo; and &ldquo;Activate Repository&rdquo;, on the next screen select &ldquo;Trusted&rdquo;, verify that the configuration file name is the same as which we created, then select save:</p>
+
+<p><img width="860" alt="image" src="https://user-images.githubusercontent.com/567298/73780208-b543b000-4796-11ea-98f1-0f072eeae0ef.png"></p>
+
+<h2>Trigger the Build</h2>
+
+<p>If you click on &ldquo;Activity Feed&rdquo; you should see a empty feed. Head back to git and commit a dummy file to trigger the build to start. I will create a file name <code>trigger</code> with the value as <code>1</code> for my dummy file.</p>
+
+<p>After committing the file, you will see on drone that the build started:</p>
+
+<p><img width="900" alt="image" src="https://user-images.githubusercontent.com/567298/73780444-297e5380-4797-11ea-94e6-58c01ae11143.png"></p>
+
+<p>When we select the build, you can see we have a clone step and the step that we defined to echo &ldquo;hello-world&rdquo;:</p>
+
+<p><img width="851" alt="image" src="https://user-images.githubusercontent.com/567298/73780516-46b32200-4797-11ea-8a07-0563dea90d83.png"></p>
+
+<h2>Thank You</h2>
+
+<p>This was a basic introduction for gitea and drone, but I will use this post in conjunction with more gitea examples in the future.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1194,982 +1883,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/11/26/setup-aws-s3-cross-account-access/">Setup AWS S3 Cross Account Access</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-11-26T22:40:12+02:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>26</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>10:40 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>In this tutorial I will demonstrate how to setup cross account access from S3.</p>
-
-<h2>Scenario</h2>
-
-<p>We will have 2 AWS Accounts:</p>
-
-<ol>
-<li><p>a Green AWS Account which will host the IAM Users, this account will only be used for our IAM Accounts.</p></li>
-<li><p>a Blue AWS Account which will be the account that hosts our AWS Resources, S3 in this scenario.</p></li>
-</ol>
-
-
-<p>We will the allow the Green Account to access the Blue Account&rsquo;s S3 Bucket.</p>
-
-<h2>Setup the Blue Account</h2>
-
-<p>In the Blue Account, we will setup the S3 Bucket, as well as the Trust Relationship with the Policy, which is where we will define what we want to allow for the Green Account.</p>
-
-<p><img width="1280" alt="9488F107-A5B0-4A9E-A7A4-5A91B9805DE3" src="https://user-images.githubusercontent.com/567298/69668149-fe40ff00-1097-11ea-896a-5f3106fe5dfa.png"></p>
-
-<p>Now we need to setup the IAM Role which will allow the Green Account and also define what needs to be allowed.</p>
-
-<p>Go ahead to your IAM Console and create a IAM Policy (just remember to replace the bucket name if you are following along)</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{
-</span><span class='line'>    "Version": "2012-10-17",
-</span><span class='line'>    "Statement": [
-</span><span class='line'>        {
-</span><span class='line'>            "Sid": "PutGetListAccessOnS3",
-</span><span class='line'>            "Effect": "Allow",
-</span><span class='line'>            "Action": [
-</span><span class='line'>                "s3:PutObject",
-</span><span class='line'>                "s3:GetObject",
-</span><span class='line'>                "s3:ListBucket"
-</span><span class='line'>            ],
-</span><span class='line'>            "Resource": [
-</span><span class='line'>                "arn:aws:s3:::ruanbekker-prod-s3-bucket",
-</span><span class='line'>                "arn:aws:s3:::ruanbekker-prod-s3-bucket/*"
-</span><span class='line'>            ]
-</span><span class='line'>        }
-</span><span class='line'>    ]
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In my case I have named my IAM Policy <code>CrossAccountS3Access</code>. After you have created your IAM Policy, go ahead and create a IAM Role. Here we need the source account that we want to allow as a trusted entity, which will be the AWS AccountId of the Green Account:</p>
-
-<p><img width="1277" alt="E73FC957-EBFA-4E41-AFDB-D994D6D3110E" src="https://user-images.githubusercontent.com/567298/69668615-ee75ea80-1098-11ea-8536-b32c6c034f7a.png"></p>
-
-<p>Associate the IAM Policy that you created earlier:</p>
-
-<p><img width="1280" alt="610814A8-E8CB-45F7-A038-FE4274FD425C" src="https://user-images.githubusercontent.com/567298/69668712-19603e80-1099-11ea-8ba0-2d0bc84e21cf.png"></p>
-
-<p>After you have done that, you should see a summary screen:</p>
-
-<p><img width="1278" alt="ABAADD0E-9140-4EB1-855A-0B0E46F429FF" src="https://user-images.githubusercontent.com/567298/69668817-50ceeb00-1099-11ea-8bb2-98537a742857.png"></p>
-
-<p>Make note of your IAM Role ARN, it will look something like this: <code>arn:aws:iam::xxxxxxxxxxxx:role/CrossAccountS3Access-Role</code></p>
-
-<h2>Setup the Green Account</h2>
-
-<p>In the Green Account is where we will create the IAM User and the credentials will be provided to the user which requires to access the S3 Bucket.</p>
-
-<p>Let&rsquo;s create a IAM Group, I will name mine <code>prod-s3-users</code>. I will just create the group, as I will attach the policy later:</p>
-
-<p><img width="1280" alt="459D98BF-7A5D-49B4-BBD9-11717655188D" src="https://user-images.githubusercontent.com/567298/69669190-07cb6680-109a-11ea-8193-db476f5fa1db.png"></p>
-
-<p>From the IAM Group, select the Permissions tab and create a New Inline Policy:</p>
-
-<p><img width="1280" alt="E55E521D-A3C1-4669-B0AB-C23A5BA51E21" src="https://user-images.githubusercontent.com/567298/69669427-81635480-109a-11ea-8b4b-7bd79f2a12cd.png"></p>
-
-<p>Select the &ldquo;STS&rdquo; service, select the &ldquo;AssumeRole&rdquo; action, and provide the Role ARN of the Blue Account that we created earlier:</p>
-
-<p><img width="1280" alt="FDECEF7C-14F1-41DC-94F5-B6E63FE46A7D" src="https://user-images.githubusercontent.com/567298/69669597-d8692980-109a-11ea-804c-914c9a8cb608.png"></p>
-
-<p>This will allow the Blue account to assume the credentials from the Green account. And the Blue account will only obtain permissions to access the resources that we have defined in the policy document of the Blue Account. In summary, it should look like this:</p>
-
-<p><img width="1280" alt="0133A1AF-D2B0-4A61-B179-B4B40B81953C" src="https://user-images.githubusercontent.com/567298/69669773-30079500-109b-11ea-83bd-69c8301c4f21.png"></p>
-
-<p>Select the Users tab on the left hand side, create a New IAM User (I will name mine s3-prod-user) and select the &ldquo;Programmatic Access&rdquo; check box as we need API keys as we will be using the CLI to access S3:</p>
-
-<p><img width="1278" alt="ACE1F066-4400-4000-A9D8-0FD438DB7028" src="https://user-images.githubusercontent.com/567298/69669927-82e14c80-109b-11ea-9adf-de5c01cec41c.png"></p>
-
-<p>Then from the next window, add the user to the group that we have created earlier:</p>
-
-<p><img width="1279" alt="0AEC8E84-091F-44CB-966D-BDA93970C881" src="https://user-images.githubusercontent.com/567298/69669976-9987a380-109b-11ea-9c16-ea63cebe2e82.png"></p>
-
-<h2>Test Cross Account Access</h2>
-
-<p>Let&rsquo;s configure our AWS CLI with the API Keys that we received. Our credential provider will consist with 2 profiles, the Green Profile which holds the API Keys of the Green Account:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws configure --profile green
-</span><span class='line'>AWS Access Key ID [None]: AKIATPRT2G4SAHA7ZQU2
-</span><span class='line'>AWS Secret Access Key [None]: x
-</span><span class='line'>Default region name [None]: eu-west-1
-</span><span class='line'>Default output format [None]: json</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And configure the Blue profile that will reference the Green account as a source profile and also specify the IAM Role ARN of the Blue Account:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim ~/.aws/credentials</span></code></pre></td></tr></table></div></figure>
-
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[blue]
-</span><span class='line'>role_arn=arn:aws:iam::xxxxxxxxxxxx:role/CrossAccountS3Access-Role
-</span><span class='line'>source_profile=green
-</span><span class='line'>region=eu-west-1</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we can test if we can authenticate with our Green AWS Account:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile green sts get-caller-identity
-</span><span class='line'>{
-</span><span class='line'>    "UserId": "AKIATPRT2G4SAHA7ZQU2",
-</span><span class='line'>    "Account": "xxxxxxxxxxxx",
-</span><span class='line'>    "Arn": "arn:aws:iam:: xxxxxxxxxxxx:user/s3-prod-user"
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now let&rsquo;s upload an object to S3 using our blue profile:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile blue s3 cp foo s3://ruanbekker-prod-s3-bucket/
-</span><span class='line'>upload: ./foo to s3://ruanbekker-prod-s3-bucket/foo</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s verify if we can see the object:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile blue s3 ls s3://ruanbekker-prod-s3-bucket/
-</span><span class='line'>2019-10-03 22:13:30      14582 foo</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
-
-
-<p><br></p>
-
-<p>I&rsquo;ve recently started a <a href="https://bekkerclothing.com/collections/developer">Developer Range</a> t-shirts, let me know what you think:</p>
-
-<div id='product-component-1574800622582'></div>
-
-
-<script type="text/javascript">
-/*<![CDATA[*/
-(function () {
-  var scriptURL = 'https://sdks.shopifycdn.com/buy-button/latest/buy-button-storefront.min.js';
-  if (window.ShopifyBuy) {
-    if (window.ShopifyBuy.UI) {
-      ShopifyBuyInit();
-    } else {
-      loadScript();
-    }
-  } else {
-    loadScript();
-  }
-  function loadScript() {
-    var script = document.createElement('script');
-    script.async = true;
-    script.src = scriptURL;
-    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(script);
-    script.onload = ShopifyBuyInit;
-  }
-  function ShopifyBuyInit() {
-    var client = ShopifyBuy.buildClient({
-      domain: 'bekkerclothing.myshopify.com',
-      storefrontAccessToken: '68eb29a6d90539cb0321ea90bb043fae',
-    });
-    ShopifyBuy.UI.onReady(client).then(function (ui) {
-      ui.createComponent('product', {
-        id: '4392613544020',
-        node: document.getElementById('product-component-1574800622582'),
-        moneyFormat: '%24%7B%7Bamount%7D%7D',
-        options: {
-  "product": {
-    "styles": {
-      "product": {
-        "@media (min-width: 601px)": {
-          "max-width": "calc(25% - 20px)",
-          "margin-left": "20px",
-          "margin-bottom": "50px"
-        }
-      }
-    },
-    "text": {
-      "button": "Add to cart"
-    }
-  },
-  "productSet": {
-    "styles": {
-      "products": {
-        "@media (min-width: 601px)": {
-          "margin-left": "-20px"
-        }
-      }
-    }
-  },
-  "modalProduct": {
-    "contents": {
-      "img": false,
-      "imgWithCarousel": true,
-      "button": false,
-      "buttonWithQuantity": true
-    },
-    "styles": {
-      "product": {
-        "@media (min-width: 601px)": {
-          "max-width": "100%",
-          "margin-left": "0px",
-          "margin-bottom": "0px"
-        }
-      }
-    },
-    "text": {
-      "button": "Add to cart"
-    }
-  },
-  "cart": {
-    "text": {
-      "total": "Subtotal",
-      "button": "Checkout"
-    }
-  }
-},
-      });
-    });
-  }
-})();
-/*]]>*/
-</script>
-
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/11/23/how-to-setup-vpc-peering-on-aws/">How to Setup VPC Peering on AWS</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-11-23T09:09:40+02:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2019</span></span> <span class='time'>9:09 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>In this tutorial I will demonstrate how to create a VPC Peering Connection between Two AWS Accounts and how to route traffic between them and then show you how we create Two EC2 Instances and demonstrate how to SSH to each other via it&rsquo;s Private IP Address.</p>
-
-<h2>Scenario Information</h2>
-
-<p>We will have Two AWS Accounts in this demonstration, a &ldquo;Green AWS Account&rdquo; and a &ldquo;Blue AWS Account&rdquo;.</p>
-
-<p>In this scenario, we will have two teams, both teams manage their own account and in this scenario the two teams need to be able to communicate to each other. To keep it simple, each team has a EC2 instance and the two EC2 instances need to be able to communicate with each other.</p>
-
-<p>Therefore we will setup a VPC Peering Connection between the two accounts. Both accounts will be operating in the eu-west-2 (London) region.</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Account, CIDR
-</span><span class='line'>green: 10.1.0.0/16
-</span><span class='line'>blue:  10.2.0.0/16</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Getting Started</h2>
-
-<p>This will be our <strong>Green</strong> AWS Account:</p>
-
-<p><img width="1291" alt="140424C7-6FD5-4D74-AD26-AA1077D3DA92" src="https://user-images.githubusercontent.com/567298/69486624-55579180-0e56-11ea-897c-55607680fb58.png"></p>
-
-<p>This will be our <strong>Blue</strong> AWS Account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486632-61435380-0e56-11ea-86d1-3af018fe5fe3.png" alt="AAFBF715-897D-4D54-BDF2-9A5282A60165" /></p>
-
-<h2>Creating the VPCs</h2>
-
-<p>From our <strong>green</strong> account, head over to VPC and create a new VPC with a CIDR of <code>10.1.0.0/16</code>:</p>
-
-<p><img width="1291" alt="55FB3F87-9F73-4CDD-845B-8748700B0981" src="https://user-images.githubusercontent.com/567298/69486652-d6af2400-0e56-11ea-9f4d-9331001625f4.png"></p>
-
-<p>Then head over to the <strong>blue</strong> account, head over to VPC and create a new VPC with CIDR of <code>10.2.0.0/16</code>:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486659-f1819880-0e56-11ea-8c3c-5aff2f84e2aa.png" alt="854DC039-7F83-4E6F-BD28-6843BE417EEB" /></p>
-
-<p>So in summary we have the following resources:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Green: vpc-0af4b247a1353b78b | 10.1.0.0/16
-</span><span class='line'>Blue: vpc-031c4ce3f56660c30 | 10.2.0.0/16</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Creating the Subnets</h2>
-
-<p>Now we need to create subnets for the VPC&rsquo;s that we created. We will create the following subnets in our VPC, each subnet in its own availability zone:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>10.1.0.0/20 (az-2a)
-</span><span class='line'>10.1.16.0/20 (az-2b)
-</span><span class='line'>10.1.32.0/20 (az-2c)</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s go ahead and do this, head over to your <strong>green</strong> account, from the VPC section select &ldquo;Subnets&rdquo;:</p>
-
-<p><img width="1292" alt="BBB38DDB-D9CF-4BD4-AEA0-C30B6998F016" src="https://user-images.githubusercontent.com/567298/69486747-92705380-0e57-11ea-86da-5cafd9c22701.png"></p>
-
-<p>Go ahead and create a subnet where you will need to specify the VPC that you created, slect the first CIDR block, in my case 10.1.0.0/20 and select the first AZ:</p>
-
-<p><img width="1292" alt="BB1627EE-A92D-4274-BF97-40AE4E01A9A4" src="https://user-images.githubusercontent.com/567298/69486786-0d396e80-0e58-11ea-9860-7febe6e65f7d.png"></p>
-
-<p>Do this for the other two subnets as well and then when you are done, it may look more or less like this:</p>
-
-<p><img width="1290" alt="051767FD-2D52-48BD-B495-01ACB431B358" src="https://user-images.githubusercontent.com/567298/69487635-3660fb80-0e66-11ea-8b59-71364414d3ae.png"></p>
-
-<p>Repeat this process that you have three subnets for your <strong>blue</strong> account as well:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486798-3823c280-0e58-11ea-8991-6518d986de31.png" alt="881A973C-7C9A-423C-B6F4-555CE78E0A16" /></p>
-
-<h2>Setup VPC Peering Connection</h2>
-
-<p>Now that we&rsquo;ve created our VPC&rsquo;s and subnets for each VPC we want to peer our two VPC&rsquo;s with each other so that we have a direct connection between our VPC&rsquo;s so that our EC2 instances from our <strong>green</strong> account is able to connect with our EC2 instances in our <strong>blue</strong> account.</p>
-
-<p>Head over to your <strong>green</strong> account&rsquo;s VPC section and select &ldquo;Peering Connections&rdquo;:</p>
-
-<p><img width="1292" alt="21972956-D24A-4C45-94C5-10A6FC742D98" src="https://user-images.githubusercontent.com/567298/69486833-c8620780-0e58-11ea-8638-de60804bdb65.png"></p>
-
-<p>Create a new peering connection, we will first need to name our peering connection, select the source VPC which will be our green account&rsquo;s VPC, since the VPC that we want to peer with is in another account, get the AWS Account ID from the <strong>blue</strong> account, and select &ldquo;Another account&rdquo; and provide the account id that we want to peer with, select the AWS Region and provide the VPC ID of the <strong>blue</strong> account:</p>
-
-<p><img width="1291" alt="1BDCB500-7BF0-4C5F-B171-9E09463A956A" src="https://user-images.githubusercontent.com/567298/69487659-817b0e80-0e66-11ea-83b6-4ec7c941804f.png"></p>
-
-<p>Once you create the peering connection, you will find the peering request details:</p>
-
-<p><img width="1291" alt="C74BAE40-9C78-45FE-BE7F-3AC495E93A41" src="https://user-images.githubusercontent.com/567298/69486874-9c935180-0e59-11ea-99a2-a54bd5982ab1.png"></p>
-
-<p>Now let&rsquo;s head over to our <strong>blue</strong> Account, head over to VPC, select Peering connections and you will find the peering request from our <strong>green</strong> account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486892-dbc1a280-0e59-11ea-983d-b7814257c323.png" alt="05DB8A16-6CF4-48F1-920C-20AE7492E381" /></p>
-
-<p>From the top, hit &ldquo;Actions&rdquo; and accept the request:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486900-014eac00-0e5a-11ea-9cc2-025ef35ad921.png" alt="0FF04F44-F5B7-4AAF-9D66-89396EC2AA06" /></p>
-
-<p>You should see that the VPC Peering connection has been established:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486904-14617c00-0e5a-11ea-8459-ab1bdf6141b0.png" alt="2D1D101F-3574-4A40-A1A6-F2F875B29158" /></p>
-
-<p>From the <strong>blue</strong> account you should see that the VPC Peering Connection is active:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486911-2a6f3c80-0e5a-11ea-833c-bea298c55326.png" alt="A2070A8B-6247-4D75-BFF8-D5AE152EFA42" /></p>
-
-<p>If you head back to the <strong>green</strong> account, you will see under Peering Connections that the connection has been established:</p>
-
-<p><img width="1290" alt="1A50F913-9C6E-4F6D-A61C-5954617EBE5B" src="https://user-images.githubusercontent.com/567298/69486921-64d8d980-0e5a-11ea-86fa-cd37b44cbfdb.png"></p>
-
-<p>We have now successfully created our VPC peering connection and the two VPC&rsquo;s from different accounts has been peered. Now we would like to launch our EC2 instances in our VPC, we will connect to our EC2 instance in our <strong>green</strong> account via the internet and then SSH to our EC2 instance in our <strong>blue</strong> account via the VPC peering connection via the Private IP Address.</p>
-
-<h2>Setup Internet Gateway</h2>
-
-<p>In order to connect to a Public Elastic IP, we first need to create a Internet Gateway on our VPC and add a route to route all public traffic via our Internet Gateway. This allows our resources in that VPC to be able to connect to the Internet.</p>
-
-<p>Head over to &ldquo;Internet Gateways&rdquo;, and create a new Internet Gateway:</p>
-
-<p><img width="1283" alt="9750329C-E89E-425E-9DCC-D420D092C5E6" src="https://user-images.githubusercontent.com/567298/69486997-5212d480-0e5b-11ea-9455-0c3d94f4d6e9.png"></p>
-
-<p>Our IGW (Internet Gateway) will now be in a detached state, we now need to attach our IGW to our VPC. Hit &ldquo;Actions&rdquo;, then select &ldquo;Attach to VPC&rdquo;, and select your VPC:</p>
-
-<p><img width="1281" alt="0BF7CB7A-C40A-483C-8083-410DBFFBA171" src="https://user-images.githubusercontent.com/567298/69487007-91412580-0e5b-11ea-8d3f-4ca7dff0976d.png"></p>
-
-<p>You should now see that your IGW has been attached to your VPC:</p>
-
-<p><img width="1073" alt="B6C3094F-233C-4A6C-A6FC-C5FD7727FBBD" src="https://user-images.githubusercontent.com/567298/69487019-b6ce2f00-0e5b-11ea-903a-cb576ab29f11.png"></p>
-
-<p>Now that we have created an IGW and associated it to our VPC, we now need to configure our routing table so that it knows how to route non-local traffic via the IGW.</p>
-
-<h2>Configure Routing Table</h2>
-
-<p>Head over to VPC, select your VPC, select the &ldquo;Route Tables&rdquo; section from the left and you should see the following when you select the &ldquo;Routes&rdquo; section:</p>
-
-<p><img width="1286" alt="FF7E141E-2C8D-4D87-BE67-513AB44784F2" src="https://user-images.githubusercontent.com/567298/69487055-55f32680-0e5c-11ea-8ce9-81de2bf5eab5.png"></p>
-
-<p>Select &ldquo;Edit Routes&rdquo; and add a route with the destination <code>0.0.0.0/0</code> select the Internet Gateway as a target and it will filter through your available IGW&rsquo;s and select the IGW that you created earlier, then select save. (If your blue account needs internet access, repeat these steps on the blue account as well.)</p>
-
-<p><img width="1274" alt="E223A267-1A4F-4DA4-B23A-37CE6EDAFEF5" src="https://user-images.githubusercontent.com/567298/69487097-ea5d8900-0e5c-11ea-97f6-66cd6604035f.png"></p>
-
-<p>While we are at our routing tables configuration, we should also inform our VPC how to reach the subnet from the VPC from the other account. So that our <strong>Green</strong> App (10.1.0.0/16) can reach our <strong>blue</strong> app (10.2.0.0/16) via the Peering Connection.</p>
-
-<p>We do this by adding a route to our routing table. From the <strong>green</strong> account&rsquo;s VPC&rsquo;s routing table add a new route with the destination of <code>10.2.0.0/16</code>, select &ldquo;Peering Connection&rdquo; as the target and it should resolve to the peering connection resource that we created, then select save:</p>
-
-<p><img width="1271" alt="B5E8CF35-0C06-4261-9668-6C091BA19E2A" src="https://user-images.githubusercontent.com/567298/69487275-a3bd5e00-0e5f-11ea-8d4f-a2d270b3e57b.png"></p>
-
-<p>Now our <strong>green</strong> Account knows how to route traffic to our <strong>blue</strong> account and also knows which network traffic to route. But we also need to route traffic back. Head over to your <strong>blue</strong> Account and add a route <code>10.1.0.0/16</code> to the peering connection so that we can route traffic back to our <strong>green</strong> Account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69487287-e41cdc00-0e5f-11ea-86cd-b9c9f6d77ad5.png" alt="885DCDE3-ACA5-4136-851D-3DF9D2D9D62D" /></p>
-
-<h2>Launch EC2 Instances</h2>
-
-<p>Now we want to launch a EC2 instance in each account and ensure to launch them into the VPC&rsquo;s that we created, I will also be creating two new SSH keys (blue-keypair + green-keypair) And I have created a Security Group that allows ICMP and SSH from anywhere, this is purely for demonstration (always review the sources that you want to allow).</p>
-
-<p>For our <strong>green</strong> account:</p>
-
-<p><img width="1284" alt="C60E3DAD-DD12-4670-97CD-AC524269C20E" src="https://user-images.githubusercontent.com/567298/69487311-4ece1780-0e60-11ea-9b66-b00568184790.png"></p>
-
-<p>For our <strong>blue</strong> account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69487313-57265280-0e60-11ea-8814-fcdf4465967c.png" alt="1BFBF8B9-D090-4883-8E2B-92F29B19AEDE" /></p>
-
-<p>Once the EC2 instances are deployed, you should see something like this. For my <strong>green</strong> account:</p>
-
-<p><img width="1278" alt="image" src="https://user-images.githubusercontent.com/567298/69487370-2bf03300-0e61-11ea-89a5-c9fcef4ee50a.png"></p>
-
-<p>And for my <strong>blue</strong> account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69487324-7ae99880-0e60-11ea-9d46-fb4ebcb14e07.png" alt="74F20740-17EE-46C9-9A51-D3ACAB8937B5" /></p>
-
-<h2>Public IP Addressing</h2>
-
-<p>Now that our EC2 instances are provisioned, we will be connecting to our <strong>green</strong> EC2 instances using a Public IP, therefore we need to create a Elastic IP. From EC2, select Elastic IPs and allocate a New Address:</p>
-
-<p><img width="1283" alt="C4B9AC94-7AFC-465D-8D51-0497ABA475B3" src="https://user-images.githubusercontent.com/567298/69487353-d9167b80-0e60-11ea-85dd-26c94b227494.png"></p>
-
-<p>Select the IP, hit &ldquo;Actions&rdquo; and select &ldquo;Associate Address&rdquo;, then select the EC2 instance to which you want to associate the Elastic IP to:</p>
-
-<p><img width="771" alt="E3AA99D6-CD59-4530-B818-422E1D584932" src="https://user-images.githubusercontent.com/567298/69487364-fc412b00-0e60-11ea-88b4-f1b0b7ad83dc.png"></p>
-
-<p>You should know see that the EC2 instance has a Public IP assigned to it:</p>
-
-<p><img width="1048" alt="FE545350-0A45-453C-9855-4F65CC0783C6" src="https://user-images.githubusercontent.com/567298/69487694-d7e84d00-0e66-11ea-8cec-ad8142f01b9b.png"></p>
-
-<h2>Test Network Connectivity</h2>
-
-<p>From the downloaded SSH keypairs:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ls | grep keyp
-</span><span class='line'>blue-keypair.pem.txt
-</span><span class='line'>green-keypair.pem.txt</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Apply the correct permissions to our keypairs so that we can use them to SSH:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod 0400 blue-keypair.pem.txt green-keypair.pem.txt</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We will want to add both SSH keys to our agent so we can include them when we SSH:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ eval $(ssh-agent -t 36000)
-</span><span class='line'>Agent pid 6613</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Add both keys to your ssh-agent:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh-add blue-keypair.pem.txt
-</span><span class='line'>Identity added: blue-keypair.pem.txt (blue-keypair.pem.txt)
-</span><span class='line'>
-</span><span class='line'>$ ssh-add green-keypair.pem.txt
-</span><span class='line'>Identity added: green-keypair.pem.txt (green-keypair.pem.txt)</span></code></pre></td></tr></table></div></figure>
-
-
-<p>SSH to our <strong>Green</strong> EC2 instance:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh -A ec2-user@3.11.6.171
-</span><span class='line'>
-</span><span class='line'>       __|  __|_  )
-</span><span class='line'>       _|  (     /   Amazon Linux 2 AMI
-</span><span class='line'>      ___|\___|___|
-</span><span class='line'>
-</span><span class='line'>https://aws.amazon.com/amazon-linux-2/
-</span><span class='line'>[ec2-user@ip-10-1-1-190 ~]$</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now lets ping our <strong>Blue</strong> EC2 Instance which will be accessible via our VPC Peering Connection:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[ec2-user@ip-10-1-1-190 ~]$ ping 10.2.1.167
-</span><span class='line'>PING 10.2.1.167 (10.2.1.167) 56(84) bytes of data.
-</span><span class='line'>64 bytes from 10.2.1.167: icmp_seq=1 ttl=255 time=0.754 ms
-</span><span class='line'>64 bytes from 10.2.1.167: icmp_seq=2 ttl=255 time=0.854 ms</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And since we&rsquo;ve allowed SSH traffic, we should be able to SSH to our instance via its Private IP Address:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[ec2-user@ip-10-1-1-190 ~]$ ssh 10.2.1.167
-</span><span class='line'>
-</span><span class='line'>       __|  __|_  )
-</span><span class='line'>       _|  (     /   Amazon Linux 2 AMI
-</span><span class='line'>      ___|\___|___|
-</span><span class='line'>
-</span><span class='line'>https://aws.amazon.com/amazon-linux-2/
-</span><span class='line'>[ec2-user@ip-10-2-1-167 ~]$</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we have successfully created a VPC Peering Connection between Two AWS Accounts and demonstrated how to communicate to and from resources in those VPC&rsquo;s.</p>
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
-
-
-<p><br></p>
-
-<p>Feel free to have a look at my <strong><a href="https://bekkerclothing.com/collections/developer">Developer T-Shirt Range</a>:</strong></p>
-
-<div id='product-component-1574559271268'></div>
-
-
-<script type="text/javascript">
-/*<![CDATA[*/
-(function () {
-  var scriptURL = 'https://sdks.shopifycdn.com/buy-button/latest/buy-button-storefront.min.js';
-  if (window.ShopifyBuy) {
-    if (window.ShopifyBuy.UI) {
-      ShopifyBuyInit();
-    } else {
-      loadScript();
-    }
-  } else {
-    loadScript();
-  }
-  function loadScript() {
-    var script = document.createElement('script');
-    script.async = true;
-    script.src = scriptURL;
-    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(script);
-    script.onload = ShopifyBuyInit;
-  }
-  function ShopifyBuyInit() {
-    var client = ShopifyBuy.buildClient({
-      domain: 'bekkerclothing.myshopify.com',
-      storefrontAccessToken: '68eb29a6d90539cb0321ea90bb043fae',
-    });
-    ShopifyBuy.UI.onReady(client).then(function (ui) {
-      ui.createComponent('product', {
-        id: '4391499104340',
-        node: document.getElementById('product-component-1574559271268'),
-        moneyFormat: '%24%7B%7Bamount%7D%7D',
-        options: {
-  "product": {
-    "styles": {
-      "product": {
-        "@media (min-width: 601px)": {
-          "max-width": "calc(25% - 20px)",
-          "margin-left": "20px",
-          "margin-bottom": "50px"
-        }
-      }
-    },
-    "text": {
-      "button": "Add to cart"
-    }
-  },
-  "productSet": {
-    "styles": {
-      "products": {
-        "@media (min-width: 601px)": {
-          "margin-left": "-20px"
-        }
-      }
-    }
-  },
-  "modalProduct": {
-    "contents": {
-      "img": false,
-      "imgWithCarousel": true,
-      "button": false,
-      "buttonWithQuantity": true
-    },
-    "styles": {
-      "product": {
-        "@media (min-width: 601px)": {
-          "max-width": "100%",
-          "margin-left": "0px",
-          "margin-bottom": "0px"
-        }
-      }
-    },
-    "text": {
-      "button": "Add to cart"
-    }
-  },
-  "cart": {
-    "text": {
-      "total": "Subtotal",
-      "button": "Checkout"
-    }
-  }
-},
-      });
-    });
-  }
-})();
-/*]]>*/
-</script>
-
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/11/17/how-to-deploy-a-webapp-on-a-aws-eks-kubernetes-cluster/">How to Deploy a Webapp on a AWS EKS Kubernetes Cluster</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-11-17T00:21:19+02:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>17</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>12:21 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/68999897-f59a3d00-08cf-11ea-83c7-8624e6048106.png" alt="kubernetes-eks-deploy-webapp" /></p>
-
-<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>In our previous post, <a href="https://blog.ruanbekker.com/blog/2019/11/16/how-to-setup-a-aws-eks-kubernetes-cluster/">Part 1 - Setup a EKS Cluster</a> we went through the steps on how to Setup a EKS Cluster.</p>
-
-<h2>What are we doing today</h2>
-
-<p>In this post, we will deploy a sample web application to EKS and access our application using a ELB that EKS provides us.</p>
-
-<h2>Deployment Manifests</h2>
-
-<p>We will have two manifests that we will deploy to Kubernetes, a deployment manifest that will hold the information about our application and a service manifest that will hold the information about the service load balancer.</p>
-
-<p>The deployment manifest, you will notice that we are specifying that we want 3 containers, we are using labels so that our service and deployment can find each other and we are using a basic http web application that will listen on port 8000 inside the container:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat deployment.yml
-</span><span class='line'>apiVersion: apps/v1
-</span><span class='line'>kind: Deployment
-</span><span class='line'>metadata:
-</span><span class='line'>  name: my-hostname-app
-</span><span class='line'>spec:
-</span><span class='line'>  replicas: 3
-</span><span class='line'>  selector:
-</span><span class='line'>    matchLabels:
-</span><span class='line'>      app: my-app
-</span><span class='line'>  template:
-</span><span class='line'>    metadata:
-</span><span class='line'>      labels:
-</span><span class='line'>        app: my-app
-</span><span class='line'>    spec:
-</span><span class='line'>      containers:
-</span><span class='line'>        - name: my-app-container
-</span><span class='line'>          image: ruanbekker/hostname
-</span><span class='line'>          ports:
-</span><span class='line'>          - name: http
-</span><span class='line'>            containerPort: 8000
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The service manifest, you will notice that we are specifying <code>type: LoadBalancer</code> in our service manifest, this will tell EKS to provision a ELB for your application so that we can access our application from the internet.</p>
-
-<p>You will see that the selector is specifying <code>my-app</code> which we also provided in our deployment.yml so that our service know where to find our backend application. We are also stating that the service is listening on port 80, and will forward its traffic to our deployment on port 8000:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat service.yml
-</span><span class='line'>apiVersion: v1
-</span><span class='line'>kind: Service
-</span><span class='line'>metadata:
-</span><span class='line'>  name: my-hostname-app-service
-</span><span class='line'>  labels:
-</span><span class='line'>    app: my-app
-</span><span class='line'>spec:
-</span><span class='line'>  ports:
-</span><span class='line'>  - port: 80
-</span><span class='line'>    targetPort: 8000
-</span><span class='line'>  selector:
-</span><span class='line'>    app: my-app
-</span><span class='line'>  <span class="nb">type</span>: LoadBalancer
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deployment Time</h2>
-
-<p>Deploy our application:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl apply -f deployment.yml
-</span><span class='line'>deployment.apps/my-hostname-app created
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Deploy our service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl apply -f service.yml
-</span><span class='line'>service/my-hostname-app-service created
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when we look at our deployment, we should see that 3 replicas of our application is running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get deployments
-</span><span class='line'>NAME              READY   UP-TO-DATE   AVAILABLE   AGE
-</span><span class='line'>my-hostname-app   3/3     <span class="m">3</span>            <span class="m">3</span>           4m38s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To see the pods of that deployment, look at the pods:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods
-</span><span class='line'>NAME                               READY   STATUS    RESTARTS   AGE
-</span><span class='line'>my-hostname-app-5dcd48dfc5-2j8zm   1/1     Running   <span class="m">0</span>          24s
-</span><span class='line'>my-hostname-app-5dcd48dfc5-58vkc   1/1     Running   <span class="m">0</span>          24s
-</span><span class='line'>my-hostname-app-5dcd48dfc5-cmjwj   1/1     Running   <span class="m">0</span>          24s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As we have more than one service in our EKS cluster, we can specify the labels that we have applied on our manifests to filter what we want to see (<code>app: my-app</code>):</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get service --selector <span class="nv">app</span><span class="o">=</span>my-app
-</span><span class='line'>NAME                      TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT<span class="o">(</span>S<span class="o">)</span>        AGE
-</span><span class='line'>my-hostname-app-service   LoadBalancer   10.100.114.166   a460661ce089b11ea97cd06dd7513db6-669054126.eu-west-1.elb.amazonaws.com   80:30648/TCP   2m29s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As we can see EKS provisioned a ELB for us, and we can access the application by making a HTTP request:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i http://a460661ce089b11ea97cd06dd7513db6-669054126.eu-west-1.elb.amazonaws.com
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Date: Sat, <span class="m">16</span> Nov <span class="m">2019</span> 18:05:27 GMT
-</span><span class='line'>Content-Length: 43
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
-</span><span class='line'>
-</span><span class='line'>Hostname: my-hostname-app-5dcd48dfc5-2j8zm
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Scaling our Deployment</h2>
-
-<p>Let&rsquo;s scale our deployment to 5 replicas:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl scale deployment/my-hostname-app --replicas 5
-</span><span class='line'>deployment.extensions/my-hostname-app scaled
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After all the pods has been deployed, you should be able to see the 5 out of 5 pods that we provisioned, should be running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get deployments
-</span><span class='line'>NAME              READY   UP-TO-DATE   AVAILABLE   AGE
-</span><span class='line'>my-hostname-app   5/5     <span class="m">5</span>            <span class="m">5</span>           5m7s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can then also see the pods that our deployment is referencing:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods
-</span><span class='line'>NAME                               READY   STATUS    RESTARTS   AGE
-</span><span class='line'>my-hostname-app-5dcd48dfc5-2j8zm   1/1     Running   <span class="m">0</span>          6m8s
-</span><span class='line'>my-hostname-app-5dcd48dfc5-58vkc   1/1     Running   <span class="m">0</span>          6m8s
-</span><span class='line'>my-hostname-app-5dcd48dfc5-cmjwj   1/1     Running   <span class="m">0</span>          6m8s
-</span><span class='line'>my-hostname-app-5dcd48dfc5-m4xcq   1/1     Running   <span class="m">0</span>          67s
-</span><span class='line'>my-hostname-app-5dcd48dfc5-zf6xl   1/1     Running   <span class="m">0</span>          68s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Further Reading on Kubernetes</h2>
-
-<p>This is one amazing resource that covers a lot of kubernetes topics and will help you throughout your EKS journey:</p>
-
-<ul>
-<li><a href="https://eksworkshop.com/introduction/">EKSWorkshop</a></li>
-<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/worker.html">Worker Nodes Documentation</a></li>
-<li><a href="https://docs.aws.amazon.com/eks/latest/userguide/eks-guestbook.html">Guestbook Kubernetes Sample Application</a></li>
-</ul>
-
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -2210,23 +1923,23 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/04/27/how-to-do-port-forwarding-with-iptables/">How to Do Port Forwarding With Iptables</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2020/04/27/how-to-set-a-static-ip-in-ubuntu-18/">How to Set a Static IP in Ubuntu 18</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2020/04/26/graphing-covid-19-stats-with-grafana-and-elasticsearch-using-python/">Graphing Covid-19 Stats With Grafana and Elasticsearch Using Python</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter/">Nginx Metrics on Prometheus With the Nginx Log Exporter</a>
       </li>
     
       <li class="post">
         <a href="/blog/2020/04/19/ipsec-site-to-site-vpn-with-dynamic-ips-with-openswan/">IPSec Site to Site VPN With Dynamic IPs With Openswan</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/02/21/persistent-volumes-with-k3d-kubernetes/">Persistent Volumes With K3d Kubernetes</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/02/17/python-asynchronous-function-with-openfaas/">Asynchronous Function With OpenFaas</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/">Traefik Ingress for OpenFaas on Kubernetes (K3d)</a>
       </li>
     
   </ul>

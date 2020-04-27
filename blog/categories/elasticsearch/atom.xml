@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Elasticsearch | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/elasticsearch/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-04-25T04:27:39+02:00</updated>
+  <updated>2020-04-27T23:12:14+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,275 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Graphing Covid-19 Stats With Grafana and Elasticsearch Using Python]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/04/26/graphing-covid-19-stats-with-grafana-and-elasticsearch-using-python/"/>
+    <updated>2020-04-26T02:24:27+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/04/26/graphing-covid-19-stats-with-grafana-and-elasticsearch-using-python</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/80421197-62345180-88dc-11ea-9e0a-557199aaf613.png" alt="coronavirus-covid19-grafana-metrics" /></p>
+
+<p>I stumbled upon a <a href="https://github.com/pomber/covid19/">github repository</a> that stores time-series data in json format of corona virus / covid19 statistics, which get updated daily.</p>
+
+<p>I was curious to see data about my country and want to see how metrics will look like after our lockdown started, so I decided to consume that data with <strong>Python</strong> and the requests library, then ingest data about covid19 into <strong>Elasticsearch</strong> and the visualize the data with <strong>Grafana</strong>.</p>
+
+<h2>Sample of the Data</h2>
+
+<p>Let&rsquo;s have a peek at the data to determine how we will use it to write to Elasticsearch. Let&rsquo;s consume the data with python:</p>
+
+<pre><code>&gt;&gt;&gt; import requests
+&gt;&gt;&gt; import json
+&gt;&gt;&gt; response = requests.get('https://pomber.github.io/covid19/timeseries.json').json()
+</code></pre>
+
+<p>Now let&rsquo;s determine the data type:</p>
+
+<pre><code>&gt;&gt;&gt; type(response)
+&lt;type 'dict'&gt;
+</code></pre>
+
+<p>Now as it&rsquo;s a dictionary, let&rsquo;s look at they keys:</p>
+
+<pre><code>&gt;&gt;&gt; response.keys()
+[u'Canada', u'Sao Tome and Principe', u'Lithuania', u'Cambodia', u'Ethiopia',....
+</code></pre>
+
+<p>So let&rsquo;s take a look how the data looks like if we do a lookup for Canada:</p>
+
+<pre><code>&gt;&gt;&gt; type(response['Canada'])
+&lt;type 'list'&gt;
+</code></pre>
+
+<p>As we can see it&rsquo;s a list, we can count how many items is in our list:</p>
+
+<pre><code>&gt;&gt;&gt; len(response['Canada'])
+94
+</code></pre>
+
+<p>Now let&rsquo;s peek at the data by accessing our first index of our list:</p>
+
+<pre><code>&gt;&gt;&gt; response['Canada'][0]
+{u'date': u'2020-1-22', u'confirmed': 0, u'recovered': 0, u'deaths': 0}
+</code></pre>
+
+<p>So our data will look like this:</p>
+
+<pre><code>{
+  [
+    'Country Name': [
+      {
+        'date': '&lt;string&gt;', 
+        'confirmed': '&lt;int&gt;', 
+        'recovered': '&lt;int&gt;', 
+        'deaths': '&lt;int&gt;'
+      },
+      {
+        'date': '&lt;string&gt;',
+        'confirmed': '&lt;int&gt;',
+        'recovered': '&lt;int&gt;',
+        'deaths': '&lt;int&gt;'
+      },
+    ],
+    'Country Name': [
+      ...
+    ]
+  ]
+}
+</code></pre>
+
+<h2>Some issues we need to fix</h2>
+
+<p>As you can see the date is displayed as <code>2020-1-22</code> instead of <code>2020-01-22</code>, I want to make it consistent as I will be ingesting the data with a <code>@timestamp</code> key which we will use the date from the returned data. So first we will need to convert that before we ingest the data.</p>
+
+<p>The other thing I was thinking of is that, if for some reason we need to ingest this data again, we dont want to sit with duplicates (same document with different _id&rsquo;s), so for that I decided to generate a hash value that consist of the date and the country, so if the script run to ingest the data, it will use the same id for the specific document, which would just overwrite it, therefore we won&rsquo;t sit with duplicates.</p>
+
+<p>So the idea is to ingest a document to elasticsearch like this:</p>
+
+<pre><code>doc = {
+    "_id": "sha_hash_value",
+    "day": "2020-01-22",
+    "timestamp": "@2020-01-22 00:00:00",
+    "country": "CountryName",
+    "confirmed": 0,
+    "recovered": 0,
+    "deaths": 0
+}
+</code></pre>
+
+<h2>How we will ingest the data</h2>
+
+<p>The first run will load all the data and ingest all the data up to the current day to elasticsearch. Once that is done, we will add code to our script to only ingest the most recent day&rsquo;s data into elasticsearch, which we will control with a cronjob.</p>
+
+<p>Create a index with a mapping to let Elasticsearch know <code>timestamp</code> will be a date field:</p>
+
+<pre><code>$ curl -XPUT -H 'Content-Type: application/json' \
+  -u username:pass 'https://es.domain.com/coronastats' -d \
+  '{"mappings": {"foo1": {"properties": {"timestamp" : {"type" : "date","format" : "yyyy-MM-dd HH:mm:ss"}}}}}'
+</code></pre>
+
+<p>Once our index is created, create the python script that will load the data, loop through each country&rsquo;s daily data and ingest it into elasticsearch:</p>
+
+<pre><code class="python">#!/usr/bin/python
+import requests
+import datetime as dt
+import json
+import hashlib
+
+url = 'https://pomber.github.io/covid19/timeseries.json'
+elasticsearch_url = "https://es.domain.com"
+elasticsearch_username = ""
+elasticsearch_password = ""
+
+api_response = requests.get(url).json()
+
+def convert_datestamp(day):
+    return str(dt.datetime.strptime(day, '%Y-%m-%d'))
+
+def hash_function(country, date):
+    string_to_hash = country + date
+    hash_obj  = hashlib.sha1(string_to_hash.encode('utf-8'))
+    hash_value = hash_obj.hexdigest()
+    return hash_value
+
+def map_es_doc(payload, country):
+    doc = {
+        "day": payload['date'],
+        "timestamp": convert_datestamp(payload['date']),
+        "country": country,
+        "confirmed": payload['confirmed'],
+        "recovered": payload['recovered'],
+        "deaths": payload['deaths']
+    }
+    return doc
+
+def ingest(doc_id, payload):
+    response = requests.put(
+        elasticsearch_url + '/coronastats/coronastats/' + doc_id,
+        auth=(elasticsearch_username, elasticsearch_password),
+        headers={'content-type': 'application/json'},
+        json=payload
+    )
+    return response.status_code
+
+for country in api_response.keys():
+    try:
+        for each_payload in api_response[country]:
+            doc_id = hash_function(country, each_payload['date'])
+            doc = map_es_doc(each_payload, country)
+            response = ingest(doc_id, doc)
+            print(response)
+    except Exception as e:
+        print(e)
+</code></pre>
+
+<p>Run the script to ingest all the data into elasticsearch. Now we will create the script that will run daily to only ingest the previous day&rsquo;s data, so that we only ingest the latest data and not all the data from scratch again.</p>
+
+<p>I will create this file in <code>/opt/scripts/corona_covid19_ingest.py</code>:</p>
+
+<pre><code>#!/usr/bin/python
+import requests
+import datetime as dt
+import json
+import hashlib
+
+url = 'https://pomber.github.io/covid19/timeseries.json'
+elasticsearch_url = "https://es.domain.com"
+elasticsearch_username = ""
+elasticsearch_password = ""
+
+api_response = requests.get(url).json()
+
+yesterdays_date = dt.date.today() - dt.timedelta(days=1)
+
+def convert_datestamp(day):
+    return str(dt.datetime.strptime(day, '%Y-%m-%d'))
+
+def hash_function(country, date):
+    string_to_hash = country + date
+    hash_obj  = hashlib.sha1(string_to_hash.encode('utf-8'))
+    hash_value = hash_obj.hexdigest()
+    return hash_value
+
+def map_es_doc(payload, country):
+    doc = {
+        "day": payload['date'],
+        "timestamp": convert_datestamp(payload['date']),
+        "country": country,
+        "confirmed": payload['confirmed'],
+        "recovered": payload['recovered'],
+        "deaths": payload['deaths']
+    }
+    return doc
+
+def ingest(doc_id, payload):
+    response = requests.put(
+        elasticsearch_url + '/coronastats/coronastats/' + doc_id,
+        auth=(elasticsearch_username, elasticsearch_password),
+        headers={'content-type': 'application/json'},
+        json=payload
+    )
+    return response.status_code
+
+for country in api_response.keys():
+    try:
+        for each_payload in api_response[country]:
+            if convert_datestamp(each_payload['date']).split()[0] == str(yesterdays_date):
+                print("ingesting latest data for {country}".format(country=country))
+                doc_id = hash_function(country, each_payload['date'])
+                doc = map_es_doc(each_payload, country)
+                response = ingest(doc_id, doc)
+                print(response)
+    except Exception as e:
+        print(e)
+</code></pre>
+
+<p>The only difference with this script is that it checks if the date is equals to yesterday&rsquo;s date, and if so the document will be prepared and ingested into elasticsearch. We will create a cronjob that runs this script every morning at 08:45.</p>
+
+<p>First make the file executable:</p>
+
+<pre><code>$ chmod +x /opt/scripts/corona_covid19_ingest.py
+</code></pre>
+
+<p>Run <code>crontab -e</code> and add the following</p>
+
+<pre><code>45 8 * * * /opt/scripts/corona_covid19_ingest.py
+</code></pre>
+
+<h2>Visualize the Data with Grafana</h2>
+
+<p>We will create this dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/80418135-35ca0680-88d7-11ea-83f6-3432a903333d.png" alt="corona-covid-19-dashboard" /></p>
+
+<p>We need a elasticsearch datasource that points to the index that we ingest our data into. Head over to datasources, add a elasticsearch datasource and set the index to <code>coronastats</code> and add the timefield as <code>timestamp</code>.</p>
+
+<p>We want to make the dashboard dynamic to have a <strong>&ldquo;country&rdquo;</strong> dropdown selector, for that go to the dashboard settings, select variable and add a country variable:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/80419463-7cb8fb80-88d9-11ea-959f-8f37ae3f6dc7.png" alt="covid19-dashboard-variables" /></p>
+
+<p>First panel: &ldquo;Reported Cases per Day&rdquo;:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/80419572-af62f400-88d9-11ea-802e-7eeacb61ee19.png" alt="covid19-reported-cases" /></p>
+
+<p>Second panel: &ldquo;Confirmed Cases&rdquo;:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/80419675-db7e7500-88d9-11ea-98a5-3aae4d9a6c87.png" alt="covid19-confirmed-cases" /></p>
+
+<p>Third panel: &ldquo;Recovered Cases&rdquo;:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/80419750-fa7d0700-88d9-11ea-82a3-f26ff8c807ef.png" alt="covid19-recovered-cases" /></p>
+
+<p>Now, if we select Italy, Spain and France as an example, we will see something like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/80419966-56479000-88da-11ea-8f30-39ac3da27007.png" alt="covid19-country-stats" /></p>
+
+<h2>Thank You</h2>
+
+<p>Although its pretty cool visualizing data, the issue that we are in at the moment with coronavirus / covid19 is really scary and we should all do our part to try and stay home, sanitize and try not to spread the virus. Together we can all do great things by reducing the spread of this virus.</p>
+
+<p>Stay safe everyone.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Reindex Elasticsearch Indices With Logstash]]></title>
@@ -938,147 +1207,6 @@ name index_patterns order version
 <p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-templates.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-templates.html</a>
 <a href="https://www.elastic.co/guide/en/elasticsearch/reference/6.3/mapping-types.html">https://www.elastic.co/guide/en/elasticsearch/reference/6.3/mapping-types.html</a>
 <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-range-query.html">https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-range-query.html</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Reindex Your Elasticsearch Indexes Tutorial]]></title>
-    <link href="http://blog.ruanbekker.com/blog/2019/04/06/reindex-your-elasticsearch-indexes-tutorial/"/>
-    <updated>2019-04-06T21:37:18+02:00</updated>
-    <id>http://blog.ruanbekker.com/blog/2019/04/06/reindex-your-elasticsearch-indexes-tutorial</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/53352581-b3892f80-392b-11e9-9532-5db5cbfc8f1c.jpg" alt="" /></p>
-
-<p>At times you may find that the indexes in your cluster are not queried that often but you still want them around. But you also want to reduce the resource footprint by reducing the number of shards, and perhaps increase the refresh interval.</p>
-
-<p>For refresh interval, if new data comes in and we dont care to have it available near real time, we can set the refresh interval for example to 60 seconds, so the index will only have the data available every 60 seconds. (default: 1s)</p>
-
-<h2>Reindexing Elasticsearch Indexes</h2>
-
-<p>In this example we will use the scenario where we have daily indexes with 5 primary shards and 1 set of replicas and we would like to create a weekly index with 1 primary shard, 1 replica and the refresh interval of 60 seconds, and reindex the previous weeks data into our weekly index.</p>
-
-<p>Create the target weekly index with the mentioned configuration:</p>
-
-<pre><code>$ curl -H "Content-Type: application/json" -XPUT 'http://127.0.0.1:9200/my-index-2019.01.01-07' -d '
-{
-    "settings": {
-        "number_of_shards": "1",
-        "number_of_replicas": "1",
-        "refresh_interval" : "60s"
-    }
-}
-'
-</code></pre>
-
-<p>Ensure the index exist:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/indices/my-index-2019.01.01*?v'
-health status index                    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   my-index-2019.01.01      wbFEJCApSpSlbOXzb1Tjxw   5   1      22007            0      6.6mb          3.2mb
-green  open   my-index-2019.01.02      cbDmJR7pbpRT3O2x46fj20   5   1      28031            0      7.2mb          3.4mb
-..
-green  open   my-index-2019.01.01-07   mJR7pJ9O4T3O9jzyI943ca   1   1          0            0       466b           233b
-</code></pre>
-
-<p>Create the reindex job, specify the source indexes and the destination index where the data must be reindexed to:</p>
-
-<pre><code>$ curl -s -H 'Content-Type: application/json' -XPOST 'http://127.0.0.1:9200/_reindex' -d '
-{
-    "source": {
-        "index": [
-            "my-index-2019.01.01",
-            "my-index-2019.01.02",
-            "my-index-2019.01.03",
-            "my-index-2019.01.04",
-            "my-index-2019.01.05",
-            "my-index-2019.01.06",
-            "my-index-2019.01.07"
-        ]
-    },
-    "dest": {
-        "index": "my-index-2019.01.01-07"
-    }
-}
-'
-</code></pre>
-
-<p>You can use the tasks api to monitor the progress:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/tasks?'
-indices:data/write/bulk        -3MIFskURPKxd1tg8P2j0w:912621270 -                                transport 1538459598188 22:53:18 3.1ms       x.x.x.x -3MIFsk
-indices:data/write/bulk[s]     -3MIFskURPKxd1tg8P2j0w:912621271 -3MIFskURPKxd1tg8P2j0w:816648230 transport 1538459598188 22:53:18 3.1ms       x.x.x.x -3MIFsk
-</code></pre>
-
-<p>You manipulate the output of the tasks api by either fetching specific actions:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_tasks?actions=*data/write/reindex&amp;detailed&amp;pretty'
-</code></pre>
-
-<p>Or viewing detailed output:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/tasks?detailed' | grep 'indices:data/write/reindex'
-indices:data/write/reindex     IvoqWoUqSgGCQ0ELG21nhg:740560815 -                                transport 1538462294714 23:38:14 1.7m        x.x.x.x IvoqWoU reindex from [my-index-2019.01.01] to [my-index-2019.01.01-07]
-</code></pre>
-
-<p>Or you could get the json response:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_tasks?actions=*data/write/reindex&amp;detailed&amp;pretty'
-{
-  "nodes" : {
-    "xx" : {
-      "name" : "xx",
-      "roles" : [ "data", "ingest" ],
-      "tasks" : {
-        "xx:876452606" : {
-          "node" : "xx",
-          "id" : 776452606,
-          "type" : "transport",
-          "action" : "indices:data/write/reindex",
-          "status" : {
-            "total" : 4785475,
-            "updated" : 0,
-            "created" : 234000,
-            "deleted" : 0,
-            "batches" : 235,
-            "version_conflicts" : 0,
-            "noops" : 0,
-            "retries" : {
-              "bulk" : 0,
-              "search" : 0
-            },
-            "throttled_millis" : 0,
-            "requests_per_second" : -1.0,
-            "throttled_until_millis" : 0
-          },
-          "description" : "reindex from [my-index-2019.01.07] to [my-index-2019.01.01-07]",
-          "start_time_in_millis" : 1538462901120,
-          "running_time_in_nanos" : 64654161339,
-          "cancellable" : true
-        }
-      }
-    }
-  }
-}
-</code></pre>
-
-<p>Anyways, moving along. Reindex jobs will always be listed as a <code>data/write/reindex</code> action, so we can count the output:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/tasks?'  | grep 'data/write/reindex' | wc -l
-</code></pre>
-
-<p>If the response is 0 then all the tasks completed and we can have a look at our index again:</p>
-
-<pre><code>$ curl -s -XGET 'http://127.0.0.1:9200/_cat/indices/my-index-2019.01.0*?v'
-health status index                    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   my-index-2019.01.01      wbFEJCApSpSlbOXzb1Tjxw   5   1      22007            0      6.6mb          3.2mb
-green  open   my-index-2019.01.02      cbDmJR7pbpRT3O2x46fj20   5   1      28031            0      7.2mb          3.4mb
-..
-green  open   my-index-2019.01.01-07   mJR7pJ9O4T3O9jzyI943ca   1   1     322007            0     45.9mb         22.9mb
-</code></pre>
-
-<p>Now that we can verify that the reindex tasks finished and we can see the aggregated result in our target index, we can delete our source indexes:</p>
-
-<pre><code>$ curl -XDELETE 'http://127.0.0.1:9200/my-index-2019.01.01,my-index-2019.01.02,my-index-2019.01.03,my-index-2019.01.04,my-index-2019.01.05,my-index-2019.01.06,my-index-2019.01.07'
-</code></pre>
 ]]></content>
   </entry>
   

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Filebeat | Ruan Bekker's Blog]]></title>
   <link href="http://blog.ruanbekker.com/blog/categories/filebeat/atom.xml" rel="self"/>
   <link href="http://blog.ruanbekker.com/"/>
-  <updated>2020-04-27T23:12:14+02:00</updated>
+  <updated>2020-04-29T00:04:43+02:00</updated>
   <id>http://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,351 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Nginx Analysis Dashboard Using Grafana and Elasticsearch]]></title>
+    <link href="http://blog.ruanbekker.com/blog/2020/04/28/nginx-analysis-dashboard-using-grafana-and-elasticsearch/"/>
+    <updated>2020-04-28T20:07:22+02:00</updated>
+    <id>http://blog.ruanbekker.com/blog/2020/04/28/nginx-analysis-dashboard-using-grafana-and-elasticsearch</id>
+    <content type="html"><![CDATA[<p>In this post we will be setting up a <strong>analytical dashboard</strong> using <strong>grafana</strong> to visualize our <strong>nginx access logs</strong>.</p>
+
+<p>In this tutorial I will be using my other blog <code>sysadmins.co.za</code> which is being served on nginx. We will also be setting up the other components such as filebeat, logstash, elasticsearch and redis, which require if you would like to follow along.</p>
+
+<h2>The End Result</h2>
+
+<p>We will be able to analyze our Nginx Access logs to answer questions such as:</p>
+
+<ul>
+<li>Whats the Top 10 Countries accessing your website in the last 24 hours</li>
+<li>Who&rsquo;s the Top 10 Referers?</li>
+<li>Whats the most popular page for the past 24 hours?</li>
+<li>How does the percentage of 200&rsquo;s vs 404&rsquo;s look like?</li>
+<li>Ability to view results based on status code</li>
+<li>Everyone loves a World Map to view hotspots</li>
+</ul>
+
+
+<p>At the end of the tutorial, your dashboard will look similar to this:</p>
+
+<p><img width="1123" alt="grafana-elasticsearch-nginx-dashboard" src="https://user-images.githubusercontent.com/567298/80523974-32925180-898f-11ea-96b6-e8e559655745.png"></p>
+
+<h2>High Level Overview</h2>
+
+<p>Our infrastructure will require Nginx with Filebeat, Redis, Logstash, Elasticsearch and Grafana and will look like this:</p>
+
+<p><img width="871" alt="grafana-elasticsearch-logs-setup" src="https://user-images.githubusercontent.com/567298/80526020-6d49b900-8992-11ea-9a39-67331ccc3808.png"></p>
+
+<p>I will drill down how everything is connected:</p>
+
+<ol>
+<li>Nginx has a custom <code>log_format</code> that we define, that will write to <code>/var/log/nginx/access_json.log</code>, which will be picked up by <strong>Filebeat</strong> as a input.</li>
+<li>and <strong>Filebeat</strong> has an output that pushes the data to <strong>Redis</strong></li>
+<li><strong>Logstash</strong> is configured with <strong>Redis</strong> as an input with configured filter section to transform the data and outputs to <strong>Elasticsearch</strong></li>
+<li>From <strong>Grafana</strong> we have a configured <strong>Elasticsearch</strong> datasource</li>
+<li>Use the grafana template to build this awesome dashboard on Grafana</li>
+</ol>
+
+
+<p>But first, a massive thank you to <a href="https://www.akiraka.net">akiraka</a> for templatizing this dashboard and made it available on <a href="https://grafana.com/orgs/akiraka">grafana</a></p>
+
+<h2>Let&rsquo;s build all the things</h2>
+
+<p>I will be using LXD to run my system/server containers (running ubuntu 18), but you can use a vps, cloud instance, multipass, virtualbox, or anything to host your servers that we will be deploying redis, logstash, etc.</p>
+
+<p>Servers provisioned for this setup:</p>
+
+<ul>
+<li>Nginx</li>
+<li>Redis</li>
+<li>Logstash</li>
+<li>Elasticsearch</li>
+<li>Grafana</li>
+<li>Prometheus</li>
+</ul>
+
+
+<h2>Elasticsearch</h2>
+
+<p>If you don&rsquo;t have a cluster running already, you can follow <strong><a href="https://blog.ruanbekker.com/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster/">this tutorial</a></strong> which will help you deploy a HA Elasticsearch Cluster, or if you prefer docker, you can follow <strong><a href="https://blog.ruanbekker.com/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing/">this tutorial</a></strong></p>
+
+<h2>Redis</h2>
+
+<p>For our in-memory data store, I will be securing my redis installation with a password as well.</p>
+
+<p>Install redis:</p>
+
+<pre><code>$ apt update &amp;&amp; apt install redis-server -y
+</code></pre>
+
+<p>Generate a password:</p>
+
+<pre><code>$ openssl rand -base64 36
+9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv
+</code></pre>
+
+<p>In your redis config <code>/etc/redis/redis.conf</code>, you need to change the following:</p>
+
+<pre><code>...
+bind 0.0.0.0
+port 6379
+daemonize yes
+supervised systemd
+requirepass 9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv
+...
+</code></pre>
+
+<p>Restart redis to activate your changes:</p>
+
+<pre><code>$ systemctl restart redis.service
+</code></pre>
+
+<p>and then set and get a key using your password:</p>
+
+<pre><code>$ redis-cli -a "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv" set test ok
+$ redis-cli -a "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv" get test
+ok
+</code></pre>
+
+<h2>Logstash</h2>
+
+<p>On the logstash server, install the requirements:</p>
+
+<pre><code>$ apt update &amp;&amp; apt install wget apt-transport-https default-jre -y
+$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+$ echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | tee -a /etc/apt/sources.list.d/elastic-7.x.list
+</code></pre>
+
+<p>Now the repository for elastic is setup now we need to update and install logstash:</p>
+
+<pre><code>$ apt update &amp;&amp; apt install logstash -y
+</code></pre>
+
+<p>Once logstash is installed, we need to provide logstash with a configuration, in our scenario we will have a input for redis, a filter section to transform and output as elasticsearch.</p>
+
+<p>Just make sure of the following:</p>
+
+<ul>
+<li>Populate the connection details of redis (we will define the key in filebeat later)</li>
+<li>Ensure that <code>GeoLite2-City.mmdb</code> is in the path that I have under filter</li>
+<li>Populate the connectiond details of Elasticsearch and choose a suitable index name, we will need to provide that index name in Grafana later</li>
+</ul>
+
+
+<p>Create the config: <code>/etc/logstash/conf.d/logs.conf</code> and my config will look like the following. (<a href="https://grafana.com/grafana/dashboards/11190">config source</a>)</p>
+
+<pre><code>input {
+  redis {
+    data_type =&gt;"list"
+    key =&gt;"nginx_logs"
+    host =&gt;"10.47.127.37"
+    port =&gt; 6379
+    password =&gt; "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv"
+    db =&gt; 0
+  }
+}
+
+filter {
+  geoip {
+    target =&gt; "geoip"
+    source =&gt; "client_ip"
+    database =&gt; "/usr/share/logstash/vendor/bundle/jruby/2.5.0/gems/logstash-filter-geoip-6.0.3-java/vendor/GeoLite2-City.mmdb"
+    add_field =&gt; [ "[geoip][coordinates]", "%{[geoip][longitude]}" ]
+    add_field =&gt; [ "[geoip][coordinates]", "%{[geoip][latitude]}" ]
+    remove_field =&gt; ["[geoip][latitude]", "[geoip][longitude]", "[geoip][country_code]", "[geoip][country_code2]", "[geoip][country_code3]", "[geoip][timezone]", "[geoip][continent_code]", "[geoip][region_code]"]
+  }
+  mutate {
+    convert =&gt; [ "size", "integer" ]
+    convert =&gt; [ "status", "integer" ]
+    convert =&gt; [ "responsetime", "float" ]
+    convert =&gt; [ "upstreamtime", "float" ]
+    convert =&gt; [ "[geoip][coordinates]", "float" ]
+    remove_field =&gt; [ "ecs","agent","host","cloud","@version","input","logs_type" ]
+  }
+  useragent {
+    source =&gt; "http_user_agent"
+    target =&gt; "ua"
+    remove_field =&gt; [ "[ua][minor]","[ua][major]","[ua][build]","[ua][patch]","[ua][os_minor]","[ua][os_major]" ]
+  }
+}
+output {
+  elasticsearch {
+    hosts =&gt; ["10.47.127.132", "10.47.127.199", "10.47.127.130"]
+    #user =&gt; "myusername"
+    #password =&gt; "mypassword"
+    index =&gt; "logstash-nginx-sysadmins-%{+YYYY.MM.dd}"
+  }
+}
+</code></pre>
+
+<h2>Nginx</h2>
+
+<p>On our nginx server we will install nginx and filebeat, then configure nginx to log to a custom log format, and configure filebeat to read the logs and push it to redis.</p>
+
+<p>Installing nginx:</p>
+
+<pre><code>$ apt update &amp;&amp; apt install nginx -y
+</code></pre>
+
+<p>Installing <a href="https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-installation.html">filebeat</a>:</p>
+
+<pre><code>$ curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.6.2-amd64.deb
+$ dpkg -i filebeat-7.6.2-amd64.deb
+</code></pre>
+
+<p>Next we will configure nginx to log to a seperate file with a custom log format to include data such as the, request method, upstream response time, hostname, remote address, etc.</p>
+
+<p>Under the <code>http</code> directive in your <code>/etc/nginx/nginx.conf</code>, configure the <code>log_format</code> and <code>access_log</code>:</p>
+
+<pre><code>http {
+...
+        log_format json_logs '{"@timestamp":"$time_iso8601","host":"$hostname",'
+                            '"server_ip":"$server_addr","client_ip":"$remote_addr",'
+                            '"xff":"$http_x_forwarded_for","domain":"$host",'
+                            '"url":"$uri","referer":"$http_referer",'
+                            '"args":"$args","upstreamtime":"$upstream_response_time",'
+                            '"responsetime":"$request_time","request_method":"$request_method",'
+                            '"status":"$status","size":"$body_bytes_sent",'
+                            '"request_body":"$request_body","request_length":"$request_length",'
+                            '"protocol":"$server_protocol","upstreamhost":"$upstream_addr",'
+                            '"file_dir":"$request_filename","http_user_agent":"$http_user_agent"'
+                            '}';
+
+        access_log  /var/log/nginx/access_json.log  json_logs;
+...
+}
+</code></pre>
+
+<p>Restart nginx to activate the changes:</p>
+
+<pre><code>$ systemctl restart nginx
+</code></pre>
+
+<p>Next we need to configure filebeat to read from our nginx access logs and configure the output to redis. Edit the filebeat config:</p>
+
+<pre><code>$ vim /etc/filebeat/filebeat.yml
+</code></pre>
+
+<p>And configure filebeat with the following and make sure to change the values where you need to:</p>
+
+<pre><code># config source: akiraka.net
+# filebeat input 
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/nginx/access_json.log
+  json.keys_under_root: true
+  json.overwrite_keys: true
+  json.add_error_key: true
+
+# filebeat modules 
+filebeat.config.modules:
+  # remove the escape character before the wildcard below
+  path: ${path.config}/modules.d/\*.yml
+  reload.enabled: false
+
+# elasticsearch template settings
+setup.template.settings:
+  index.number_of_shards: 3
+
+# redis output
+output.redis:
+  hosts: ["10.47.127.140:6379"]
+  password: "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv"
+  key: "nginx_logs"
+  # ^ this key needs to be the same as the configured key on logstash 
+  db: 0
+  timeout: 5
+</code></pre>
+
+<p>Restart filebeat:</p>
+
+<pre><code>$ systemctl restart filebeat
+</code></pre>
+
+<p>When you make a request to your nginx server, you should see a similar logline like below:</p>
+
+<pre><code>$ tail -n1 /var/log/nginx/access_elg.log
+{"@timestamp":"2020-04-28T20:05:03+00:00","host":"sysadmins-blog","server_ip":"10.68.100.89","client_ip":"x.x.x.x","xff":"x.x.x.x","domain":"sysadmins.co.za","url":"/","referer":"-","args":"-","upstreamtime":"0.310","responsetime":"0.312","request_method":"GET","status":"200","size":"4453","request_body":"-","request_length":"519","protocol":"HTTP/1.1","upstreamhost":"127.0.0.1:2369","file_dir":"/var/www/web/root/","http_user_agent":"Mozilla/5.0"}
+</code></pre>
+
+<h2>Grafana</h2>
+
+<p>On the grafana server, install grafana:</p>
+
+<pre><code>$ apt update &amp;&amp; apt install apt-transport-https software-properties-common wget -y
+$ wget -q -O - https://packages.grafana.com/gpg.key | apt-key add -
+$ add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
+$ apt update &amp;&amp; apt install grafana -y
+</code></pre>
+
+<p>Now we need to install a couple of grafana plugins that we require for our dashboards:</p>
+
+<pre><code>$ grafana-cli plugins install grafana-worldmap-panel
+$ grafana-cli plugins install grafana-clock-panel
+$ grafana-cli plugins install grafana-piechart-panel
+</code></pre>
+
+<p>Now reload systemd and restart grafana:</p>
+
+<pre><code>$ systemctl daemon-reload
+$ systemctl restart grafana-server
+</code></pre>
+
+<p>If you would like to setup nginx as a reverse proxy to grafana, you can have a look at <strong><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">this blogpost</a></strong> on how to do that.</p>
+
+<h2>Prometheus</h2>
+
+<p>If you don&rsquo;t have Prometheus installed already, you can view my <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">blogpost</a> on setting up Prometheus.</p>
+
+<h2>Verifying</h2>
+
+<p>To verify if everything works as expected, make a request to your nginx server, then have a look if your index count on elasticsearch increases:</p>
+
+<pre><code>$ curl http://elasticsearch-endpoint-address:9200/_cat/indices/logstash-*?v
+health status index                               uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   logstash-nginx-x-2020.04.28 SWbHCer-TeOcw6bi_695Xw   5   1      58279            0     32.6mb         16.3mb
+</code></pre>
+
+<p>If you dont, make sure that all the processes are running on the servers, and that each server is able to reach each other on the targeted ports.</p>
+
+<h2>The Fun Part: Dashboarding</h2>
+
+<p>Now that we have everything in place, the fun part is to build the dashboards, first we need to configure elasticsearch as our datasource and specify the index we want to read from. Open grafana on <code>http://ip.of.grafana.server:3000</code>, default user and password is admin.</p>
+
+<p>Select config on the left and select datasources, add a datasource, select elasticsearch and specify your datasource name, mine is <strong>es-nginx</strong> in this example, the <strong>url</strong> of your elasticsearch endpoint, if you have secured your elasticsearch cluster with authentication, provide the auth, then provide your index name as as provided in logstash.</p>
+
+<p>My configured index will look like <code>logstash-nginx-sysadmins-YYYY-MM-dd</code>, therefore I specified index name as <code>logstash-nginx-sysadmins-*</code> and my timefield as <code>@timestamp</code>, the version, and select save and test, which would look like this:</p>
+
+<p><img width="569" alt="AC025E20-38D0-4676-B576-9F5932913BA1" src="https://user-images.githubusercontent.com/567298/80538019-48ab0c80-89a5-11ea-8f4f-a30384991ab9.png"></p>
+
+<p>Now we will import our dashboard template (Once again a massive thank you to <a href="https://grafana.com/grafana/dashboards/11190">Shenxiang, Qingkong and Ruixi</a> which made this template available!), head over to dashboards and select import, then provide the ID: <code>11190</code>, after that it will prompt what your dashboard needs to be named and you need to select your Elasticsearch and Prometheus datasource.</p>
+
+<p>The description of the panels is in Chinese, if you would like it in english, I have translated mine to english and made the dashboard json available in <a href="https://gist.githubusercontent.com/ruanbekker/699fca31ebd7223b675d0acd25ea84bc/raw/316a015a0464989117cd72a1e8e056854d582178/nginx_grafana_dashboard_11190_eng.json">this gist</a></p>
+
+<h2>Tour of our Dashboard Panels</h2>
+
+<p>Looking at our hotspot map:</p>
+
+<p><img width="1212" alt="grafana" src="https://user-images.githubusercontent.com/567298/80539136-48ac0c00-89a7-11ea-869d-597da4fa4d92.png"></p>
+
+<p>The summary and top 10 pages:</p>
+
+<p><img width="1243" alt="76E8CBE1-4B03-4226-8041-B98879BAD66A" src="https://user-images.githubusercontent.com/567298/80540596-e86a9980-89a9-11ea-924d-29f777a7c15a.png"></p>
+
+<p>Page views, historical trends:</p>
+
+<p><img width="1239" alt="grafana-page-views" src="https://user-images.githubusercontent.com/567298/80539728-4eeeb800-89a8-11ea-959e-5e2915387b7b.png"></p>
+
+<p>Top 10 referers and table data of our logs:</p>
+
+<p><img width="1235" alt="B17C4F55-DF91-4EA0-9669-C237FF560459" src="https://user-images.githubusercontent.com/567298/80540381-772ae680-89a9-11ea-9067-61cd519c9d8a.png"></p>
+
+<h2>Thank You</h2>
+
+<p>I hope this was useful, if you have any issues with this feel free to reach out to me. If you like my work, please feel free to share this post or follow me on Twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Ship Your Logs to Elasticsearch With Filebeat]]></title>

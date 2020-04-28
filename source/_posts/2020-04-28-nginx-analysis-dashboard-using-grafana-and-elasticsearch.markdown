@@ -351,6 +351,6 @@ Top 10 referers and table data of our logs:
 
 ## Thank You
 
-I hope this was useful, if you have any issues with this feel free to reach out to me. If you like my work, please feel free to share this post or follow me on Twitter at **[@ruanbekker](https://twitter.com/ruanbekker)**
+I hope this was useful, if you have any issues with this feel free to reach out to me. If you like my work, please feel free to share this post, follow me on Twitter at **[@ruanbekker](https://twitter.com/ruanbekker)** or visit me on my **[website](https://ruan.dev)**
 
-
+[![ko-fi](https://www.ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A6423ZIQ)

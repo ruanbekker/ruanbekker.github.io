@@ -9,6 +9,8 @@ categories: ["nginx", "elasticsearch", "analytics", "logstash", "filebeat", "red
 
 In this post we will be setting up a **analytical dashboard** using **grafana** to visualize our **nginx access logs**. 
 
+<img width="1212" alt="grafana-nginx-elasticsearch-prometheus" src="https://user-images.githubusercontent.com/567298/80539136-48ac0c00-89a7-11ea-869d-597da4fa4d92.png">
+
 In this tutorial I will be using my other blog `sysadmins.co.za` which is being served on nginx. We will also be setting up the other components such as filebeat, logstash, elasticsearch and redis, which require if you would like to follow along.
 
 ## The End Result

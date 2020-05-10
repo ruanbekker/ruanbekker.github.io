@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Google-drive | Ruan Bekker's Blog]]></title>
+  <link href="https://blog.ruanbekker.com/blog/categories/google-drive/atom.xml" rel="self"/>
+  <link href="https://blog.ruanbekker.com/"/>
+  <updated>2020-05-11T00:38:52+02:00</updated>
+  <id>https://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Server Backups to Google Drive Using the Drive CLI Tool]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/05/08/server-backups-to-google-drive-using-the-drive-cli-tool/"/>
+    <updated>2020-05-08T18:43:35+02:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/05/08/server-backups-to-google-drive-using-the-drive-cli-tool</id>
+    <content type="html"><![CDATA[<p>This tutorial will demonstrate how I ship my backups to Google Drive using the <a href="https://github.com/odeke-em/drive/releases/">drive</a> cli utility.</p>
+
+<p>What I really like about the drive cli tool, is that it&rsquo;s super easy to setup and you can easily script your backups to ship it to google drive.</p>
+
+<h2>What we will be doing</h2>
+
+<p>We will setup the drive cli tool, authorize it with your google account, then show how to upload your files to google drive from your terminal and then create a script to automatically upload your data to google drive and then include it in a cronjob.</p>
+
+<h2>Setup Drive CLI Tool</h2>
+
+<p>Head over to the <a href="https://github.com/odeke-em/drive/releases/">drive releases</a> page and get the latest version, at the moment of writing 0.3.9 is the latest. Then we will move it to our path and make it executable:</p>
+
+<pre><code>$ wget https://github.com/odeke-em/drive/releases/download/v0.3.9/drive_linux
+$ mv drive_linux /usr/bin/gdrive
+$ chmod +x /usr/bin/gdrive
+</code></pre>
+
+<p>You should be getting a output when running version as an argument:</p>
+
+<pre><code>$ gdrive version
+drive version: 0.3.9
+</code></pre>
+
+<h2>Credentials</h2>
+
+<p>Move to your home directory and initialize, this will ask you to access the google accounts web page, where you will be authorizing this application to use your google drive account. Upon succesful authorization, you will get a authorization code that we will need to paste in our terminal.</p>
+
+<p>This will then write the credentials file to ~/.gd/credentials.json`. <strong>Always</strong> remember to keep this file safe.</p>
+
+<pre><code>$ gdrive init
+Visit this URL to get an authorization code
+https://accounts.google.com/o/oauth2/auth?access_type=offline&amp;client_id=x&amp;redirect_uri=x&amp;response_type=code&amp;scope=x&amp;state=x
+Paste the authorization code: &lt; paste authorization code here &gt;
+</code></pre>
+
+<p>You will now see that the credentials for your application has been saved as seen below:</p>
+
+<pre><code>$ cat ~/.gd/credentials.json
+{"client_id":"&lt;redacted&gt;","client_secret":"&lt;redacted&gt;","refresh_token":"&lt;redacted&gt;"}
+</code></pre>
+
+<h2>Backup to Google Drive</h2>
+
+<p>On Google Drive, I have a backup folder named <code>Backups</code> and in my local path <code>/opt/backups/</code>, which has the files that I want to backup to google drive:</p>
+
+<pre><code>$ ls /opt/backups/
+app.backup-2020-05-05.tar.gz  
+app.backup-2020-05-06.tar.gz
+</code></pre>
+
+<p>Now let&rsquo;s backup the files to Google Drive, it works as follows <code>gdrive push -destination (path on google drive) (path on local drive)</code>:</p>
+
+<pre><code>$ gdrive push -destination Backups/demo/app1 /opt/backups/*
+Resolving...
++ /Backups/demo/app1/app.backup-2020-05-05.tar.gz
++ /Backups/demo/app1/app.backup-2020-05-06.tar.gz
+Addition count 2 src: 26.32MB
+Proceed with the changes? [Y/n]:Y
+</code></pre>
+
+<p>As you can see it checks what is on Google Drive and what is on the Local Drive, then determines what needs to be uploaded, and asks you if you want to continue.</p>
+
+<p>If we run that command again, you will see that it does not upload it again, as the content is already on Google Drive:</p>
+
+<pre><code>$ gdrive push -destination Backups/demo/app1 /opt/backups/*
+Resolving...
+Everything is up-to-date.
+</code></pre>
+
+<p>To test it out, let&rsquo;s create a new file and verify if it only uploads the new file:</p>
+
+<pre><code>$ touch file.txt
+$ gdrive push -destination Backups/demo/app1 /opt/backups/*
+Resolving...
++ /Backups/demo/app1/file.txt
+Addition count 1
+Proceed with the changes? [Y/n]:y
+</code></pre>
+
+<p>That is all cool and all, but if we want to script this, we don&rsquo;t want to be prompted to continue, we can do this by adding a argument <code>-quiet</code>:</p>
+
+<pre><code>$ gdrive push -quiet -destination Backups/demo/app1 /opt/*
+</code></pre>
+
+<h2>Scripting our Backup Task</h2>
+
+<p>Let&rsquo;s create a script that makes a local archive, then uploads it to Google Drive, I will create the file: <code>/opt/scripts/backup.sh</code> with the following content:</p>
+
+<pre><code>#!/bin/bash
+
+# make a local archive
+tar -zcvf /opt/backups/app1.backup-$(date +%F).tar.gz \
+    /home/me/data/dir1 \
+    /home/me/data/dir2 \
+    /home/me/data/dir3 \
+    /home/me/data/dir4 
+
+# backup to gdrive
+sleep 1
+gdrive push -quiet -destination Backups/Servers/sysadmins.co.za /opt/backups/sysadmins-blog/*
+
+# delete archives older than 14 days from disk
+sleep 1
+find /opt/backups/ -type f -name "*.tar.gz" -mtime +14 -exec rm {} \;
+</code></pre>
+
+<p>Make the file executable:</p>
+
+<pre><code>$ chmod +x /opt/scripts/backup.sh
+</code></pre>
+
+<p>Then, we want to add it as a cronjob so that it runs every night at 23:10 in my case:</p>
+
+<p>Open crotab: <code>crontab -e</code> and add the following entry:</p>
+
+<pre><code>10 23 * * * /opt/scripts/backup.sh
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>Backups are important, especially when you rely on them, and it was never made. Plan ahead to not be in that situation.</p>
+]]></content>
+  </entry>
+  
+</feed>

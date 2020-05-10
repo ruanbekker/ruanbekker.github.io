@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Today we will setup a Site to Site ipsec VPN with Strongswan, which will be configured with PreShared Key Authentication. After our tunnels are &hellip;">
+  <meta name="description" content="In this post we will setup Rancher&rsquo;s Convoy Storage Plugin with NFS, to provide data persistence in Docker Swarm. The Overview: This &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,743 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/02/16/guide-to-setup-docker-convoy-volume-driver-for-docker-swarm-with-nfs/">Guide to Setup Docker Convoy Volume Driver for Docker Swarm With NFS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-02-16T15:51:59+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>16</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>3:51 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53351889-85572000-392a-11e9-9720-464e9318206e.jpg" alt="" /></p>
+
+<p>In this post we will setup <a href="https://github.com/rancher/convoy">Rancher&rsquo;s Convoy Storage Plugin</a> with NFS, to provide data persistence in Docker Swarm.</p>
+
+<h2>The Overview:</h2>
+
+<p>This essentially means that we will have a NFS Volume, when the service gets created on Docker Swarm, the cluster creates these volumes with path mapping, so when a container gets spawned, restarted, scaled etc, the container that gets started on the new node will be aware of the volume, and will get the data that its expecting.</p>
+
+<p>Its also good to note that our NFS Server will be a single point of failure, therefore its also good to look at a Distributed Volume like <a href="https://sysadmins.co.za/tag/glusterfs">GlusterFS</a>, <a href="https://sysadmins.co.za/tag/xtreemfs/">XtreemFS</a>, <a href="">Ceph</a>, etc.</p>
+
+<ul>
+<li>NFS Server (10.8.133.83)</li>
+<li>Rancher Convoy Plugin on Each Docker Node in the Swarm (10.8.133.83, 10.8.166.19, 10.8.142.195)</li>
+</ul>
+
+
+<h2>Setup NFS:</h2>
+
+<p>Setup the NFS Server</p>
+
+<p><em>Update:</em></p>
+
+<p>In order for the containers to be able to change permissions, you need to set <code>(rw,async,no_subtree_check,no_wdelay,crossmnt,insecure,all_squash,insecure_locks,sec=sys,anonuid=0,anongid=0)</code></p>
+
+<ul>
+<li><a href="https://github.com/rancher/rancher/issues/6452">https://github.com/rancher/rancher/issues/6452</a></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt-get install nfs-kernel-server nfs-common -y
+</span><span class='line'><span class="nv">$ </span>mkdir /vol
+</span><span class='line'><span class="nv">$ </span>chown -R nobody:nogroup /vol
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;/vol 10.8.133.83(rw,sync,no_subtree_check) 10.8.166.19(rw,sync,no_subtree_check) 10.8.142.195(rw,sync,no_subtree_check)&#39;</span> &gt;&gt; /etc/exports
+</span><span class='line'><span class="nv">$ </span>sudo systemctl restart nfs-kernel-server
+</span><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>nfs-kernel-server
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup the NFS Clients on each Docker Node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt-get install nfs-common -y
+</span><span class='line'><span class="nv">$ </span>mount 10.8.133.83:/vol /mnt
+</span><span class='line'><span class="nv">$ </span>umount /mnt
+</span><span class='line'><span class="nv">$ </span>df -h
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you can see tht the volume is mounted, unmount it and add it to the <code>fstab</code> so the volume can be mounted on boot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo bash -c <span class="s2">&quot;echo &#39;10.8.133.83:/vol /mnt nfs auto,nofail,noatime,nolock,intr,tcp,actimeo=1800 0 0&#39; &gt;&gt; /etc/fstab&quot;</span>
+</span><span class='line'><span class="nv">$ </span>sudo mount -a
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install Rancher Convoy Plugin:</h2>
+
+<p>The Plugin needs to be installed on each docker node that will be part of the swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd</span> /tmp
+</span><span class='line'><span class="nv">$ </span>wget https://github.com/rancher/convoy/releases/download/v0.5.0/convoy.tar.gz
+</span><span class='line'><span class="nv">$ </span>tar xzf convoy.tar.gz
+</span><span class='line'><span class="nv">$ </span>sudo cp convoy/convoy convoy/convoy-pdata_tools /usr/local/bin/
+</span><span class='line'><span class="nv">$ </span>sudo mkdir -p /etc/docker/plugins/
+</span><span class='line'><span class="nv">$ </span>sudo bash -c <span class="s1">&#39;echo &quot;unix:///var/run/convoy/convoy.sock&quot; &gt; /etc/docker/plugins/convoy.spec&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the init script:</h2>
+
+<p>Thanks to <a href="https://gist.github.com/deviantony/557984d62e867e6f505577b207db6ffc">deviantony</a></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+<span class='line-number'>91</span>
+<span class='line-number'>92</span>
+<span class='line-number'>93</span>
+<span class='line-number'>94</span>
+<span class='line-number'>95</span>
+<span class='line-number'>96</span>
+<span class='line-number'>97</span>
+<span class='line-number'>98</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/bin/sh</span>
+</span><span class='line'><span class="c">### BEGIN INIT INFO</span>
+</span><span class='line'><span class="c"># Provides:</span>
+</span><span class='line'><span class="c"># Required-Start:    $remote_fs $syslog</span>
+</span><span class='line'><span class="c"># Required-Stop:     $remote_fs $syslog</span>
+</span><span class='line'><span class="c"># Default-Start:     2 3 4 5</span>
+</span><span class='line'><span class="c"># Default-Stop:      0 1 6</span>
+</span><span class='line'><span class="c"># Short-Description: Start daemon at boot time</span>
+</span><span class='line'><span class="c"># Description:       Enable service provided by daemon.</span>
+</span><span class='line'><span class="c">### END INIT INFO</span>
+</span><span class='line'>
+</span><span class='line'><span class="nv">dir</span><span class="o">=</span><span class="s2">&quot;/usr/local/bin&quot;</span>
+</span><span class='line'><span class="nv">cmd</span><span class="o">=</span><span class="s2">&quot;convoy daemon --drivers vfs --driver-opts vfs.path=/mnt/docker/volumes&quot;</span>
+</span><span class='line'><span class="nv">user</span><span class="o">=</span><span class="s2">&quot;root&quot;</span>
+</span><span class='line'><span class="nv">name</span><span class="o">=</span><span class="s2">&quot;convoy&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="nv">pid_file</span><span class="o">=</span><span class="s2">&quot;/var/run/$name.pid&quot;</span>
+</span><span class='line'><span class="nv">stdout_log</span><span class="o">=</span><span class="s2">&quot;/var/log/$name.log&quot;</span>
+</span><span class='line'><span class="nv">stderr_log</span><span class="o">=</span><span class="s2">&quot;/var/log/$name.err&quot;</span>
+</span><span class='line'>
+</span><span class='line'>get_pid<span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>    cat <span class="s2">&quot;$pid_file&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>is_running<span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>    <span class="o">[</span> -f <span class="s2">&quot;$pid_file&quot;</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> ps <span class="sb">`</span>get_pid<span class="sb">`</span> &gt; /dev/null 2&gt;<span class="p">&amp;</span>1
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">case</span> <span class="s2">&quot;$1&quot;</span> in
+</span><span class='line'>    start<span class="o">)</span>
+</span><span class='line'>    <span class="k">if</span> is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="s2">&quot;Already started&quot;</span>
+</span><span class='line'>    <span class="k">else</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="s2">&quot;Starting $name&quot;</span>
+</span><span class='line'>        <span class="nb">cd</span> <span class="s2">&quot;$dir&quot;</span>
+</span><span class='line'>        <span class="k">if</span> <span class="o">[</span> -z <span class="s2">&quot;$user&quot;</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>            sudo <span class="nv">$cmd</span> &gt;&gt; <span class="s2">&quot;$stdout_log&quot;</span> 2&gt;&gt; <span class="s2">&quot;$stderr_log&quot;</span> <span class="p">&amp;</span>
+</span><span class='line'>        <span class="k">else</span>
+</span><span class='line'>            sudo -u <span class="s2">&quot;$user&quot;</span> <span class="nv">$cmd</span> &gt;&gt; <span class="s2">&quot;$stdout_log&quot;</span> 2&gt;&gt; <span class="s2">&quot;$stderr_log&quot;</span> <span class="p">&amp;</span>
+</span><span class='line'>        <span class="k">fi</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="nv">$!</span> &gt; <span class="s2">&quot;$pid_file&quot;</span>
+</span><span class='line'>        <span class="k">if</span> ! is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>            <span class="nb">echo</span> <span class="s2">&quot;Unable to start, see $stdout_log and $stderr_log&quot;</span>
+</span><span class='line'>            <span class="nb">exit </span>1
+</span><span class='line'>        <span class="k">fi</span>
+</span><span class='line'>    <span class="k">fi</span>
+</span><span class='line'>    <span class="p">;;</span>
+</span><span class='line'>    stop<span class="o">)</span>
+</span><span class='line'>    <span class="k">if</span> is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>        <span class="nb">echo</span> -n <span class="s2">&quot;Stopping $name..&quot;</span>
+</span><span class='line'>        <span class="nb">kill</span> <span class="sb">`</span>get_pid<span class="sb">`</span>
+</span><span class='line'>        <span class="k">for</span> i in <span class="o">{</span>1..10<span class="o">}</span>
+</span><span class='line'>        <span class="k">do</span>
+</span><span class='line'>            <span class="k">if</span> ! is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>                <span class="nb">break</span>
+</span><span class='line'><span class="nb">            </span><span class="k">fi</span>
+</span><span class='line'>
+</span><span class='line'>            <span class="nb">echo</span> -n <span class="s2">&quot;.&quot;</span>
+</span><span class='line'>            sleep 1
+</span><span class='line'>        <span class="k">done</span>
+</span><span class='line'>        <span class="nb">echo</span>
+</span><span class='line'>
+</span><span class='line'><span class="nb">        </span><span class="k">if</span> is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>            <span class="nb">echo</span> <span class="s2">&quot;Not stopped; may still be shutting down or shutdown may have failed&quot;</span>
+</span><span class='line'>            <span class="nb">exit </span>1
+</span><span class='line'>        <span class="k">else</span>
+</span><span class='line'>            <span class="nb">echo</span> <span class="s2">&quot;Stopped&quot;</span>
+</span><span class='line'>            <span class="k">if</span> <span class="o">[</span> -f <span class="s2">&quot;$pid_file&quot;</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>                rm <span class="s2">&quot;$pid_file&quot;</span>
+</span><span class='line'>            <span class="k">fi</span>
+</span><span class='line'>        <span class="k">fi</span>
+</span><span class='line'>    <span class="k">else</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="s2">&quot;Not running&quot;</span>
+</span><span class='line'>    <span class="k">fi</span>
+</span><span class='line'>    <span class="p">;;</span>
+</span><span class='line'>    restart<span class="o">)</span>
+</span><span class='line'>    <span class="nv">$0</span> stop
+</span><span class='line'>    <span class="k">if</span> is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="s2">&quot;Unable to stop, will not attempt to start&quot;</span>
+</span><span class='line'>        <span class="nb">exit </span>1
+</span><span class='line'>    <span class="k">fi</span>
+</span><span class='line'>    <span class="nv">$0</span> start
+</span><span class='line'>    <span class="p">;;</span>
+</span><span class='line'>    status<span class="o">)</span>
+</span><span class='line'>    <span class="k">if</span> is_running<span class="p">;</span> <span class="k">then</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="s2">&quot;Running&quot;</span>
+</span><span class='line'>    <span class="k">else</span>
+</span><span class='line'>        <span class="nb">echo</span> <span class="s2">&quot;Stopped&quot;</span>
+</span><span class='line'>        <span class="nb">exit </span>1
+</span><span class='line'>    <span class="k">fi</span>
+</span><span class='line'>    <span class="p">;;</span>
+</span><span class='line'>    *<span class="o">)</span>
+</span><span class='line'>    <span class="nb">echo</span> <span class="s2">&quot;Usage: $0 {start|stop|restart|status}&quot;</span>
+</span><span class='line'>    <span class="nb">exit </span>1
+</span><span class='line'>    <span class="p">;;</span>
+</span><span class='line'><span class="k">esac</span>
+</span><span class='line'>
+</span><span class='line'><span class="nb">exit </span>0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Make the script executable:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chmod +x /etc/init.d/convoy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable the service on boot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>convoy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo /etc/init.d/convoy start
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This should be done on all the nodes.</p>
+
+<h2>Externally Managed Convoy Volumes</h2>
+
+<p>One thing to note is that, after your delete a volume, you will still need to delete the directory from the path where its hosted, as the application does not do that by itself.</p>
+
+<p>Creating the Volume Before hand:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>convoy create test1
+</span><span class='line'>test1
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>docker volume ls
+</span><span class='line'>DRIVER              VOLUME NAME
+</span><span class='line'>convoy              test1
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>cat /mnt/docker/volumes/config/vfs_volume_test1.json
+</span><span class='line'><span class="o">{</span><span class="s2">&quot;Name&quot;</span>:<span class="s2">&quot;test1&quot;</span>,<span class="s2">&quot;Size&quot;</span>:0,<span class="s2">&quot;Path&quot;</span>:<span class="s2">&quot;/mnt/docker/volumes/test1&quot;</span>,<span class="s2">&quot;MountPoint&quot;</span>:<span class="s2">&quot;&quot;</span>,<span class="s2">&quot;PrepareForVM&quot;</span>:false,<span class="s2">&quot;CreatedTime&quot;</span>:<span class="s2">&quot;Mon Feb 05 13:07:05 +0000 2018&quot;</span>,<span class="s2">&quot;Snapshots&quot;</span>:<span class="o">{}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Viewing the volume from another node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker volume ls
+</span><span class='line'>DRIVER              VOLUME NAME
+</span><span class='line'>convoy              test1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Creating a Test Service:</h2>
+
+<p>Create a test service to test the data persistence, our docker-compose.yml:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>version: <span class="s1">&#39;3.4&#39;</span>
+</span><span class='line'>
+</span><span class='line'>volumes:
+</span><span class='line'>  test1:
+</span><span class='line'>    external: <span class="nb">true</span>
+</span><span class='line'>
+</span><span class='line'>networks:
+</span><span class='line'>  appnet:
+</span><span class='line'>    external: <span class="nb">true</span>
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  <span class="nb">test</span>:
+</span><span class='line'>    image: alpine:edge
+</span><span class='line'>    <span class="nb">command</span>: sh -c <span class="s2">&quot;ping 127.0.0.1&quot;</span>
+</span><span class='line'>    volumes:
+</span><span class='line'>      - test1:/data
+</span><span class='line'>    networks:
+</span><span class='line'>      - appnet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Creating the Overlay Network and Deploying the Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker network create -d overlay appnet
+</span><span class='line'><span class="nv">$ </span>docker stack deploy -c docker-compose.yml apps
+</span><span class='line'>Creating service apps_test
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Write data to the volume in the container:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it apps_test.1.iojo7fpw8jirqjs3iu8qr7qpe sh
+</span><span class='line'>/ <span class="c"># echo &quot;ok&quot; &gt; /data/file.txt</span>
+</span><span class='line'>/ <span class="c"># cat /data/file.txt</span>
+</span><span class='line'>ok
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Scale the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service scale <span class="nv">apps_test</span><span class="o">=</span>2
+</span><span class='line'>apps_test scaled to 2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Inspect to see if the new replica is on another node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ps apps_test
+</span><span class='line'>ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE               ERROR                         PORTS
+</span><span class='line'>myrq2pc3z26z        apps_test.1         alpine:edge         scw-docker-1        Running             Running <span class="m">45</span> seconds ago
+</span><span class='line'>ny8t97l2q00c         <span class="se">\_</span> apps_test.1     alpine:edge         scw-docker-1        Shutdown            Failed <span class="m">51</span> seconds ago       <span class="s2">&quot;task: non-zero exit (137)&quot;</span>
+</span><span class='line'>iojo7fpw8jir         <span class="se">\_</span> apps_test.1     alpine:edge         scw-docker-1        Shutdown            Failed about a minute ago   <span class="s2">&quot;task: non-zero exit (137)&quot;</span>
+</span><span class='line'>tt0nuusvgeki        apps_test.2         alpine:edge         scw-docker-2        Running             Running <span class="m">15</span> seconds ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Logon to the new container and test if the data is persisted:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it apps_test.2.tt0nuusvgekirw1c5myu720ga sh
+</span><span class='line'>/ <span class="c"># cat /data/file.txt</span>
+</span><span class='line'>ok
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Delete the Stack and Redeploy and have a look at the data we created earlier, and you will notice the data is persisted:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack rm apps
+</span><span class='line'><span class="nv">$ </span>docker stack deploy -c docker-compose.yml apps
+</span><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it apps_test.1.la4w2sbuu8cmv6xamwxl7n0ip cat /data/file.txt
+</span><span class='line'>ok
+</span><span class='line'><span class="nv">$ </span>docker stack rm apps
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create Volume via Compose:</h2>
+
+<p>You can also create the volume on service/stack creation level, so you dont need to create the volume before hand, the compose file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.4&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">test2</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">convoy</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver_opts</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">size</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">10</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">appnet</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">external</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">test</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">alpine:edge</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">sh -c &quot;ping 127.0.0.1&quot;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">test2:/data</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">appnet</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the Stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c docker-compose-new.yml apps
+</span><span class='line'>Creating service apps_test
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the volumes and you will notice that the volume was created:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker volume ls
+</span><span class='line'>DRIVER              VOLUME NAME
+</span><span class='line'>convoy              apps_test2
+</span><span class='line'>convoy              test1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Lets inspect the volume, to see more details about it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker volume inspect apps_test2
+</span><span class='line'><span class="o">[</span>
+</span><span class='line'>    <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;CreatedAt&quot;</span>: <span class="s2">&quot;0001-01-01T00:00:00Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Driver&quot;</span>: <span class="s2">&quot;convoy&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Labels&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;com.docker.stack.namespace&quot;</span>: <span class="s2">&quot;apps&quot;</span>
+</span><span class='line'>        <span class="o">}</span>,
+</span><span class='line'>        <span class="s2">&quot;Mountpoint&quot;</span>: <span class="s2">&quot;/mnt/docker/volumes/apps_test2&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;apps_test2&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Options&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;size&quot;</span>: <span class="s2">&quot;10&quot;</span>
+</span><span class='line'>        <span class="o">}</span>,
+</span><span class='line'>        <span class="s2">&quot;Scope&quot;</span>: <span class="s2">&quot;local&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As mentioned earlier, if you delete the volume, you need to delete the data directories as well</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker volume rm test1
+</span><span class='line'>test1
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>ls /mnt/docker/volumes/
+</span><span class='line'>apps_test2  config  test1
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>rm -rf /mnt/docker/volumes/test1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>More info about the project:
+- <a href="https://github.com/rancher/convoy">https://github.com/rancher/convoy</a></p>
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/02/12/setup-a-nfs-server-on-ubuntu/">Setup a NFS Server on Ubuntu</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-02-12T00:26:56+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>12</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>12:26 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://i.snag.gy/3sUALo.jpg" alt="" /></p>
+
+<p>Quick post on how to setup a NFS Server on Ubuntu and how to setup the client to interact with the NFS Server.</p>
+
+<h2>Setup the Dependencies:</h2>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>sudo apt-get install nfs-kernel-server nfs-common -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Directory for NFS and set permissions:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mkdir /vol
+</span><span class='line'>chown -R nobody:nogroup /vol
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Allow the Clients:</h2>
+
+<p>We need to set in the <code>exports</code> file, the clients we would like to allow:</p>
+
+<ul>
+<li><code>rw</code>: Allows Client R/W Access to the Volume.</li>
+<li><code>sync</code>: This option forces NFS to write changes to disk before replying. More stable and Consistent. Note, it does reduce the speed of file operations.</li>
+<li><code>no_subtree_check</code>: This prevents subtree checking, which is a process where the host must check whether the file is actually still available in the exported tree for every request. This can cause many problems when a file is renamed while the client has it opened. In almost all cases, it is better to disable subtree checking.</li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;/vol 10.8.133.83(rw,sync,no_subtree_check) 10.8.166.19(rw,sync,no_subtree_check) 10.8.142.195(rw,sync,no_subtree_check)&#39;</span> &gt;&gt; /etc/exports
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Start the NFS Server:</h2>
+
+<p>Restart the service and enable the service on boot:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo systemctl restart nfs-kernel-server
+</span><span class='line'><span class="nv">$ </span>sudo systemctl <span class="nb">enable </span>nfs-kernel-server
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Client Side:</h2>
+
+<p>We will mount the NFS Volume to our Clients <code>/mnt</code> partition.</p>
+
+<p>Install the dependencies:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt-get install nfs-common -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test if we can mount the volume, then unmount it, as we will set the config in our <code>fstab</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo mount 10.8.133.83:/vol /mnt
+</span><span class='line'><span class="nv">$ </span>sudo umount /mnt
+</span><span class='line'><span class="nv">$ </span>df -h
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the config in your <code>fstab</code>, then mount it from there:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo bash -c <span class="s2">&quot;echo &#39;10.8.133.83:/vol /mnt nfs auto,nofail,noatime,nolock,intr,tcp,actimeo=1800 0 0&#39; &gt;&gt; /etc/fstab&quot;</span>
+</span><span class='line'><span class="nv">$ </span>sudo mount -a
+</span><span class='line'><span class="nv">$ </span>df -h
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now you shoule be able to write to your NFS Volume from your client.</p>
+
+<p>Sources:
+- <a href="https://www.digitalocean.com/community/tutorials/how-to-set-up-an-nfs-mount-on-ubuntu-16-04">1</a> <a href="https://gist.github.com/deviantony/557984d62e867e6f505577b207db6ffc%">2</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2215,313 +2952,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/12/13/ssh-host-key-warnings-with-strict-checking-enabled/">SSH Host Key Warnings With Strict Checking Enabled</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-12-13T09:07:29+02:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>13</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>9:07 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>When you format / reload a server and the host gets the same IP, when you try to SSH to that host, you might get a warning like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh 192.168.1.104
-</span><span class='line'>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-</span><span class='line'>@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
-</span><span class='line'>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-</span><span class='line'>IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
-</span><span class='line'>Someone could be eavesdropping on you right now <span class="o">(</span>man-in-the-middle attack<span class="o">)</span>!
-</span><span class='line'>It is also possible that a host key has just been changed.
-</span><span class='line'>The fingerprint <span class="k">for</span> the ECDSA key sent by the remote host is
-</span><span class='line'>a1:a2:a3:a4:a5:a6:a7:a8:a9:b0:b1:b2:b3:b4:b5:b6.
-</span><span class='line'>Please contact your system administrator.
-</span><span class='line'>Add correct host key in /home/pi/.ssh/known_hosts to get rid of this message.
-</span><span class='line'>Offending ECDSA key in /home/pi/.ssh/known_hosts:10
-</span><span class='line'>ECDSA host key <span class="k">for</span> 192.168.1.104 has changed and you have requested strict checking.
-</span><span class='line'>Host key verification failed.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This is because we have <code>StrictMode</code> enabled in our SSH Configuration:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/ssh/sshd_config <span class="p">|</span> grep -i stric
-</span><span class='line'>StrictModes yes
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To remove the offending key from your <code>known_hosts</code> file, without opening it, you can use <code>ssh-keygen</code> to remove it:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh-keygen -f .ssh/known_hosts -R 192.168.1.104
-</span><span class='line'><span class="c"># Host 192.168.1.104 found: line 10 type ECDSA</span>
-</span><span class='line'>.ssh/known_hosts updated.
-</span><span class='line'>Original contents retained as .ssh/known_hosts.old
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when you SSH the warning should be removed.</p>
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/12/11/setup-a-3-node-kubernetes-cluster-on-ubuntu/">Setup a 3 Node Kubernetes Cluster on Ubuntu</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-12-11T16:31:47+02:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>4:31 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://kumorilabs.com/img/blog/kubernetes-logo.png" alt="" /></p>
-
-<p>Setup a 3 Node Kubernetes Cluster on Ubuntu 16.04</p>
-
-<h2>What is Kubernetes?</h2>
-
-<p>As referenced from their <a href="https://kubernetes.io/">website</a>:</p>
-
-<ul>
-<li>&ldquo;Kubernetes is an open-source system for automating deployment, scaling, and management of containerized applications.&rdquo;</li>
-</ul>
-
-
-<h2>Our Setup:</h2>
-
-<p>For this setup I will be using 3 AWS EC2 Instances with Ubuntu 16.04. One node will act as the master node, and the other 2 nodes, will act as nodes, previously named minions.</p>
-
-<p>We will deploy Kubernetes on all 3 nodes, the master will be the node where we will initialize our cluster, deploy our weave network, applications and we will execute the join command on the worker nodes to join the master to form the cluster.</p>
-
-<h2>Deploy Kubernetes: Master</h2>
-
-<p>The following commands will be used to install Kubernetes, it will be executed with root permissions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
-</span><span class='line'><span class="nv">$ </span>sudo apt install docker.io apt-transport-https -qy
-</span><span class='line'><span class="nv">$ </span>sudo apt update
-</span><span class='line'><span class="nv">$ </span>curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg <span class="p">|</span> sudo apt-key add -
-</span><span class='line'><span class="nv">$ </span>sudo su -c <span class="s1">&#39;echo &quot;deb http://apt.kubernetes.io/ kubernetes-xenial main&quot; &gt; /etc/apt/sources.list.d/app&#39;</span> root
-</span><span class='line'><span class="nv">$ </span>apt update
-</span><span class='line'><span class="nv">$ </span>sudo apt install kubelet kubeadm kubernetes-cni -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we would like to set up the master by initializing the cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo kubeadm init --kubernetes-version stable-1.8
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The output will provide you with instructions to setup the configurations for the master node, and provide you with a join token for your worker nodes, remember to make not of this token string, as we will need it later for our worker nodes. As your normal user, run the following to setup the config:</p>
-
-<p>Remember to not run this as root, and as the normal user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p <span class="nv">$HOME</span>/.kube
-</span><span class='line'><span class="nv">$ </span>sudo cp -i /etc/kubernetes/admin.conf <span class="nv">$HOME</span>/.kube/config
-</span><span class='line'><span class="nv">$ </span>sudo chown <span class="k">$(</span>id -u<span class="k">)</span>:<span class="k">$(</span>id -g<span class="k">)</span> <span class="nv">$HOME</span>/.kube/config
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to deploy a network for our pods:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl apply -f <span class="s2">&quot;https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d &#39;\n&#39;)&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Lets confirm if all our resources are in its desired state, a small snippet of the output will look like the one below:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get all -n kube-system
-</span><span class='line'>
-</span><span class='line'>...
-</span><span class='line'>NAME                                          READY     STATUS    RESTARTS   AGE
-</span><span class='line'>po/etcd-ip-172-31-40-211                      1/1       Running   <span class="m">0</span>          6h
-</span><span class='line'>po/kube-apiserver-ip-172-31-40-211            1/1       Running   <span class="m">0</span>          6h
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once all of the resources are in its desired state, we can head along to our worker nodes, to join them to the cluster</p>
-
-<h2>Deploy Kubernetes: Worker Nodes</h2>
-
-<p>As I have 2 worker nodes, we will need to deploy the following on both of our worker nodes, first to deploy Kubernetes on our nodes with root permission:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> sudo apt upgrade -y
-</span><span class='line'><span class="nv">$ </span>sudo apt install docker.io apt-transport-https -qy
-</span><span class='line'><span class="nv">$ </span>sudo apt update
-</span><span class='line'><span class="nv">$ </span>curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg <span class="p">|</span> sudo apt-key add -
-</span><span class='line'><span class="nv">$ </span>sudo su -c <span class="s1">&#39;echo &quot;deb http://apt.kubernetes.io/ kubernetes-xenial main&quot; &gt; /etc/apt/sources.list.d/app&#39;</span> root
-</span><span class='line'><span class="nv">$ </span>apt update
-</span><span class='line'><span class="nv">$ </span>sudo apt install kubelet kubeadm kubernetes-cni -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once Kubernetes is installed, join the Master node by executing the join command:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo kubeadm join --token 49abf7.247d663db97f8504 172.31.40.211:6443 --discovery-token-ca-cert-hash sha256:3a3b301cfbac0995c69a0115989ea384230470d6836ae0e13e71dbdf15ffbb48
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Do the 2 steps on the other node, then head back to the master node.</p>
-
-<h2>Verifying if All Nodes are Checked In</h2>
-
-<p>To verify if all nodes are available and reachable in the cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME               STATUS    ROLES     AGE       VERSION
-</span><span class='line'>ip-172-31-36-68    Ready     &lt;none&gt;    6h        v1.8.5
-</span><span class='line'>ip-172-31-40-211   Ready     master    6h        v1.8.5
-</span><span class='line'>ip-172-31-44-80    Ready     &lt;none&gt;    6h        v1.8.5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy Services to Kubernetes:</h2>
-
-<p>Kubernetes has Awesome Examples on their <a href="https://github.com/kubernetes/kubernetes/tree/master/examples">Github Repository</a>.</p>
-
-<p>Since the awesomeness of <a href="https://github.com/openfaas">OpenFaas</a>, I will deploy OpenFaas on Kubernetes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>git clone https://github.com/openfaas/faas-netes
-</span><span class='line'><span class="nv">$ </span><span class="nb">cd </span>faas-netes
-</span><span class='line'><span class="nv">$ </span>kubectl apply -f faas.yml,monitoring.yml,rbac.yml
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Give it about a minute or so, then you should see the pods running in their desired state:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods
-</span><span class='line'>NAME                           READY     STATUS    RESTARTS   AGE
-</span><span class='line'>alertmanager-77b4b476b-zxtcz   1/1       Running   <span class="m">0</span>          4h
-</span><span class='line'>crypto-7d8b7f999c-7l85k        1/1       Running   <span class="m">0</span>          1h
-</span><span class='line'>faas-netesd-64fb9b4dfb-hc8gh   1/1       Running   <span class="m">0</span>          4h
-</span><span class='line'>gateway-69c9d949f-q57zh        1/1       Running   <span class="m">0</span>          4h
-</span><span class='line'>prometheus-7fbfd8bfb8-d4cft    1/1       Running   <span class="m">0</span>          4h
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we have the desired state, head over to the OpenFaas Gateway WebUI: <code>http://master-public-ip:31112/ui/</code>, select &ldquo;Deploy New Function&rdquo;, you can use your own function or select one from the store.</p>
-
-<p>I am going to use Figlet from the store, once the pod has been deployed, select the function, enter any text into the request body and select invoke. I have used my name and surname, and turns out into:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'> ____                      ____       _    _
-</span><span class='line'><span class="p">|</span>  _ <span class="se">\ </span>_   _  __ _ _ __   <span class="p">|</span> __ <span class="o">)</span>  ___<span class="p">|</span> <span class="p">|</span> _<span class="p">|</span> <span class="p">|</span> _____ _ __
-</span><span class='line'><span class="p">|</span> <span class="p">|</span>_<span class="o">)</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span>/ _<span class="sb">`</span> <span class="p">|</span> <span class="s1">&#39;_ \  |  _ \ / _ \ |/ / |/ / _ \ &#39;</span>__<span class="p">|</span>
-</span><span class='line'><span class="p">|</span>  _ &lt;<span class="p">|</span> <span class="p">|</span>_<span class="p">|</span> <span class="p">|</span> <span class="o">(</span>_<span class="p">|</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span>_<span class="o">)</span> <span class="p">|</span>  __/   &lt;<span class="p">|</span>   &lt;  __/ <span class="p">|</span>
-</span><span class='line'><span class="p">|</span>_<span class="p">|</span> <span class="se">\_\\</span>__,_<span class="p">|</span><span class="se">\_</span>_,_<span class="p">|</span>_<span class="p">|</span> <span class="p">|</span>_<span class="p">|</span> <span class="p">|</span>____/ <span class="se">\_</span>__<span class="p">|</span>_<span class="p">|</span><span class="se">\_\_</span><span class="p">|</span><span class="se">\_\_</span>__<span class="p">|</span>_<span class="p">|</span>
-</span><span class='line'>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/">Kubernetes Overview</a></li>
-<li><a href="https://kubernetes.io/docs/concepts/">Kubernetes Concepts</a></li>
-<li><a href="https://blog.alexellis.io/tag/kubernetes/">Kubernetes Blogs</a></li>
-<li><a href="https://blog.alexellis.io/tag/openfaas/">OpenFaas Blogs</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/22">&larr; Older</a>
@@ -2572,6 +3002,14 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/05/09/selecting-and-returning-specific-data-with-jq/">Selecting and Returning Specific Data With JQ</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2020/05/08/server-backups-to-google-drive-using-the-drive-cli-tool/">Server Backups to Google Drive Using the Drive CLI Tool</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/05/05/how-to-setup-a-redis-exporter-for-prometheus/">How to Setup a Redis Exporter for Prometheus</a>
       </li>
     
@@ -2581,14 +3019,6 @@
     
       <li class="post">
         <a href="/blog/2020/04/27/how-to-do-port-forwarding-with-iptables/">How to Do Port Forwarding With Iptables</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/04/27/how-to-set-a-static-ip-in-ubuntu-18/">How to Set a Static IP in Ubuntu 18</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/04/26/graphing-covid-19-stats-with-grafana-and-elasticsearch-using-python/">Graphing Covid-19 Stats With Grafana and Elasticsearch Using Python</a>
       </li>
     
   </ul>

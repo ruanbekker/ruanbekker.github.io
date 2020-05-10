@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="It&rsquo;s promotion time with VULTR! Get a head start with some free credits. Promotion VULTR has a promotion running for a limited time, when you &hellip;">
+  <meta name="description" content="Today we will be looking into Hetzner&rsquo;s Cloud Storage Volumes and how you can resize volumes on the fly! What is Hetzner&rsquo;s Cloud Storage &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,532 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/12/19/resizing-hetzner-cloud-block-storage-volumes-on-the-fly/">Resizing Hetzner Cloud Block Storage Volumes on the Fly</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-12-19T07:59:11+02:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>19</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>7:59 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/50203557-96a01100-036a-11e9-8fd5-2953497f92d8.png" alt="" /></p>
+
+<p>Today we will be looking into Hetzner&rsquo;s Cloud Storage Volumes and how you can resize volumes on the fly!</p>
+
+<h2>What is Hetzner&rsquo;s Cloud Storage Volumes</h2>
+
+<p><a href="https://www.hetzner.com/cloud">Hetzner Cloud</a> offers a fast, flexible, and cost-effective SSD based Block Storage which can be attach to your Hetzner Cloud Server. At this point in time its available in the Nuremberg and Helsinki regions.</p>
+
+<h2>Resizing of Volumes</h2>
+
+<p>Volumes can be resized up to 10TB and the console allows you to resize in 1GB increments. You are allowed to increase, but cannot decrease.</p>
+
+<h2>Demo through Cloud Volumes</h2>
+
+<p>Let&rsquo;s run through a demo, where we will do the following:</p>
+
+<ul>
+<li>Provision a Server</li>
+<li>Provision a Volume (XFS Filesystem / EXT4 is also optional)</li>
+<li>Inspect the Volume, do some performance testing</li>
+<li>Resize the Volume via Hetzner Cloud Console</li>
+<li>Grow the XFS Filesystem</li>
+</ul>
+
+
+<p>After provisioning a server, which takes less than a minute, you should see that the server is created:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202325-6f474500-0366-11e9-8e7d-e96f0c78beba.png" alt="" /></p>
+
+<p>SSH into your server. At this moment, we have not provisioned any volumes, so only the root partition should be mounted. Look at the block allocation:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>sda      8:0    <span class="m">0</span> 19.1G  <span class="m">0</span> disk
+</span><span class='line'>--sda1   8:1    <span class="m">0</span> 19.1G  <span class="m">0</span> part /
+</span><span class='line'>sr0     11:0    <span class="m">1</span> 1024M  <span class="m">0</span> rom
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look at the fstab:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/fstab
+</span><span class='line'><span class="c"># &lt;file system&gt; &lt;mount point&gt;   &lt;type&gt;  &lt;options&gt;       &lt;dump&gt;  &lt;pass&gt;</span>
+</span><span class='line'><span class="nv">UUID</span><span class="o">=</span>2f54e8e6-ff9c-497a-88ea-ce159f6cd283 /               ext4    discard,errors<span class="o">=</span>remount-ro <span class="m">0</span>       1
+</span><span class='line'>/dev/fd0        /media/floppy0  auto    rw,user,noauto,exec,utf8 <span class="m">0</span>       0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And have a look at the mounted disks layout:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
+</span><span class='line'>tmpfs           195M  652K  194M   1% /run
+</span><span class='line'>/dev/sda1        19G  1.6G   17G   9% /
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
+</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
+</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now, time to provision a Volume. Head over to the Volumes section:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202468-dfee6180-0366-11e9-8e48-aaadeb707938.png" alt="" /></p>
+
+<p>I&rsquo;m going ahead with creating a volume with 10GB of space and assign it to my server, and yeah that&rsquo;s right, 10GB of storage is 0,40 EUR per month, epic value for money!</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202502-fd233000-0366-11e9-9c71-475966488ca1.png" alt="" /></p>
+
+<p>After you volume is created, you should see similar output below:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202614-5a1ee600-0367-11e9-97ab-8352d5b6f064.png" alt="" /></p>
+
+<p>Head back to your server, and have a look at the output when running the similar commands from earlier:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>sda      8:0    <span class="m">0</span> 19.1G  <span class="m">0</span> disk
+</span><span class='line'>--sda1   8:1    <span class="m">0</span> 19.1G  <span class="m">0</span> part /
+</span><span class='line'>sdb      8:16   <span class="m">0</span>   10G  <span class="m">0</span> disk /mnt/HC_Volume_1497823
+</span><span class='line'>sr0     11:0    <span class="m">1</span> 1024M  <span class="m">0</span> rom
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The fstab config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/fstab
+</span><span class='line'><span class="c"># &lt;file system&gt; &lt;mount point&gt;   &lt;type&gt;  &lt;options&gt;       &lt;dump&gt;  &lt;pass&gt;</span>
+</span><span class='line'><span class="nv">UUID</span><span class="o">=</span>2f54e8e6-ff9c-497a-88ea-ce159f6cd283 /               ext4    discard,errors<span class="o">=</span>remount-ro <span class="m">0</span>       1
+</span><span class='line'>/dev/fd0        /media/floppy0  auto    rw,user,noauto,exec,utf8 <span class="m">0</span>       0
+</span><span class='line'>/dev/disk/by-id/scsi-0HC_Volume_1497823 /mnt/HC_Volume_1497823 xfs discard,nofail,defaults <span class="m">0</span> 0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The disk layout:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
+</span><span class='line'>tmpfs           195M  660K  194M   1% /run
+</span><span class='line'>/dev/sda1        19G  1.6G   17G   9% /
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
+</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
+</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
+</span><span class='line'>/dev/sdb         10G   43M   10G   1% /mnt/HC_Volume_1497823
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can see from the output above how easy it is to provision a volume to your Hetzner Cloud Server. And everything gets done for you, the disk is mounted and the <code>/etc/fstab</code> configuration is populated for you.</p>
+
+<p>Time for some performance testing on the volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>dd <span class="nv">bs</span><span class="o">=</span>2M <span class="nv">count</span><span class="o">=</span><span class="m">256</span> <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>/mnt/HC_Volume_1497823/test.dd
+</span><span class='line'>256+0 records in
+</span><span class='line'>256+0 records out
+</span><span class='line'><span class="m">536870912</span> bytes <span class="o">(</span><span class="m">537</span> MB, <span class="m">512</span> MiB<span class="o">)</span> copied, 0.911306 s, <span class="m">589</span> MB/s
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Pretty neat right? :D</p>
+
+<p>Let&rsquo;s resize the volume via the Hetzner Cloud Console to 20GB and resize the filesystem. From the Console, head over to the volumes section, select the more options and select resize:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50203010-bcc4b180-0368-11e9-86e8-653490ad6870.png" alt="" /></p>
+
+<p>After the volume has been resized, head back to your server and resize the filesystem. As we are using XFS Filesystem, we will use <code>xfs_growfs</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>xfs_growfs /dev/sdb
+</span><span class='line'>meta-data<span class="o">=</span>/dev/sdb               <span class="nv">isize</span><span class="o">=</span><span class="m">512</span>    <span class="nv">agcount</span><span class="o">=</span>4, <span class="nv">agsize</span><span class="o">=</span><span class="m">655360</span> <span class="nv">blks</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sectsz</span><span class="o">=</span><span class="m">512</span>   <span class="nv">attr</span><span class="o">=</span>2, <span class="nv">projid32bit</span><span class="o">=</span><span class="nv">1</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">crc</span><span class="o">=</span><span class="m">1</span>        <span class="nv">finobt</span><span class="o">=</span><span class="m">1</span> <span class="nv">spinodes</span><span class="o">=</span><span class="m">0</span> <span class="nv">rmapbt</span><span class="o">=</span><span class="nv">0</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">reflink</span><span class="o">=</span>0
+</span><span class='line'><span class="nv">data</span>     <span class="o">=</span>                       <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>2621440, <span class="nv">imaxpct</span><span class="o">=</span><span class="nv">25</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sunit</span><span class="o">=</span><span class="m">0</span>      <span class="nv">swidth</span><span class="o">=</span><span class="m">0</span> blks
+</span><span class='line'><span class="nv">naming</span>   <span class="o">=</span>version <span class="m">2</span>              <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   ascii-ci<span class="o">=</span><span class="m">0</span> <span class="nv">ftype</span><span class="o">=</span>1
+</span><span class='line'><span class="nv">log</span>      <span class="o">=</span>internal               <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>2560, <span class="nv">version</span><span class="o">=</span><span class="nv">2</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sectsz</span><span class="o">=</span><span class="m">512</span>   <span class="nv">sunit</span><span class="o">=</span><span class="m">0</span> blks, lazy-count<span class="o">=</span>1
+</span><span class='line'><span class="nv">realtime</span> <span class="o">=</span>none                   <span class="nv">extsz</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>0, <span class="nv">rtextents</span><span class="o">=</span>0
+</span><span class='line'>data blocks changed from <span class="m">2621440</span> to 5242880
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look at the disk layout and see that the filesystem was resized on the fly. If you have applications writing/reading to and from that volume, its better to unmount it first.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
+</span><span class='line'>tmpfs           195M  660K  194M   1% /run
+</span><span class='line'>/dev/sda1        19G  2.1G   16G  12% /
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
+</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
+</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
+</span><span class='line'>/dev/sdb         20G  565M   20G   3% /mnt/HC_Volume_1497823
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I must admit, I am really stoked with Hetzner&rsquo;s offerings and their performance. I&rsquo;ve been hosting servers with them for the past 5 months and so far they really impressed me.</p>
+
+<p>Have a look at <a href="https://www.hetzner.com/cloud">Hetzner Cloud&rsquo;s</a> offerings, they have great prices as you can start off with a server from as little as 2.49 EUR per month, which gives you 1vCPU, 2GB of RAM, 20GB disk Space and 20TB of traffic. I mean, thats awesome value for money. They also offer Floating IP&rsquo;s, Backups, etc.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.hetzner.com/cloud">Hetzner Cloud&rsquo;s</a></li>
+<li><a href="https://wiki.hetzner.de/index.php/CloudServer/en#What_are_the_Hetzner_Cloud_Volumes.3F">More info on Hetzner Volumes</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
+
+<center>
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick" />
+<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
+<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+</form>
+</center>
+
+
+<p><br></p>
+
+<p>Ad space:</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+
+
+<p><p></p>
+
+<p>Thanks for reading!</p>
+</div>
+  
+  
+
+
+    </article>
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/12/18/creating-a-ui-in-python-flask-and-bootstrap-for-our-serverless-url-shortener/">Creating a UI in Python Flask and Bootstrap for Our Serverless URL Shortener</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-12-18T16:35:53+02:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>18</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>4:35 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/python-flask.png" alt="" /></p>
+
+<p>From a <a href="https://blog.ruanbekker.com/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws/">previous</a> post, we went through the setup of building a <a href="https://blog.ruanbekker.com/blog/2018/11/30/how-to-setup-a-serverless-url-shortener-with-api-gateway-lambda-and-dynamodb-on-aws/">Serverless URL Shortener with API Gateway, Lambda, and DynamoDB on AWS</a>. Today we will build a Web User Interface using Python Flask, Bootstrap and JavaScript that will communicate to our API to shorten URL&rsquo;s.</p>
+
+<p>Note: Although using Python Flask is a Hosted option, you could also use <a href="https://s3-us-west-2.amazonaws.com/sha-public-us-west-2/URLShortener/index.html">this example</a> to host it as a web page on Amazon S3, for the complete serverless route.</p>
+
+<h2>Dependencies:</h2>
+
+<p>We need Flask, Gunicorn (optional) and Requests:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install flask gunicorn requests
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Application Code:</h2>
+
+<p>It&rsquo;s good practice to use a API Key for some level of security, but if not, you can just remove the headers section of <code>x-api-key</code>.</p>
+
+<p>The application relies on 3 environment variables: <code>APP_TITLE</code> - which is the banner name (defaults to &ldquo;My URL Shortener&rdquo; if none is set), <code>TINY_API_URL</code> - which is the URL to create the shortened url and <code>X_API_KEY</code> which is the api key for your API.</p>
+
+<p>The content of <code>app.py</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">render_template</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">url_for</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">os</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">sys</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">socket</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">logging</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">tiny_api_url</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;TINY_API_URL&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+</span><span class='line'><span class="n">tiny_api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;X_API_KEY&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+</span><span class='line'><span class="n">app_title</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;APP_TITLE&#39;</span><span class="p">,</span> <span class="s">&#39;My URL Shortener&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">tiny_api_url</span> <span class="o">==</span> <span class="bp">None</span> <span class="ow">or</span> <span class="n">tiny_api_key</span> <span class="o">==</span> <span class="bp">None</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">logging</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&quot;Failed to load configuration&quot;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">headers</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;Content-Type&#39;</span><span class="p">:</span> <span class="s">&#39;application/json&#39;</span><span class="p">,</span> <span class="s">&#39;X-Api-Key&#39;</span><span class="p">:</span> <span class="n">tiny_api_key</span><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s">&#39;index.html&#39;</span><span class="p">,</span> <span class="n">app_title</span><span class="o">=</span><span class="n">app_title</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/shortened&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;GET&#39;</span><span class="p">,</span> <span class="s">&#39;POST&#39;</span><span class="p">])</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">search_request</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">user_url</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s">&quot;input&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">tiny_api_url</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span>
+</span><span class='line'>        <span class="n">data</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+</span><span class='line'>            <span class="s">&quot;long_url&quot;</span><span class="p">:</span> <span class="n">user_url</span>
+</span><span class='line'>            <span class="p">}</span>
+</span><span class='line'>        <span class="p">)</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s">&#39;results.html&#39;</span><span class="p">,</span> <span class="n">app_title</span><span class="o">=</span><span class="n">app_title</span><span class="p">,</span> <span class="n">res</span><span class="o">=</span><span class="n">response</span><span class="o">.</span><span class="n">content</span> <span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">passthrough_errors</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>JavaScript</h2>
+
+<p>We want to copy the value of the shortened url response to clipboard when clicking on a button. For that functionality, we need some javascript.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p static/js
+</span><span class='line'><span class="nv">$ </span>touch static/js/clipboard.js
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>the content for our javascript function - <code>static/js/clipboard.js</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='javascript'><span class='line'><span class="kd">function</span> <span class="nx">copyToClipboard</span><span class="p">()</span> <span class="p">{</span>
+</span><span class='line'>  <span class="kd">var</span> <span class="nx">copyText</span> <span class="o">=</span> <span class="nb">document</span><span class="p">.</span><span class="nx">getElementById</span><span class="p">(</span><span class="s2">&quot;input&quot;</span><span class="p">);</span>
+</span><span class='line'>  <span class="nx">copyText</span><span class="p">.</span><span class="nx">select</span><span class="p">();</span>
+</span><span class='line'>  <span class="nb">document</span><span class="p">.</span><span class="nx">execCommand</span><span class="p">(</span><span class="s2">&quot;Copy&quot;</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>HTML</h2>
+
+<p>The content for <code>templates/index.html</code> :</p>
+
+<script src="https://gist.github.com/ruanbekker/0c12fd81c94dc9019641dd536d704519.js"></script>
+
+
+<p>The content for <code>templates/results.html</code> :</p>
+
+<script src="https://gist.github.com/ruanbekker/01e27db70d4a2f60393b927697b2ca57.js"></script>
+
+
+<h2>Run the Server</h2>
+
+<p>Before we run the server, we need to set the environment variables as mentioned earlier:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">TINY_API_URL</span><span class="o">=</span>https://tiny-api.mydomain.com/create
+</span><span class='line'><span class="nv">X_API_KEY</span><span class="o">=</span>someRandomSecretKey09876543210
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the Server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gunicorn -w <span class="m">2</span> -b 0.0.0.0:8080 --access-logfile<span class="o">=</span>/dev/stdout --error-log<span class="o">=</span>/dev/stderr app:app
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After booting the server, access the server on <code>http://localhost:8080/</code> and the response should look like:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50162763-c5c16e80-02e7-11e9-8744-a4c3c3c51f8e.png" alt="" /></p>
+
+<h2>Dockerizing this Application</h2>
+
+<p>The source code for this project is available on my <a href="https://github.com/ruanbekker/flask-url-shortener-ui">github repository</a></p>
+
+<h2>Thank You</h2>
+
+<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
+
+<center>
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick" />
+<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
+<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+</form>
+</center>
+
+
+<p><br></p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1851,525 +2377,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/11/21/golang-building-a-basic-web-server-in-go/">Golang: Building a Basic Web Server in Go</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-11-21T07:57:54+02:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>21</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>7:57 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/golang-web-server.png" alt="" /></p>
-
-<p>Continuing with our <a href="https://blog.ruanbekker.com/blog/categories/golang-tutorial/">#golang-tutorial</a> blog series, in this post we will setup a Basic HTTP Server in Go.</p>
-
-<h2>Our Web Server:</h2>
-
-<p>Our Web Server will respond on 2 Request Paths:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>- / -&gt; returns "Hello, Wolrd!"
-</span><span class='line'>- /cheers -&gt; returns "Goodbye!"</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Application Code:</h2>
-
-<p>If you have not setup your golang environment, you can do so by visiting <a href="https://medium.com/@AkyunaAkish/setting-up-a-golang-development-environment-mac-os-x-d58e5a7ea24f">@AkyunaAkish&rsquo;s Post on Setting up a Golang Development Enviornment on MacOSX</a>.</p>
-
-<p>Create the <code>server.go</code> or any filename of your choice. Note: I created 2 ways of returning the content of http response for demonstration</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-</pre></td><td class='code'><pre><code class='go'><span class='line'><span class="kn">package</span> <span class="nx">main</span>
-</span><span class='line'>
-</span><span class='line'><span class="kn">import</span> <span class="p">(</span>
-</span><span class='line'>  <span class="s">&quot;io&quot;</span>
-</span><span class='line'>        <span class="s">&quot;log&quot;</span>
-</span><span class='line'>  <span class="s">&quot;net/http&quot;</span>
-</span><span class='line'><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">hello</span><span class="p">(</span><span class="nx">w</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">Header</span><span class="p">().</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;Content-Type&quot;</span><span class="p">,</span> <span class="s">&quot;text/plain; charset=utf-8&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">WriteHeader</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;Hello, World!&quot;</span> <span class="o">+</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hello function handler was executed&quot;</span><span class="p">)</span>
-</span><span class='line'><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">goodbye</span><span class="p">(</span><span class="nx">w</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">Header</span><span class="p">().</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;Content-Type&quot;</span><span class="p">,</span> <span class="s">&quot;text/plain; charset=utf-8&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">WriteHeader</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">io</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span> <span class="s">&quot;Cheers!&quot;</span> <span class="o">+</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;goodbye function handler was executed&quot;</span><span class="p">)</span>
-</span><span class='line'><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">main</span><span class="p">()</span> <span class="p">{</span>
-</span><span class='line'>  <span class="nx">http</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span> <span class="nx">hello</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">http</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;/cheers&quot;</span><span class="p">,</span> <span class="nx">goodbye</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8000&quot;</span><span class="p">,</span> <span class="kc">nil</span><span class="p">)</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Explanation of what we are doing:</p>
-
-<ul>
-<li>Programs runs in the package <code>main</code></li>
-<li>We are importing 3 packages: <code>io</code>, <code>log</code> and <code>net/http</code></li>
-<li>HandleFunc registers the handler function for the given pattern in the DefaultServeMux, in this case the HandleFunc registers <code>/</code> to the <code>hello</code> handler function and <code>/cheers</code> to the goodbye handler function.</li>
-<li>In our 2 handler functions, we have two arguments:
-
-<ul>
-<li>The first one is <code>http.ResponseWriter</code> and its corresponding response stream, which is actually an interface type.</li>
-<li>The second is <code>*http.Request</code> and its corresponding HTTP request. <code>io.WriteString</code> is a helper function to let you write a string into a given writable stream, this is named the <code>io.Writer</code> interface in Golang.</li>
-</ul>
-</li>
-<li>ListenAndServe starts an HTTP server with a given address and handler. The handler is usually nil, which means to use DefaultServeMux</li>
-<li>The logging is not a requirement, but used it for debugging/verbosity</li>
-</ul>
-
-
-<h2>Running our Server:</h2>
-
-<p>Run the http server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>go run server.go
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Client Side Requests:</h2>
-
-<p>Run client side http requests to your golang web server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i http://localhost:8000/
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
-</span><span class='line'>Date: Wed, <span class="m">21</span> Nov <span class="m">2018</span> 21:33:42 GMT
-</span><span class='line'>Content-Length: 14
-</span><span class='line'>
-</span><span class='line'>Hello, World!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And another request to <code>/cheers</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i http://localhost:8000/cheers
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
-</span><span class='line'>Date: Wed, <span class="m">21</span> Nov <span class="m">2018</span> 21:29:46 GMT
-</span><span class='line'>Content-Length: 8
-</span><span class='line'>
-</span><span class='line'>Cheers!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Server Side Output:</h2>
-
-<p>As we used the log package, the logging gets returned to stdout:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>go run server.go
-</span><span class='line'>2018/11/21 23:29:36 hello <span class="k">function</span> handler was executed
-</span><span class='line'>2018/11/21 23:29:46 goodbye <span class="k">function</span> handler was executed
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://golang.org/doc/code.html">https://golang.org/doc/code.html</a></li>
-<li><a href="https://gowalker.org/net/http#HandleFunc">https://gowalker.org/net/http#HandleFunc</a></li>
-<li><a href="https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring">https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring</a></li>
-<li><a href="https://www.alexedwards.net/blog/golang-response-snippets">https://www.alexedwards.net/blog/golang-response-snippets</a></li>
-</ul>
-
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-</div>
-  
-  
-
-
-    </article>
-  
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/11/13/create-read-only-users-in-mongodb/">Create Read Only Users in MongoDB</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-11-13T00:02:53+02:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>13</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>12:02 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this post I will demonstrate how to setup 2 read only users in MongoDB, one user that will have access to one MongoDB Database and all the Collections, and one user with access to one MongoDB Database and only one Collection.</p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299";
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>First Method: Creating and Assigning the User</h2>
-
-<p>The first method we will create the user and assign it the read permissions that he needs. In this case read only access to the mytest db.</p>
-
-<p>First logon to mongodb and switch to the admin database:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo -u dbadmin -p --authenticationDatabase admin
-</span><span class='line'>&gt; use admin
-</span><span class='line'>switched to db admin
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now list the dbs:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; show dbs
-</span><span class='line'>admin       0.000GB
-</span><span class='line'>mytest      0.000GB
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>List the collections and read the data from it for demonstration purposes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; use mytest
-</span><span class='line'>&gt; show collections<span class="p">;</span>
-</span><span class='line'>col1
-</span><span class='line'>col2
-</span><span class='line'>&gt; db.col1.find<span class="o">()</span>
-</span><span class='line'><span class="o">{</span> <span class="s2">&quot;_id&quot;</span> : ObjectId<span class="o">(</span><span class="s2">&quot;5be3d377b54849bb738e3b6b&quot;</span><span class="o">)</span>, <span class="s2">&quot;name&quot;</span> : <span class="s2">&quot;ruan&quot;</span> <span class="o">}</span>
-</span><span class='line'>&gt; db.col2.find<span class="o">()</span>
-</span><span class='line'><span class="o">{</span> <span class="s2">&quot;_id&quot;</span> : ObjectId<span class="o">(</span><span class="s2">&quot;5be3d383b54849bb738e3b6c&quot;</span><span class="o">)</span>, <span class="s2">&quot;name&quot;</span> : <span class="s2">&quot;stefan&quot;</span> <span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now create the user collectionreader that will have access to read all the collections from the database:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>&gt; db.createUser<span class="o">({</span>user: <span class="s2">&quot;collectionreader&quot;</span>, <span class="nb">pwd</span>: <span class="s2">&quot;secretpass&quot;</span>, roles: <span class="o">[{</span>role: <span class="s2">&quot;read&quot;</span>, db: <span class="s2">&quot;mytest&quot;</span><span class="o">}]})</span>
-</span><span class='line'>Successfully added user: <span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;user&quot;</span> : <span class="s2">&quot;collectionreader&quot;</span>,
-</span><span class='line'>  <span class="s2">&quot;roles&quot;</span> : <span class="o">[</span>
-</span><span class='line'>    <span class="o">{</span>
-</span><span class='line'>      <span class="s2">&quot;role&quot;</span> : <span class="s2">&quot;read&quot;</span>,
-</span><span class='line'>      <span class="s2">&quot;db&quot;</span> : <span class="s2">&quot;mytest&quot;</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'>  <span class="o">]</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Exit and log out and log in with the new user to test the permissions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo -u collectionreader -p --authenticationDatabase mytest
-</span><span class='line'>&gt; use mytest
-</span><span class='line'>switched to db mytest
-</span><span class='line'>
-</span><span class='line'>&gt; show collections
-</span><span class='line'>col1
-</span><span class='line'>col2
-</span><span class='line'>
-</span><span class='line'>&gt; db.col1.find<span class="o">()</span>
-</span><span class='line'><span class="o">{</span> <span class="s2">&quot;_id&quot;</span> : ObjectId<span class="o">(</span><span class="s2">&quot;5be3d377b54849bb738e3b6b&quot;</span><span class="o">)</span>, <span class="s2">&quot;name&quot;</span> : <span class="s2">&quot;ruan&quot;</span> <span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now lets try to write to a collection:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.col1.insert<span class="o">({</span><span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;james&quot;</span><span class="o">})</span>
-</span><span class='line'>WriteResult<span class="o">({</span>
-</span><span class='line'>  <span class="s2">&quot;writeError&quot;</span> : <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;code&quot;</span> : 13,
-</span><span class='line'>    <span class="s2">&quot;errmsg&quot;</span> : <span class="s2">&quot;not authorized on mytest to execute command { insert: \&quot;col1\&quot;, documents: [ { _id: ObjectId(&#39;5be3d6c0492818b2c966d61a&#39;), name: \&quot;james\&quot; } ], ordered: true }&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">})</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So we can see it works as expected.</p>
-
-<h2>Second Method: Create Roles and Assign Users to the Roles</h2>
-
-<p>In the second method, we will create the roles then assign the users to the roles. And in this scenario, we will only grant a user <code>reader</code> access to one collection on a database. Login with the admin user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo -u dbadmin -p --authenticationDatabase admin
-</span><span class='line'>&gt; use admin
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>First create the read only role <code>myReadOnlyRole</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.createRole<span class="o">({</span> role: <span class="s2">&quot;myReadOnlyRole&quot;</span>, privileges: <span class="o">[{</span> resource: <span class="o">{</span> db: <span class="s2">&quot;mytest&quot;</span>, collection: <span class="s2">&quot;col2&quot;</span><span class="o">}</span>, actions: <span class="o">[</span><span class="s2">&quot;find&quot;</span><span class="o">]}]</span>, roles: <span class="o">[]})</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now create the user and assign it to the role:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.createUser<span class="o">({</span> user: <span class="s2">&quot;reader&quot;</span>, <span class="nb">pwd</span>: <span class="s2">&quot;secretpass&quot;</span>, roles: <span class="o">[{</span> role: <span class="s2">&quot;myReadOnlyRole&quot;</span>, db: <span class="s2">&quot;mytest&quot;</span><span class="o">}]})</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Similarly, if we had an existing user that we also would like to add to that role, we can do that by doing this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.grantRolesToUser<span class="o">(</span><span class="s2">&quot;anotheruser&quot;</span>, <span class="o">[</span> <span class="o">{</span> role: <span class="s2">&quot;myReadOnlyRole&quot;</span>, db: <span class="s2">&quot;mytest&quot;</span> <span class="o">}</span> <span class="o">])</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Logout and login with the reader user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo -u reader -p --authenticationDatabase mytest
-</span><span class='line'>&gt; use mytest
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now try to list the collections:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; show collections
-</span><span class='line'>2018-11-08T07:42:39.907+0100 E QUERY    <span class="o">[</span>thread1<span class="o">]</span> Error: listCollections failed: <span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;ok&quot;</span> : 0,
-</span><span class='line'>  <span class="s2">&quot;errmsg&quot;</span> : <span class="s2">&quot;not authorized on mytest to execute command { listCollections: 1.0, filter: {} }&quot;</span>,
-</span><span class='line'>  <span class="s2">&quot;code&quot;</span> : 13,
-</span><span class='line'>  <span class="s2">&quot;codeName&quot;</span> : <span class="s2">&quot;Unauthorized&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As we only have read (find) access on col2, lets try to read data from collection col1:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.col1.find<span class="o">()</span>
-</span><span class='line'>Error: error: <span class="o">{</span>
-</span><span class='line'>  <span class="s2">&quot;ok&quot;</span> : 0,
-</span><span class='line'>  <span class="s2">&quot;errmsg&quot;</span> : <span class="s2">&quot;not authorized on mytest to execute command { find: \&quot;col1\&quot;, filter: {} }&quot;</span>,
-</span><span class='line'>  <span class="s2">&quot;code&quot;</span> : 13,
-</span><span class='line'>  <span class="s2">&quot;codeName&quot;</span> : <span class="s2">&quot;Unauthorized&quot;</span>
-</span><span class='line'><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And finally try to read data from the collection we are allowed to read from:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.col2.find<span class="o">()</span>
-</span><span class='line'><span class="o">{</span> <span class="s2">&quot;_id&quot;</span> : ObjectId<span class="o">(</span><span class="s2">&quot;5be3d383b54849bb738e3b6c&quot;</span><span class="o">)</span>, <span class="s2">&quot;name&quot;</span> : <span class="s2">&quot;stefan&quot;</span> <span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And also making sure we cant write to that collection:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.col2.insert<span class="o">({</span><span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;frank&quot;</span><span class="o">})</span>
-</span><span class='line'>WriteResult<span class="o">({</span>
-</span><span class='line'>  <span class="s2">&quot;writeError&quot;</span> : <span class="o">{</span>
-</span><span class='line'>    <span class="s2">&quot;code&quot;</span> : 13,
-</span><span class='line'>    <span class="s2">&quot;errmsg&quot;</span> : <span class="s2">&quot;not authorized on mytest to execute command { insert: \&quot;col2\&quot;, documents: [ { _id: ObjectId(&#39;5be3db1530a86d900c361465&#39;), name: \&quot;frank\&quot; } ], ordered: true }&quot;</span>
-</span><span class='line'>  <span class="o">}</span>
-</span><span class='line'><span class="o">})</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Assigning Permissions to Roles</h2>
-
-<p>If you later on want to add more permissions to the role, this can easily be done by using <code>grantPrivilegesToRole()</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mongo -u dbadmin -p --authenticationDatabase admin
-</span><span class='line'>&gt; use mytest
-</span><span class='line'>&gt; db.grantPrivilegesToRole<span class="o">(</span><span class="s2">&quot;myReadOnlyRole&quot;</span>, <span class="o">[{</span> resource: <span class="o">{</span> db : <span class="s2">&quot;mytest&quot;</span>, collection : <span class="s2">&quot;col1&quot;</span><span class="o">}</span>, actions : <span class="o">[</span><span class="s2">&quot;find&quot;</span><span class="o">]</span> <span class="o">}])</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To view the permissions for that role:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>&gt; db.getRole<span class="o">(</span><span class="s2">&quot;myReadOnlyRole&quot;</span>, <span class="o">{</span> showPrivileges : <span class="nb">true</span> <span class="o">})</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://docs.mongodb.com/manual/tutorial/create-users/">https://docs.mongodb.com/manual/tutorial/create-users/</a></li>
-<li><a href="https://docs.mongodb.com/manual/core/collection-level-access-control/">https://docs.mongodb.com/manual/core/collection-level-access-control/</a></li>
-<li><a href="https://docs.mongodb.com/manual/reference/privilege-actions/">https://docs.mongodb.com/manual/reference/privilege-actions/</a></li>
-<li><a href="https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/">https://sanderknape.com/2018/07/manage-custom-secrets-aws-secrets-manager/</a></li>
-<li><a href="https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/">https://blog.mlab.com/2016/07/mongodb-tips-tricks-collection-level-access-control/</a></li>
-<li><a href="https://studio3t.com/knowledge-base/articles/mongodb-users-roles-explained-part-1/">https://studio3t.com/knowledge-base/articles/mongodb-users-roles-explained-part-1/</a></li>
-</ul>
-
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/13">&larr; Older</a>
@@ -2420,6 +2427,14 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/05/09/selecting-and-returning-specific-data-with-jq/">Selecting and Returning Specific Data With JQ</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2020/05/08/server-backups-to-google-drive-using-the-drive-cli-tool/">Server Backups to Google Drive Using the Drive CLI Tool</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/05/05/how-to-setup-a-redis-exporter-for-prometheus/">How to Setup a Redis Exporter for Prometheus</a>
       </li>
     
@@ -2429,14 +2444,6 @@
     
       <li class="post">
         <a href="/blog/2020/04/27/how-to-do-port-forwarding-with-iptables/">How to Do Port Forwarding With Iptables</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/04/27/how-to-set-a-static-ip-in-ubuntu-18/">How to Set a Static IP in Ubuntu 18</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/04/26/graphing-covid-19-stats-with-grafana-and-elasticsearch-using-python/">Graphing Covid-19 Stats With Grafana and Elasticsearch Using Python</a>
       </li>
     
   </ul>

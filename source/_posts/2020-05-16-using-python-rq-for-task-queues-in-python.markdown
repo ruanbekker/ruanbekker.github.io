@@ -2,7 +2,7 @@
 layout: post
 title: "Using Python RQ for Task Queues in Python"
 description: "Python Redis Queue Getting Started Tutorial by Ruan Bekker"
-image: "public/images/blog-ruanbekker-header.png"
+image: "images/blog-ruanbekker-header.png"
 date: 2020-05-16 21:12:36 +0200
 comments: true
 categories: ["redis", "python", "python-rq", "task-queues"]
@@ -215,7 +215,7 @@ And like before, if you dont have context of your job id, you can get the job id
 >>> result = fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
 >>> result.result
 29
-``
+```
 
 ## Naming Queues
 

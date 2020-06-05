@@ -2,10 +2,11 @@
 layout: post
 title: "Using Python RQ for Task Queues in Python"
 description: "Python Redis Queue Getting Started Tutorial by Ruan Bekker"
-image: "images/blog-ruanbekker-header.png"
+#image: "images/blog-ruanbekker-header.png"
 date: 2020-05-16 21:12:36 +0200
 comments: true
 categories: ["redis", "python", "python-rq", "task-queues"]
+keywords: "python, redis, python-rq, docker, asynchronous, blog, ruanbekker"
 ---
 
 This is a getting started on python-rq tutorial and I will demonstrate how to work with asynchronous tasks using python redis queue (python-rq).

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Redis | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/redis/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-05-22T07:16:43+02:00</updated>
+  <updated>2020-06-06T01:29:17+02:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -22,11 +22,11 @@
 
 <h2>What will we be doing</h2>
 
-<p>We want a client to submit 1000&rsquo;s of tasks in a non-blocking asynchronous fashion, and then we will have workers which will consume these tasks from our redis queue, and process them at the rate of what our consumer can handle.</p>
+<p>We want a client to submit 1000&rsquo;s of jobs in a non-blocking asynchronous fashion, and then we will have workers which will consume these jobs from our redis queue, and process those tasks at the rate of what our consumer can handle.</p>
 
 <p>The nice thing about this is that, if our consumer is unavailable for processing the tasks will remain in the queue and once the consumer is ready to consume, the tasks will be executed. It&rsquo;s also nice that its asynchronous, so the client don&rsquo;t have to wait until the task has finished.</p>
 
-<p>We will run a redis server using docker, which will be used to queue all our tasks, then we will go through the basics in python and python-rq such as:</p>
+<p>We will run a redis server using docker, which will be used to queue all our jobs, then we will go through the basics in python and python-rq such as:</p>
 
 <ul>
 <li>Writing a Task</li>
@@ -50,6 +50,259 @@
 
 <pre><code>$ pip install rq
 </code></pre>
+
+<p>Create the task which will be actioned by our workers, in our case it will just be a simple function that adds all the numbers from a given string to a list, then adds them up and return the total value.</p>
+
+<p>This is however a very basic task, but its just for demonstration.</p>
+
+<p>Our <code>tasks.py</code>:</p>
+
+<pre><code>def sum_numbers_from_string(string):
+    numbers = []
+    for each_character in string:
+        if each_character.isdigit():
+            numbers.append(int(each_character))
+    total = 0
+    for each_number in numbers:
+        total=total+each_number
+
+    return total
+</code></pre>
+
+<p>To test this locally:</p>
+
+<pre><code>&gt;&gt;&gt; from tasks import sum_numbers_from_string
+&gt;&gt;&gt; sum_numbers_from_string('adje-fje5-sjfdu1s-gdj9-asd1fg')
+16
+</code></pre>
+
+<p>Now, lets import redis and redis-queue, with our tasks and instantiate a queue object:</p>
+
+<pre><code>&gt;&gt;&gt; from redis import Redis
+&gt;&gt;&gt; from rq import Connection, Queue, Worker
+&gt;&gt;&gt; from tasks import sum_numbers_from_string
+&gt;&gt;&gt; redis_connection = Redis(host='localhost', port=6379, db=0)
+&gt;&gt;&gt; q = Queue(connection=redis_connection)
+</code></pre>
+
+<h2>Submit a Task to the Queue</h2>
+
+<p>Let&rsquo;s submit a task to the queue:</p>
+
+<pre><code>&gt;&gt;&gt; result = q.enqueue(sum_numbers_from_string, 'hbj2-plg5-2xf4r1s-f2lf-9sx4ff')
+</code></pre>
+
+<p>We have a couple of properties from <code>result</code> which we can inspect, first let&rsquo;s have a look at the id that we got back when we submitted our task to the queue:</p>
+
+<pre><code>&gt;&gt;&gt; result.get_id()
+'5a607474-cf1b-4fa5-9adb-f8437555a7e7'
+</code></pre>
+
+<p>We can also get the status from our task:</p>
+
+<pre><code>&gt;&gt;&gt; result.get_status()
+'queued'
+</code></pre>
+
+<p>We can also view our results in json format:</p>
+
+<pre><code>&gt;&gt;&gt; import json
+&gt;&gt;&gt; print(json.dumps(result.to_dict(), indent=2, default=str))
+{
+  "created_at": "2020-05-16T11:56:49.892713Z",
+  "data": "b'..\\x00\\x99\\xa0\\x16\\xfe..'",
+  "origin": "default",
+  "description": "tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff')",
+  "enqueued_at": "2020-05-16T11:56:49.893252Z",
+  "started_at": "",
+  "ended_at": "",
+  "timeout": 180,
+  "status": "queued"
+}
+</code></pre>
+
+<p>If we dont have context of the job id, we can use <code>get_jobs</code> to get all the jobs which is queued:</p>
+
+<pre><code>&gt;&gt;&gt; list_jobs = q.get_jobs
+&gt;&gt;&gt; list_jobs()
+[Job('5a607474-cf1b-4fa5-9adb-f8437555a7e7', enqueued_at=datetime.datetime(2020, 5, 16, 12, 30, 22, 699609))]
+</code></pre>
+
+<p>Then we can loop through the results and get the id like below:</p>
+
+<pre><code>&gt;&gt;&gt; for j in list_jobs():
+...     j.id
+...
+'5a607474-cf1b-4fa5-9adb-f8437555a7e7'
+</code></pre>
+
+<p>Or to get the job id&rsquo;s in a list:</p>
+
+<pre><code>&gt;&gt;&gt; list_job_ids = q.get_job_ids()
+&gt;&gt;&gt; list_job_ids
+['5a607474-cf1b-4fa5-9adb-f8437555a7e7']
+</code></pre>
+
+<p>Since we received the job id, we can use <code>fetch_job</code> to get more info about the job:</p>
+
+<pre><code>&gt;&gt;&gt; fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+&gt;&gt;&gt; fetched_job
+Job('5a607474-cf1b-4fa5-9adb-f8437555a7e7', enqueued_at=datetime.datetime(2020, 5, 16, 12, 30, 22, 699609))
+</code></pre>
+
+<p>And as before we can view it in json format:</p>
+
+<pre><code>&gt;&gt;&gt; fetched_job.to_dict()
+{'created_at': '2020-05-16T12:30:22.698728Z', 'data': b'..x\x9c6\xfe..', 'origin': 'queue1', 'description': "tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff')", 'enqueued_at': '2020-05-16T12:30:22.699609Z', 'started_at': '', 'ended_at': '', 'timeout': 180, 'status': 'queued'}
+</code></pre>
+
+<p>We can also view the key in redis by passing the job_id:</p>
+
+<pre><code>&gt;&gt;&gt; result.key_for(job_id='5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+b'rq:job:5a607474-cf1b-4fa5-9adb-f8437555a7e7'
+</code></pre>
+
+<p>To view how many jobs are in our queue, we can either do:</p>
+
+<pre><code>&gt;&gt;&gt; len(q)
+1
+</code></pre>
+
+<p>or:</p>
+
+<pre><code>&gt;&gt;&gt; q.get_job_ids()
+['5a607474-cf1b-4fa5-9adb-f8437555a7e7']
+</code></pre>
+
+<h2>Consuming from the Queue</h2>
+
+<p>Now that our task is queued, let&rsquo;s fire of our worker to consume the job from the queue and action the task:</p>
+
+<pre><code>&gt;&gt;&gt; w = Worker([q], connection=redis_connection)
+&gt;&gt;&gt; w.work()
+14:05:35 Worker rq:worker:49658973741d4085961e34e9641227dd: started, version 1.4.1
+14:05:35 Listening on default...
+14:05:35 Cleaning registries for queue: default
+14:05:35 default: tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff') (5a607474-cf1b-4fa5-9adb-f8437555a7e7)
+14:05:40 default: Job OK (5a607474-cf1b-4fa5-9adb-f8437555a7e7)
+14:05:40 Result is kept for 500 seconds
+14:05:59 Warm shut down requested
+True
+</code></pre>
+
+<p>Now, when we get the status of our job, you will see that it finished:</p>
+
+<pre><code>&gt;&gt;&gt; result.get_status()
+'finished'
+</code></pre>
+
+<p>And to get the result from our worker:</p>
+
+<pre><code>&gt;&gt;&gt; result.result
+29
+</code></pre>
+
+<p>And like before, if you dont have context of your job id, you can get the job id, then return the result:</p>
+
+<pre><code>&gt;&gt;&gt; result = fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+&gt;&gt;&gt; result.result
+29
+``
+
+## Naming Queues
+
+We can namespace our tasks into specific queues, for example if we want to create `queue1`:
+</code></pre>
+
+<blockquote><blockquote><blockquote><p>q1 = Queue(&lsquo;queue1&rsquo;, connection=redis_connection)
+```</p></blockquote></blockquote></blockquote>
+
+<p>To verify the queue name:</p>
+
+<pre><code>&gt;&gt;&gt; q1
+Queue('queue1')
+</code></pre>
+
+<p>As we can see our queue is empty:</p>
+
+<pre><code>&gt;&gt;&gt; q1.get_job_ids()
+[]
+</code></pre>
+
+<p>Let&rsquo;s submit 10 jobs to our queue:</p>
+
+<pre><code>&gt;&gt;&gt; from uuid import uuid4
+&gt;&gt;&gt; for attempt in range(0,10):
+...     random_string = uuid4().hex
+...     q1.enqueue(sum_numbers_from_string, random_string)
+...
+Job('c3f2369d-5b27-40e0-97be-8fe26989a78e', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 472508))
+Job('06b93517-5dae-4133-8131-e8d35b8dd780', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 475604))
+Job('81f05aef-4bd6-421b-912d-78b5d419b10a', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 478071))
+Job('8f14e81f-74fa-44d9-9fc7-e8e7b8c7b76f', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 480438))
+Job('e8552750-89d2-4538-8c3e-a48c4c3e9a51', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 483106))
+Job('bf19a0a3-eb0c-4692-b452-67c5ad954094', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 486193))
+Job('0da3688a-cffa-4ba6-a272-b6cc90942ef6', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 488545))
+Job('717bd147-615c-458d-8386-9ea6a198e137', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 491074))
+Job('7cdac5aa-8dc3-40be-a8fc-b273ce61b03b', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 493618))
+Job('4f7ea527-0695-4e2b-bc8b-3d8807a86390', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 496930))
+</code></pre>
+
+<p>To verify the number of jobs in our queue:</p>
+
+<pre><code>&gt;&gt;&gt; q1.get_job_ids()
+['c3f2369d-5b27-40e0-97be-8fe26989a78e', '06b93517-5dae-4133-8131-e8d35b8dd780', '81f05aef-4bd6-421b-912d-78b5d419b10a', '8f14e81f-74fa-44d9-9fc7-e8e7b8c7b76f', 'e8552750-89d2-4538-8c3e-a48c4c3e9a51', 'bf19a0a3-eb0c-4692-b452-67c5ad954094', '0da3688a-cffa-4ba6-a272-b6cc90942ef6', '717bd147-615c-458d-8386-9ea6a198e137', '7cdac5aa-8dc3-40be-a8fc-b273ce61b03b', '4f7ea527-0695-4e2b-bc8b-3d8807a86390']
+</code></pre>
+
+<p>And to count them:</p>
+
+<pre><code>&gt;&gt;&gt; len(q1)
+10
+</code></pre>
+
+<h2>Cleaning the Queue</h2>
+
+<p>Cleaning the queue can either be done with:</p>
+
+<pre><code>&gt;&gt;&gt; q.empty()
+10
+</code></pre>
+
+<p>or</p>
+
+<pre><code>&gt;&gt;&gt; q.delete(delete_jobs=True)
+</code></pre>
+
+<p>Then to verify that our queue is clean:</p>
+
+<pre><code>&gt;&gt;&gt; q.get_job_ids()
+[]
+</code></pre>
+
+<h2>Naming Workers</h2>
+
+<p>The same way that we defined a name for our queue, we can define a name for our workers:</p>
+
+<pre><code>&gt;&gt;&gt; worker = Worker([q1], connection=redis_connection, name='worker1')
+&gt;&gt;&gt; worker.work()
+</code></pre>
+
+<p>Which means you can have different workers consuming jobs from specific queues.</p>
+
+<h2>Resources</h2>
+
+<p>Documentation:</p>
+
+<ul>
+<li><a href="https://python-rq.org/docs/">https://python-rq.org/docs/</a></li>
+<li><a href="https://python-rq.org/docs/workers/">https://python-rq.org/docs/workers/</a></li>
+<li><a href="https://python-rq.org/docs/monitoring/">https://python-rq.org/docs/monitoring/</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>I hope this was usful, if you enjoyed this come say hi on Twitter <a href="https://twitter.com/ruanbekker">@ruanbekker</a> or visit my website at <a href="https://ruan.dev">ruan.dev</a></p>
 ]]></content>
   </entry>
   

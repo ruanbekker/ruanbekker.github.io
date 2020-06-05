@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-05-22T07:16:43+02:00</updated>
+  <updated>2020-06-06T01:29:17+02:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -22,11 +22,11 @@
 
 <h2>What will we be doing</h2>
 
-<p>We want a client to submit 1000&rsquo;s of tasks in a non-blocking asynchronous fashion, and then we will have workers which will consume these tasks from our redis queue, and process them at the rate of what our consumer can handle.</p>
+<p>We want a client to submit 1000&rsquo;s of jobs in a non-blocking asynchronous fashion, and then we will have workers which will consume these jobs from our redis queue, and process those tasks at the rate of what our consumer can handle.</p>
 
 <p>The nice thing about this is that, if our consumer is unavailable for processing the tasks will remain in the queue and once the consumer is ready to consume, the tasks will be executed. It&rsquo;s also nice that its asynchronous, so the client don&rsquo;t have to wait until the task has finished.</p>
 
-<p>We will run a redis server using docker, which will be used to queue all our tasks, then we will go through the basics in python and python-rq such as:</p>
+<p>We will run a redis server using docker, which will be used to queue all our jobs, then we will go through the basics in python and python-rq such as:</p>
 
 <ul>
 <li>Writing a Task</li>
@@ -52,6 +52,379 @@
 <figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
 </pre></td><td class='code'><pre><code class=''><span class='line'>$ pip install rq</span></code></pre></td></tr></table></div></figure>
 
+
+<p>Create the task which will be actioned by our workers, in our case it will just be a simple function that adds all the numbers from a given string to a list, then adds them up and return the total value.</p>
+
+<p>This is however a very basic task, but its just for demonstration.</p>
+
+<p>Our <code>tasks.py</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>def sum_numbers_from_string(string):
+</span><span class='line'>    numbers = []
+</span><span class='line'>    for each_character in string:
+</span><span class='line'>        if each_character.isdigit():
+</span><span class='line'>            numbers.append(int(each_character))
+</span><span class='line'>    total = 0
+</span><span class='line'>    for each_number in numbers:
+</span><span class='line'>        total=total+each_number
+</span><span class='line'>
+</span><span class='line'>    return total</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To test this locally:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; from tasks import sum_numbers_from_string
+</span><span class='line'>&gt;&gt;&gt; sum_numbers_from_string('adje-fje5-sjfdu1s-gdj9-asd1fg')
+</span><span class='line'>16</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now, lets import redis and redis-queue, with our tasks and instantiate a queue object:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; from redis import Redis
+</span><span class='line'>&gt;&gt;&gt; from rq import Connection, Queue, Worker
+</span><span class='line'>&gt;&gt;&gt; from tasks import sum_numbers_from_string
+</span><span class='line'>&gt;&gt;&gt; redis_connection = Redis(host='localhost', port=6379, db=0)
+</span><span class='line'>&gt;&gt;&gt; q = Queue(connection=redis_connection)</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Submit a Task to the Queue</h2>
+
+<p>Let&rsquo;s submit a task to the queue:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result = q.enqueue(sum_numbers_from_string, 'hbj2-plg5-2xf4r1s-f2lf-9sx4ff')</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We have a couple of properties from <code>result</code> which we can inspect, first let&rsquo;s have a look at the id that we got back when we submitted our task to the queue:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.get_id()
+</span><span class='line'>'5a607474-cf1b-4fa5-9adb-f8437555a7e7'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also get the status from our task:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.get_status()
+</span><span class='line'>'queued'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also view our results in json format:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; import json
+</span><span class='line'>&gt;&gt;&gt; print(json.dumps(result.to_dict(), indent=2, default=str))
+</span><span class='line'>{
+</span><span class='line'>  "created_at": "2020-05-16T11:56:49.892713Z",
+</span><span class='line'>  "data": "b'..\\x00\\x99\\xa0\\x16\\xfe..'",
+</span><span class='line'>  "origin": "default",
+</span><span class='line'>  "description": "tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff')",
+</span><span class='line'>  "enqueued_at": "2020-05-16T11:56:49.893252Z",
+</span><span class='line'>  "started_at": "",
+</span><span class='line'>  "ended_at": "",
+</span><span class='line'>  "timeout": 180,
+</span><span class='line'>  "status": "queued"
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we dont have context of the job id, we can use <code>get_jobs</code> to get all the jobs which is queued:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; list_jobs = q.get_jobs
+</span><span class='line'>&gt;&gt;&gt; list_jobs()
+</span><span class='line'>[Job('5a607474-cf1b-4fa5-9adb-f8437555a7e7', enqueued_at=datetime.datetime(2020, 5, 16, 12, 30, 22, 699609))]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we can loop through the results and get the id like below:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; for j in list_jobs():
+</span><span class='line'>...     j.id
+</span><span class='line'>...
+</span><span class='line'>'5a607474-cf1b-4fa5-9adb-f8437555a7e7'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Or to get the job id&rsquo;s in a list:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; list_job_ids = q.get_job_ids()
+</span><span class='line'>&gt;&gt;&gt; list_job_ids
+</span><span class='line'>['5a607474-cf1b-4fa5-9adb-f8437555a7e7']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since we received the job id, we can use <code>fetch_job</code> to get more info about the job:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+</span><span class='line'>&gt;&gt;&gt; fetched_job
+</span><span class='line'>Job('5a607474-cf1b-4fa5-9adb-f8437555a7e7', enqueued_at=datetime.datetime(2020, 5, 16, 12, 30, 22, 699609))</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And as before we can view it in json format:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; fetched_job.to_dict()
+</span><span class='line'>{'created_at': '2020-05-16T12:30:22.698728Z', 'data': b'..x\x9c6\xfe..', 'origin': 'queue1', 'description': "tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff')", 'enqueued_at': '2020-05-16T12:30:22.699609Z', 'started_at': '', 'ended_at': '', 'timeout': 180, 'status': 'queued'}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also view the key in redis by passing the job_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.key_for(job_id='5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+</span><span class='line'>b'rq:job:5a607474-cf1b-4fa5-9adb-f8437555a7e7'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To view how many jobs are in our queue, we can either do:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; len(q)
+</span><span class='line'>1</span></code></pre></td></tr></table></div></figure>
+
+
+<p>or:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q.get_job_ids()
+</span><span class='line'>['5a607474-cf1b-4fa5-9adb-f8437555a7e7']</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Consuming from the Queue</h2>
+
+<p>Now that our task is queued, let&rsquo;s fire of our worker to consume the job from the queue and action the task:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; w = Worker([q], connection=redis_connection)
+</span><span class='line'>&gt;&gt;&gt; w.work()
+</span><span class='line'>14:05:35 Worker rq:worker:49658973741d4085961e34e9641227dd: started, version 1.4.1
+</span><span class='line'>14:05:35 Listening on default...
+</span><span class='line'>14:05:35 Cleaning registries for queue: default
+</span><span class='line'>14:05:35 default: tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff') (5a607474-cf1b-4fa5-9adb-f8437555a7e7)
+</span><span class='line'>14:05:40 default: Job OK (5a607474-cf1b-4fa5-9adb-f8437555a7e7)
+</span><span class='line'>14:05:40 Result is kept for 500 seconds
+</span><span class='line'>14:05:59 Warm shut down requested
+</span><span class='line'>True</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now, when we get the status of our job, you will see that it finished:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.get_status()
+</span><span class='line'>'finished'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And to get the result from our worker:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.result
+</span><span class='line'>29</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And like before, if you dont have context of your job id, you can get the job id, then return the result:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result = fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+</span><span class='line'>&gt;&gt;&gt; result.result
+</span><span class='line'>29
+</span><span class='line'>``
+</span><span class='line'>
+</span><span class='line'>## Naming Queues
+</span><span class='line'>
+</span><span class='line'>We can namespace our tasks into specific queues, for example if we want to create `queue1`:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q1 = Queue(&lsquo;queue1&rsquo;, connection=redis_connection)</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>To verify the queue name:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q1
+Queue(&lsquo;queue1&rsquo;)</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>As we can see our queue is empty:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q1.get_job_ids()
+[]</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>Let's submit 10 jobs to our queue:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>from uuid import uuid4
+for attempt in range(0,10):
+&hellip;     random_string = uuid4().hex
+&hellip;     q1.enqueue(sum_numbers_from_string, random_string)
+&hellip;
+Job(&lsquo;c3f2369d-5b27-40e0-97be-8fe26989a78e&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 472508))
+Job(&lsquo;06b93517-5dae-4133-8131-e8d35b8dd780&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 475604))
+Job(&lsquo;81f05aef-4bd6-421b-912d-78b5d419b10a&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 478071))
+Job(&lsquo;8f14e81f-74fa-44d9-9fc7-e8e7b8c7b76f&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 480438))
+Job(&lsquo;e8552750-89d2-4538-8c3e-a48c4c3e9a51&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 483106))
+Job(&lsquo;bf19a0a3-eb0c-4692-b452-67c5ad954094&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 486193))
+Job(&lsquo;0da3688a-cffa-4ba6-a272-b6cc90942ef6&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 488545))
+Job(&lsquo;717bd147-615c-458d-8386-9ea6a198e137&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 491074))
+Job(&lsquo;7cdac5aa-8dc3-40be-a8fc-b273ce61b03b&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 493618))
+Job(&lsquo;4f7ea527-0695-4e2b-bc8b-3d8807a86390&rsquo;, enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 496930))</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>To verify the number of jobs in our queue:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q1.get_job_ids()
+[&lsquo;c3f2369d-5b27-40e0-97be-8fe26989a78e&rsquo;, &lsquo;06b93517-5dae-4133-8131-e8d35b8dd780&rsquo;, &lsquo;81f05aef-4bd6-421b-912d-78b5d419b10a&rsquo;, &lsquo;8f14e81f-74fa-44d9-9fc7-e8e7b8c7b76f&rsquo;, &lsquo;e8552750-89d2-4538-8c3e-a48c4c3e9a51&rsquo;, &lsquo;bf19a0a3-eb0c-4692-b452-67c5ad954094&rsquo;, &lsquo;0da3688a-cffa-4ba6-a272-b6cc90942ef6&rsquo;, &lsquo;717bd147-615c-458d-8386-9ea6a198e137&rsquo;, &lsquo;7cdac5aa-8dc3-40be-a8fc-b273ce61b03b&rsquo;, &lsquo;4f7ea527-0695-4e2b-bc8b-3d8807a86390&rsquo;]</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>And to count them:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>len(q1)
+10</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>## Cleaning the Queue
+</span><span class='line'>
+</span><span class='line'>Cleaning the queue can either be done with:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q.empty()
+10</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>or
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q.delete(delete_jobs=True)</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>Then to verify that our queue is clean:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>q.get_job_ids()
+[]</p></blockquote></blockquote></blockquote>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>
+</span><span class='line'>## Naming Workers
+</span><span class='line'>
+</span><span class='line'>The same way that we defined a name for our queue, we can define a name for our workers:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<blockquote><blockquote><blockquote><p>worker = Worker([q1], connection=redis_connection, name=&lsquo;worker1&rsquo;)
+worker.work()
+```</p></blockquote></blockquote></blockquote>
+
+<p>Which means you can have different workers consuming jobs from specific queues.</p>
+
+<h2>Resources</h2>
+
+<p>Documentation:</p>
+
+<ul>
+<li><a href="https://python-rq.org/docs/">https://python-rq.org/docs/</a></li>
+<li><a href="https://python-rq.org/docs/workers/">https://python-rq.org/docs/workers/</a></li>
+<li><a href="https://python-rq.org/docs/monitoring/">https://python-rq.org/docs/monitoring/</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>I hope this was usful, if you enjoyed this come say hi on Twitter <a href="https://twitter.com/ruanbekker">@ruanbekker</a> or visit my website at <a href="https://ruan.dev">ruan.dev</a></p>
 ]]></content>
   </entry>
   

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Caching | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/caching/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-06-06T01:59:52+02:00</updated>
+  <updated>2020-06-13T19:29:27+02:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,139 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Increase Performance With Your Ghost Blog on Docker]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/06/08/build-a-ghost-blog-with-nginx-cache-on-docker/"/>
+    <updated>2020-06-08T23:28:07+02:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/06/08/build-a-ghost-blog-with-nginx-cache-on-docker</id>
+    <content type="html"><![CDATA[<p><img src="https://img.sysadmins.co.za/wngib2.png" alt="nginx-blog-ghost-caching" /></p>
+
+<p>Nginx Caching + Ghost == Great Performance.</p>
+
+<p>In this post we will build a nginx reverse proxy with caching enabled for our static content such as images, which will be our frontend and therefore we will have port 80 exposed, and run our ghost blog as our backend, which we will proxy traffic through from our nginx container.</p>
+
+<h2>But why would you want caching?</h2>
+
+<p>Returning data from memory is a lot faster than returning data from disk, and in this case where a request is being made against nginx, then it proxy passes the request to ghost, gets the data that you requested and returns the data to the client.</p>
+
+<p>So for items that rarely changes like images, we can benefit from caching, so the images can be returned from the nginx service, where the first request will be made to ghost and then it will be loaded into nginx cache, so then the next time when you request the same image it will be returned from cache instead of making that same request to ghost again.</p>
+
+<h2>Caching Info</h2>
+
+<p>For this demonstration once we define the size of our chache which will be 500MB and we specify that if an object has not been accessed for 24 hours, we can expire the object from the cache.</p>
+
+<h2>Nginx</h2>
+
+<p>We will build our nginx container by adding our custom nginx config to our dockerfile.</p>
+
+<p>Our <code>Dockerfile</code> will look like the following:</p>
+
+<pre><code>ROM nginx:stable
+ADD nginx.conf /etc/nginx/nginx.conf
+</code></pre>
+
+<p>Our <code>nginx.conf</code> configuration file:</p>
+
+<pre><code>events {
+  worker_connections  1024;
+}
+
+http {
+  default_type       text/html;
+  access_log         /dev/stdout;
+  sendfile           on;
+  keepalive_timeout  65;
+
+  #proxy_cache_path /tmp/ghostcache levels=1:2 keys_zone=ghostcache:500m max_size=2g inactive=30d;
+  proxy_cache_path /tmp/ghostcache levels=1:2 keys_zone=ghostcache:60m max_size=500m inactive=24h;
+  proxy_cache_key "$scheme$request_method$host$request_uri";
+  proxy_cache_methods GET HEAD;
+
+  server {
+    listen 80;
+
+    location / {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Host $http_host;
+        proxy_pass http://ghost:2368;
+    }
+
+    location ~* \.(?:css|js|ico)$ {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Host $http_host;
+        proxy_pass http://ghost:2368;
+        access_log off;
+    }
+
+    location ^~ /content/images/ {
+        proxy_cache ghostcache;
+        proxy_cache_valid 60m;
+        proxy_cache_valid 404 1m;
+        proxy_ignore_headers Set-Cookie;
+        proxy_hide_header Set-Cookie;
+        proxy_cache_use_stale error timeout invalid_header updating http_500 http_502 http_503 http_504;
+        proxy_ignore_headers Cache-Control;
+        add_header X-Cache-Status $upstream_cache_status;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://ghost:2368;
+        access_log off;
+    }
+  }
+}
+</code></pre>
+
+<p>Then our <code>docker-compose.yml</code> where we will add our nginx and ghost container to run together:</p>
+
+<pre><code>version: '3.4'
+
+services:
+  ghost:
+    image: ghost:3.15.1
+    container_name: 'ghost'
+    environment:
+      - NODE_ENV=production
+      - url=http://localhost:80
+    networks:
+      - ghost
+    volumes:
+      - ghost_content:/var/lib/ghost/content/data
+
+  proxy:
+    build: .
+    container_name: 'proxy'
+    depends_on:
+      - ghost
+    ports:
+      - 80:80
+    networks:
+      - ghost
+
+networks:
+  ghost: {}
+
+volumes:
+  ghost_content: {}
+</code></pre>
+
+<p>To boot our stack:</p>
+
+<pre><code>$ docker-compose up
+</code></pre>
+
+<h2>Test Caching</h2>
+
+<p>Once your containers are in a running state, open your browsers devloper tools and look at the networking tab, then access your ghost blog on <code>http://localhost:80/</code>, the first time a image is opened you should see the cache shows <code>MISS</code> when you refresh again you should see a <code>HIT</code>, which means that the object is being returned from your cache.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Cache Data With Python Flask]]></title>
@@ -588,195 +721,6 @@ requested data does not exist in db
 <li><a href="https://github.com/ruanbekker/dockerhub-sources/tree/master/memcached/alpine">https://github.com/ruanbekker/dockerhub-sources/tree/master/memcached/alpine</a></li>
 <li><a href="https://pymemcache.readthedocs.io/en/latest/getting_started.html#basic-usage">https://pymemcache.readthedocs.io/en/latest/getting_started.html#basic-usage</a></li>
 <li><a href="https://sebastianraschka.com/Articles/2014_sqlite_in_python_tutorial.html">https://sebastianraschka.com/Articles/2014_sqlite_in_python_tutorial.html</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Dockerizing a Memcached Server for Docker on Alpine]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine/"/>
-    <updated>2018-09-01T22:01:09+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine</id>
-    <content type="html"><![CDATA[<p><img src="https://objects.ruanbekker.com/assets/images/memcached-logo.png" alt="" /></p>
-
-<p>This post I will demostrate how to dockerize a memcached server on Alpine and how to create a boot script that allows you to pass environment variables through to the application.</p>
-
-<h2>What is Memcached</h2>
-
-<p>Memcached is a multi-threaded, in-memory key/value store for small chunks of arbitrary data (strings, objects) from results of database calls, API calls, etc. More on <a href="https://memcached.org/about">Memcached</a></p>
-
-<h2>The Dockerfile:</h2>
-
-<p>Our Dockerfile will consist of a simple install of memcached and add a boot script that we will start it from:</p>
-
-<pre><code class="docker">FROM alpine:3.7
-
-COPY boot.sh /boot.sh
-RUN apk --no-cache add memcached &amp;&amp; chmod +x /boot.sh
-
-USER memcached
-CMD ["/boot.sh"]
-</code></pre>
-
-<h2>The Boot Script:</h2>
-
-<p>As you can see we have set defaults so when the user does not specify any environment variables, that it will inherit the default values</p>
-
-<pre><code class="bash">#!/bin/sh
-
-/usr/bin/memcached \
-  --user=${MEMCACHED_USER:-memcached} \
-  --listen=${MEMCACHED_HOST:-0.0.0.0} \
-  --port=${MEMCACHED_PORT:-11211} \
-  --memory-limit=${MEMCACHED_MEMUSAGE:-64} \
-  --conn-limit=${MEMCACHED_MAXCONN:-1024} \
-  --threads=${MEMCACHED_THREADS:-4} \
-  --max-reqs-per-event=${MEMCACHED_REQUESTS_PER_EVENT:-20} \
-  --verbose
-</code></pre>
-
-<h2>Build and Deploy:</h2>
-
-<p>Build the image, if you just want to run the container you can use my public image in the next step:</p>
-
-<pre><code class="bash">$ docker build -t local/memcached:0.1 .
-</code></pre>
-
-<p>Run the Memcached Container:</p>
-
-<pre><code class="bash">$ docker run -itd --name memcached -p 11211:11211 -e MEMCACHED_MEMUSAGE=32 local/memcached:0.1
-</code></pre>
-
-<p>Or my Public Image from Docker Hub:</p>
-
-<pre><code class="bash">$ docker run -itd --name memcached -p 11211:11211 -e MEMCACHED_MEMUSAGE=32 rbekker87/memcached:alpine
-</code></pre>
-
-<h2>Check out the Stats:</h2>
-
-<p>Pass the command <code>stats</code> through the exposed port:</p>
-
-<pre><code>$ echo -e "stats" | nc localhost 11211                                                               
-STAT pid 8
-STAT uptime 2
-STAT time 1535833177
-STAT version 1.5.6
-STAT libevent 2.1.8-stable
-STAT pointer_size 64
-STAT rusage_user 0.030000
-STAT rusage_system 0.000000
-STAT max_connections 1024
-STAT curr_connections 1
-STAT total_connections 2
-STAT rejected_connections 0
-STAT connection_structures 2
-STAT reserved_fds 20
-STAT cmd_get 0
-STAT cmd_set 0
-STAT cmd_flush 0
-STAT cmd_touch 0
-STAT get_hits 0
-STAT get_misses 0
-STAT get_expired 0
-STAT get_flushed 0
-STAT delete_misses 0
-STAT delete_hits 0
-STAT incr_misses 0
-STAT incr_hits 0
-STAT decr_misses 0
-STAT decr_hits 0
-STAT cas_misses 0
-STAT cas_hits 0
-STAT cas_badval 0
-STAT touch_hits 0
-STAT touch_misses 0
-STAT auth_cmds 0
-STAT auth_errors 0
-STAT bytes_read 6
-STAT bytes_written 0
-STAT limit_maxbytes 33554432
-STAT accepting_conns 1
-STAT listen_disabled_num 0
-STAT time_in_listen_disabled_us 0
-STAT threads 4
-STAT conn_yields 0
-STAT hash_power_level 16
-STAT hash_bytes 524288
-STAT hash_is_expanding 0
-STAT slab_reassign_rescues 0
-STAT slab_reassign_chunk_rescues 0
-STAT slab_reassign_evictions_nomem 0
-STAT slab_reassign_inline_reclaim 0
-STAT slab_reassign_busy_items 0
-STAT slab_reassign_busy_deletes 0
-STAT slab_reassign_running 0
-STAT slabs_moved 0
-STAT lru_crawler_running 0
-STAT lru_crawler_starts 255
-STAT lru_maintainer_juggles 155
-STAT malloc_fails 0
-STAT log_worker_dropped 0
-STAT log_worker_written 0
-STAT log_watcher_skipped 0
-STAT log_watcher_sent 0
-STAT bytes 0
-STAT curr_items 0
-STAT total_items 0
-STAT slab_global_page_pool 0
-STAT expired_unfetched 0
-STAT evicted_unfetched 0
-STAT evicted_active 0
-STAT evictions 0
-STAT reclaimed 0
-STAT crawler_reclaimed 0
-STAT crawler_items_checked 0
-STAT lrutail_reflocked 0
-STAT moves_to_cold 0
-STAT moves_to_warm 0
-STAT moves_within_lru 0
-STAT direct_reclaims 0
-STAT lru_bumps_dropped 0
-END
-</code></pre>
-
-<p>Some descriptions:</p>
-
-<p><code>evictions</code> - when items are evicted from the cache
-<code>total_items</code> - the number of items the server has stored since it was started
-<code>current_items</code> - the number of items in the cache
-<code>bytes</code> - the current number of bytes used to store items
-<code>limit_maxbytes</code> - the number of bytes the server is allowed to use for storage
-<code>get_misses</code> - the number of times a item has been requested, but not found
-<code>get_hits</code> - the number of times a item has been served from the cache</p>
-
-<p>To get specific stats, like evictions:</p>
-
-<pre><code class="bash">$ echo -e "stats" | nc localhost 11211 | grep -w evictions   
-STAT evictions 0
-</code></pre>
-
-<p>When you see evictions value increases, this essentially means that memcache had to remove the oldest items from memory for new or more frequent used items. If this number remains high, consider increasing your memory allocated to memcache.</p>
-
-<p>Slab Stats: returns information about each of the slabs created by memcached during runtime:</p>
-
-<pre><code class="bash">$ echo -e "stats slabs" | nc localhost 11211                 
-STAT active_slabs 0
-STAT total_malloced 0
-</code></pre>
-
-<p><code>active_slabs</code> - Total number of slab classes allocated.
-<code>total_malloced</code> - Total amount of memory allocated to slab pages.</p>
-
-<p>For detailed description about statistics, have a look at their github resource:
-- <a href="https://github.com/memcached/memcached/blob/master/doc/protocol.txt">https://github.com/memcached/memcached/blob/master/doc/protocol.txt</a></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://memcached.org/">https://memcached.org/</a></li>
-<li><a href="https://blog.serverdensity.com/monitor-memcached/">https://blog.serverdensity.com/monitor-memcached/</a></li>
-<li><a href="https://wiki.mikejung.biz/Memcached">https://wiki.mikejung.biz/Memcached</a></li>
 </ul>
 
 ]]></content>

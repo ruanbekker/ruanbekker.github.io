@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Mysql | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/mysql/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-06-13T19:29:27+02:00</updated>
+  <updated>2020-06-13T19:50:05+02:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,220 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Improve MySQL Write Performance Using Batch Writes]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/06/13/improve-mysql-write-performance-using-batch-writes/"/>
+    <updated>2020-06-13T19:31:32+02:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/06/13/improve-mysql-write-performance-using-batch-writes</id>
+    <content type="html"><![CDATA[<p><img src="https://img.sysadmins.co.za/wngib2.png" alt="mysql-python-performance" /></p>
+
+<p>I am no DBA, but I got curious when I noticed sluggish write performance on a mysql database, and I remembered somewhere that you should always use batch writes over sequential writes. So I decided to test it out, using a python script and a mysql server.</p>
+
+<h2>What will we be doing</h2>
+
+<p>I wrote a python script that writes 100,000 records to a database and keeps time of how long the writes took, 2 examples which I will compare:</p>
+
+<ul>
+<li>One script writing each record to the database</li>
+<li>One script writing all the records as batch</li>
+</ul>
+
+
+<h2>Sequential Writes</h2>
+
+<p>It took 48 seconds to write 100,000 records into a database using sequential writes:</p>
+
+<pre><code class="python">...
+for user in userids:
+    userid = user["uid"]
+    name = user["uid"].split('_')[0]
+    job = random.choice(job)
+    age = random.randint(24,49)
+    credit_card_num = user["ccnum"]
+    status = random.choice(["active", "inactive", "disabled"])
+
+    cur.execute(
+        """INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)""",
+        (userid, name, job, age, credit_card_num, status)
+    )
+...
+</code></pre>
+
+<p>Running that shows us this:</p>
+
+<pre><code>$ python3 mysql_seq_writes.py
+start
+writing customers to database
+finish
+inserted 100000 records in 48s
+</code></pre>
+
+<h2>Batch Writes</h2>
+
+<p>It took 3 seconds to write to write 100,000 records using batch writes:</p>
+
+<pre><code class="python">...
+for user in userids:
+    userid = user["uid"]
+    name = user["uid"].split('_')[0]
+    job = random.choice(job)
+    age = random.randint(24,49)
+    credit_card_num = user["ccnum"]
+    status = random.choice(["active", "inactive", "disabled"])
+
+    bunch_users.append((userid, name, job, age, credit_card_num, status))
+
+cur.executemany(
+    """INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)""",
+    bunch_users
+)
+...
+</code></pre>
+
+<p>Running that shows us this:</p>
+
+<pre><code>$ python3 mysql_batch_writes.py
+start
+writing customers to database
+finish
+inserted 100000 records in 3s
+</code></pre>
+
+<h2>Looking at the Scripts</h2>
+
+<p>The script used for sequential writes:</p>
+
+<pre><code class="python">import datetime
+import random
+import MySQLdb
+from datetime import datetime as dt
+
+host="172.18.0.1"
+user="root"
+password="password"
+dbname="shopdb"
+records=100000
+
+db = MySQLdb.connect(host, user, password, dbname)
+
+names = ['ruan', 'donovan', 'james', 'warren', 'angie', 'nicole', 'jenny', 'penny', 'amber']
+job = ['doctor', 'scientist', 'teacher', 'police officer', 'waiter', 'banker', 'it']
+
+cur = db.cursor()
+cur.execute("DROP TABLE IF EXISTS customers")
+cur.execute("CREATE TABLE customers(userid VARCHAR(50), name VARCHAR(50), surname VARCHAR(50), job VARCHAR(50), age INT(2), credit_card_num VARCHAR(50), status VARCHAR(10))")
+
+bunch_users = []
+userids = []
+
+print("start")
+
+def gen_id():
+    return str(random.randint(0,9999)).zfill(4)
+
+def gen_user(username):
+    ccnum = '{0}-{1}-{2}-{3}'.format(gen_id(), gen_id(), gen_id(), gen_id())
+    userid = username + '_' + ccnum.split('-')[0] + ccnum.split('-')[2]
+    return {"uid": userid, "ccnum": ccnum}
+
+for name in range(records):
+    userids.append(gen_user(random.choice(names)))
+
+print("writing customers to database")
+
+timestart = int(dt.now().strftime("%s"))
+
+for user in userids:
+    userid = user["uid"]
+    name = user["uid"].split('_')[0]
+    job = random.choice(job)
+    age = random.randint(24,49)
+    credit_card_num = user["ccnum"]
+    status = random.choice(["active", "inactive", "disabled"])
+
+    #bunch_users.append((userid, name, job, age, credit_card_num, status))
+
+    cur.execute(
+        """INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)""",
+        (userid, name, job, age, credit_card_num, status)
+    )
+
+db.commit()
+db.close()
+timefinish = int(dt.now().strftime("%s"))
+print("finish")
+print("inserted {} records in {}s".format(records, timefinish-timestart))
+</code></pre>
+
+<p>The script used for the batch writes:</p>
+
+<pre><code class="python">import datetime
+import random
+import MySQLdb
+from datetime import datetime as dt
+
+host="172.18.0.1"
+user="root"
+password="password"
+dbname="shopdb"
+records=100000
+
+db = MySQLdb.connect(host, user, password, dbname)
+
+names = ['ruan', 'donovan', 'james', 'warren', 'angie', 'nicole', 'jenny', 'penny', 'amber']
+job = ['doctor', 'scientist', 'teacher', 'police officer', 'waiter', 'banker', 'it']
+
+cur = db.cursor()
+cur.execute("DROP TABLE IF EXISTS customers")
+cur.execute("CREATE TABLE customers(userid VARCHAR(50), name VARCHAR(50), surname VARCHAR(50), job VARCHAR(50), age INT(2), credit_card_num VARCHAR(50), status VARCHAR(10))")
+
+bunch_users = []
+userids = []
+
+print("start")
+
+def gen_id():
+    return str(random.randint(0,9999)).zfill(4)
+
+def gen_user(username):
+    ccnum = '{0}-{1}-{2}-{3}'.format(gen_id(), gen_id(), gen_id(), gen_id())
+    userid = username + '_' + ccnum.split('-')[0] + ccnum.split('-')[2]
+    return {"uid": userid, "ccnum": ccnum}
+
+for name in range(records):
+    userids.append(gen_user(random.choice(names)))
+
+for user in userids:
+    userid = user["uid"]
+    name = user["uid"].split('_')[0]
+    job = random.choice(job)
+    age = random.randint(24,49)
+    credit_card_num = user["ccnum"]
+    status = random.choice(["active", "inactive", "disabled"])
+
+    bunch_users.append((userid, name, job, age, credit_card_num, status))
+
+timestart = int(dt.now().strftime("%s"))
+
+print("writing customers to database")
+cur.executemany(
+    """INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)""",
+    bunch_users
+)
+
+db.commit()
+db.close()
+timefinish = int(dt.now().strftime("%s"))
+print("finish")
+print("inserted {} records in {}s".format(records, timefinish-timestart))
+</code></pre>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, so this was kind of interesting to see to never do sequential writes but write them in bulk when you have large amount of writes.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Running a HA MySQL Galera Cluster on Docker Swarm]]></title>
@@ -692,91 +906,6 @@ fi
 </code></pre>
 
 <p>For more information on this, have a look at the <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html">docs</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Rejoining or Bootstrapping MySQL Galera Cluster Nodes After Shutdown]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2017/12/11/rejoining-or-bootstrapping-mysql-galera-cluster-nodes-after-shutdown/"/>
-    <updated>2017-12-11T01:03:44+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2017/12/11/rejoining-or-bootstrapping-mysql-galera-cluster-nodes-after-shutdown</id>
-    <content type="html"><![CDATA[<p>I have a 3 Node MySQL Galera Cluster that faced a shutdown on all 3 nodes at the same time, luckily this is only a testing environment, but at that time it was down and did not want to start up.</p>
-
-<h2>Issues Faced</h2>
-
-<p>When trying to start MySQL the only error visible was:</p>
-
-<pre><code class="bash">$ /etc/init.d/mysql restart
- * MySQL server PID file could not be found!
-Starting MySQL
-........ * The server quit without updating PID file (/var/run/mysqld/mysqld.pid).
- * Failed to restart server.
-</code></pre>
-
-<p>At that time I can see that the galera port is started, but not mysql:</p>
-
-<pre><code class="bash">$ ps aux | grep mysql
-root     23580  0.0  0.0   4508  1800 pts/0    S    00:37   0:00 /bin/sh /usr/bin/mysqld_safe --datadir=/var/lib/mysql --pid-file=/var/run/mysqld/mysqld.pid
-mysql    24144  0.7 22.2 1185116 455660 pts/0  Sl   00:38   0:00 /usr/sbin/mysqld --basedir=/usr --datadir=/var/lib/mysql --plugin-dir=/usr/lib/mysql/plugin --user=mysql --log-error=/var/log/mysql/error.log --pid-file=/var/run/mysqld/mysqld.pid --socket=/var/run/mysqld/mysqld.sock --port=3306 --wsrep_start_position=long:string
-
-$ netstat -tulpn
-Active Internet connections (only servers)
-Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
-tcp        0      0 0.0.0.0:4567            0.0.0.0:*               LISTEN      25507/mysqld
-</code></pre>
-
-<h2>Why?</h2>
-
-<p>More in detail is explained on a <a href="https://severalnines.com/blog/how-bootstrap-mysqlmariadb-galera-cluster">SeveralNines Blog Post</a>, but due to the fact that all the nodes left the cluster, one of the nodes needs to be started as a referencing point, before the other nodes can rejoin or bootstrapped to the cluster.</p>
-
-<h2>Rejoining the Cluster</h2>
-
-<p>Consult the blog for more information, but from my end, I had a look at the node with the highest seqno and then updated <code>safe_to_bootstrap</code> to <code>1</code>:</p>
-
-<pre><code class="bash">$ cat /var/lib/mysql/grastate.dat
-# GALERA saved state
-version: 2.1
-uuid:    e9f9cf6a-87a1-11e7-9fb4-52612b906897
-seqno:   123512
-safe_to_bootstrap: 1
-</code></pre>
-
-<p>Then made sure that no mysql processes are running, then did a bootstrap:</p>
-
-<pre><code class="bash">$ /etc/init.d/mysql bootstrap
-Bootstrapping the cluster
-Starting MySQL
-</code></pre>
-
-<p>Then restarted mysql on the other nodes.</p>
-
-<h2>Verifying</h2>
-
-<p>To verify that all your nodes has checked in, I have 3 nodes:</p>
-
-<pre><code class="sql">mysql&gt; SHOW STATUS LIKE 'wsrep_%';
-+------------------------------+---------------------------------------------------+
-| Variable_name                | Value                                             |
-+------------------------------+---------------------------------------------------+
-| wsrep_local_recv_queue_avg   | 0.000000                                          |
-| wsrep_local_state_comment    | Synced                                            |
-| wsrep_incoming_addresses     | 10.3.132.91:3306,10.4.1.201:3306,10.4.113.21:3306 |
-| wsrep_evs_state              | OPERATIONAL                                       |
-| wsrep_cluster_size           | 3                                                 |
-| wsrep_cluster_status         | Primary                                           |
-| wsrep_connected              | ON                                                |
-+------------------------------+---------------------------------------------------+
-</code></pre>
-
-<p>or a shorter version:</p>
-
-<pre><code class="sql">mysql&gt; SHOW GLOBAL STATUS LIKE 'wsrep_cluster_size';
-+------------------------------+---------------------------------------------------+
-| Variable_name                | Value                                             |
-+------------------------------+---------------------------------------------------+
-| wsrep_cluster_size           | 3                                                 |
-+------------------------------+---------------------------------------------------+
-</code></pre>
 ]]></content>
   </entry>
   

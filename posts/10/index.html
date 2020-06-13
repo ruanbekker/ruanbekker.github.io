@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Docker version 17.06 introduced Swarm Service Configs, which allows you to store data like configuration files, note that this is for non-sensitive &hellip;">
+  <meta name="description" content="GlusterFS is a Awesome Scalable Networked Filesystem, which makes it Easy to Create Large and Scalable Storage Solutions on Commodity Hardware. &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,330 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/03/04/setup-a-distributed-storage-volume-with-glusterfs/">Setup a Distributed Storage Volume With GlusterFS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-03-04T22:32:53+02:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>10:32 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://glusterdocs-beta.readthedocs.io/en/latest/_images/dist-volume.png" alt="" /></p>
+
+<p>GlusterFS is a Awesome Scalable Networked Filesystem, which makes it Easy to Create Large and Scalable Storage Solutions on Commodity Hardware.</p>
+
+<p><a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a></p>
+
+<p><strong>Basic Concepts of GlusterFS:</strong></p>
+
+<p>Brick:
+* In GlusterFS, a brick is the basic unit of storage, represented by a directory on the server in the trusted storage pool.</p>
+
+<p>Gluster Volume:
+* A Gluster volume is a Logical Collection of Bricks.</p>
+
+<p>Distributed Filesystem:
+* The concept is to enable multiple clients to concurrently access data which is spread across multple servers in a trusted storage pool. This is also a great solution to prevent data corruption, enable highly available storage systems, etc.</p>
+
+<p><a href="http://gluster.readthedocs.io/en/latest/Administrator%20Guide/glossary/">More concepts</a> can be retrieved from their documentation.</p>
+
+<h2>Different GlusterFS Volume Types:</h2>
+
+<p>With GlusterFS you can create the following types of Gluster Volumes:</p>
+
+<ul>
+<li>Distributed Volumes: (Ideal for Scalable Storage, No Data Redundancy)</li>
+<li>Replicated Volumes: (Better reliability and data redundancy)</li>
+<li>Distributed-Replicated Volumes: (HA of Data due to Redundancy and Scaling Storage)</li>
+<li><a href="http://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Architecture/">More detail</a> on GlusterFS Architecture</li>
+</ul>
+
+
+<h2>Setup a Distributed Gluster Volume:</h2>
+
+<p>In this guide we will setup a 3 Node Distributed GlusterFS Volume on Ubuntu 16.04.</p>
+
+<p>For this use case we would like to achieve a storage solution to scale the size of our storage, and not really worried about redundancy as, with a Distributed Setup we can increase the size of our volume, the more bricks we add to our GlusterFS Volume.</p>
+
+<h2>Setup: Our Environment</h2>
+
+<p>Each node has 2 disks, <code>/dev/xvda</code> for the Operating System wich is 20GB and <code>/dev/xvdb</code> which has 100GB. After we have created our GlusterFS Volume, we will have a Gluster Volume of 300GB.</p>
+
+<p>Having a look at our disks:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME    MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>xvda    202:0    <span class="m">0</span>   20G  <span class="m">0</span> disk
+</span><span class='line'>└─xvda1 202:1    <span class="m">0</span>   20G  <span class="m">0</span> part /
+</span><span class='line'>xvdb    202:16   <span class="m">0</span>  100G  <span class="m">0</span> disk
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you don&rsquo;t have DNS setup for your nodes, you can use your /etc/hosts file for all 3 nodes, which I will be using in this demonstration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/hosts
+</span><span class='line'>172.31.13.226   gluster-node-1
+</span><span class='line'>172.31.9.7      gluster-node-2
+</span><span class='line'>172.31.15.34    gluster-node-3
+</span><span class='line'>127.0.0.1       localhost
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install GlusterFS from the Package Manager:</h2>
+
+<p>Note that all the steps below needs to be performed on all 3 nodes, unless specified otherwise:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install xfsprogs attr glusterfs-server glusterfs-client glusterfs-common -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Format and Prepare the Gluster Disks:</h2>
+
+<p>We will create a XFS Filesystem for our 100GB disk, create the directory path where we will mount our disk onto, and also load it into <code>/etc/fstab</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkfs.xfs /dev/xvdb
+</span><span class='line'><span class="nv">$ </span>mkdir /gluster
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;/dev/xvdb /gluster xfs defaults 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'><span class="nv">$ </span>mount -a
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After we mounted the disk, we should see that our disk is mounted to <code>/gluster</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/xvda1       20G  1.2G   19G   7% /
+</span><span class='line'>/dev/xvdb       100G   33M  100G   1% /gluster
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After our disk is mounted, we can proceed by creating the brick directory on our disk that we mounted, from the step above:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir /gluster/brick
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Start GlusterFS Service:</h2>
+
+<p>Enable GlusterFS on startup, start the service and make sure that the service is running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>glusterfs-server
+</span><span class='line'><span class="nv">$ </span>systemctl restart glusterfs-server
+</span><span class='line'><span class="nv">$ </span>systemctl is-active glusterfs-server
+</span><span class='line'>active
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Discover All the Nodes for our Cluster:</h2>
+
+<p>The following will only be done on one of the nodes. First we need to discover our other nodes.</p>
+
+<p>The node that you are currently on, will be discovered by default and only needs the other 2 nodes to be discovered:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster peer probe gluster-node-2
+</span><span class='line'><span class="nv">$ </span>gluster peer probe gluster-node-3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s verify this by listing all the nodes in our cluster:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster pool list
+</span><span class='line'>UUID                                    Hostname        State
+</span><span class='line'>6e02731c-6472-4ea4-bd48-d5dd87150e8b    gluster-node-2  Connected
+</span><span class='line'>9d4c2605-57ba-49e2-b5da-a970448dc886    gluster-node-3  Connected
+</span><span class='line'>608f027e-e953-413b-b370-ce84050a83c9    localhost       Connected
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Distributed GlusterFS Volume:</h2>
+
+<p>We will create a Distributed GlusterFS Volume across 3 nodes, and we will name the volume <code>gfs</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume create gfs <span class="se">\</span>
+</span><span class='line'>  gluster-node-1:/gluster/brick <span class="se">\</span>
+</span><span class='line'>  gluster-node-2:/gluster/brick <span class="se">\</span>
+</span><span class='line'>  gluster-node-3:/gluster/brick
+</span><span class='line'>
+</span><span class='line'>volume create: gfs: success: please start the volume to access data
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Start the GlusterFS Volume:</h2>
+
+<p>Now start the <code>gfs</code> GlusterFS Volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume start gfs
+</span><span class='line'>volume start: gfs: success
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To get information about the volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume info gfs
+</span><span class='line'>
+</span><span class='line'>Volume Name: gfs
+</span><span class='line'>Type: Distribute
+</span><span class='line'>Volume ID: c08bc2e8-59b3-49e7-bc17-d4bc8d99a92f
+</span><span class='line'>Status: Started
+</span><span class='line'>Number of Bricks: 3
+</span><span class='line'>Transport-type: tcp
+</span><span class='line'>Bricks:
+</span><span class='line'>Brick1: gluster-node-1:/gluster/brick
+</span><span class='line'>Brick2: gluster-node-2:/gluster/brick
+</span><span class='line'>Brick3: gluster-node-3:/gluster/brick
+</span><span class='line'>Options Reconfigured:
+</span><span class='line'>performance.readdir-ahead: on
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Status information about our Volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>gluster volume status
+</span><span class='line'>
+</span><span class='line'>Status of volume: gfs
+</span><span class='line'>Gluster process                             TCP Port  RDMA Port  Online  Pid
+</span><span class='line'>------------------------------------------------------------------------------
+</span><span class='line'>Brick gluster-node-1:/gluster/brick         <span class="m">49152</span>     <span class="m">0</span>          Y       7139
+</span><span class='line'>Brick gluster-node-2:/gluster/brick         <span class="m">49152</span>     <span class="m">0</span>          Y       7027
+</span><span class='line'>Brick gluster-node-3:/gluster/brick         <span class="m">49152</span>     <span class="m">0</span>          Y       7099
+</span><span class='line'>NFS Server on localhost                     <span class="m">2049</span>      <span class="m">0</span>          Y       7158
+</span><span class='line'>NFS Server on gluster-node-2                <span class="m">2049</span>      <span class="m">0</span>          Y       7046
+</span><span class='line'>NFS Server on gluster-node-3                <span class="m">2049</span>      <span class="m">0</span>          Y       7118
+</span><span class='line'>
+</span><span class='line'>Task Status of Volume gfs
+</span><span class='line'>------------------------------------------------------------------------------
+</span><span class='line'>There are no active volume tasks
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Mounting our GlusterFS Volume:</h2>
+
+<p>On all the clients, in this case our 3 nodes, load the mount information into <code>/etc/fstab</code> and then mount the GlusterFS Volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;localhost:/gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=gluster-node-1 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'><span class="nv">$ </span>mount -a
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that the volume is mounted, have a look at your disk info, and you will find that you have a <code>300GB</code> GlusterFS Volume mounted:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/xvda1       20G  1.3G   19G   7% /
+</span><span class='line'>/dev/xvdb       100G   33M  100G   1% /gluster
+</span><span class='line'>localhost:/gfs  300G   98M  300G   1% /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As mentioned before, this is most probably for a scenario where you would like to achieve a high storage size and not really concerned about data availability.</p>
+
+<p>In the next couple of weeks I will also go through the Replicated, Distributed-Replicated and <a href="https://gluster.readthedocs.io/en/latest/Administrator%20Guide/Gluster%20On%20ZFS/">GlusterFS with ZFS</a> setups.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="http://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Terminologies/">GlusterFS Terminologies</a></li>
+<li><a href="http://gluster.readthedocs.io/en/latest/Quick-Start-Guide/Architecture/">GlusterFS Architecture</a></li>
+<li><a href="http://gluster.readthedocs.io/en/latest/Administrator%20Guide/Gluster%20On%20ZFS/">GlusterFS with ZFS</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2048,340 +2372,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/02/12/concourse-tasks-and-inputs-tutorial/">Concourse Tasks and Inputs Tutorial</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-02-12T21:57:27+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>12</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>9:57 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
-
-<p>In this tutorial I will show you how to execute task scripts and using task inputs to have the ability to pass data to concourse for processing.</p>
-
-<p>For my other content on concourse, have a look at the <a href="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495">concourse</a> category.</p>
-
-<h2>Task Inputs</h2>
-
-<p>First, let&rsquo;s run a task on concourse that does not rely on any inputs.</p>
-
-<figure class='code'><figcaption><span>no_inputs.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">platform</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">linux</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">image_resource</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">docker-image</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span> <span class="p-Indicator">{</span><span class="nv">repository</span><span class="p-Indicator">:</span> <span class="nv">busybox</span><span class="p-Indicator">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">run</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">uname</span>
-</span><span class='line'><span class="l-Scalar-Plain">args</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&quot;-a&quot;</span><span class="p-Indicator">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Running execute with the configuration from above:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci e -c no_inputs.yml
-</span><span class='line'>
-</span><span class='line'>executing build <span class="m">37</span> at http://10.20.30.40/builds/37
-</span><span class='line'>initializing
-</span><span class='line'>running uname -a
-</span><span class='line'>Linux 2fd4e261-a708-4e15-4a4a-2bc50221a664 4.9.0-8-amd64 <span class="c">#1 SMP Debian 4.9.110-3+deb9u4 (2018-08-21) x86_64 GNU/Linux</span>
-</span><span class='line'>succeeded
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see we have executed the command <code>uname -a</code> on one of the containers in Concourse.</p>
-
-<h2>Tasks Inputs: Specify Path</h2>
-
-<p>Now lets say, we have data that needs to be transferred to the container where we are running our tasks. For that we are using inputs.</p>
-
-<p>In this example, we will set the input parameter in our task definition, and override the path with the cli. We will create a couple of files in a folder, then list them in the container where the task is running.</p>
-
-<p>Creating the data:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir my-data-folder
-</span><span class='line'><span class="nv">$ </span>touch my-data-folder/test1.txt my-data-folder/test2.txt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our task definition:</p>
-
-<figure class='code'><figcaption><span>inputs_required.yml</span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">platform</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">linux</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">image_resource</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">docker-image</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span> <span class="p-Indicator">{</span><span class="nv">repository</span><span class="p-Indicator">:</span> <span class="nv">busybox</span><span class="p-Indicator">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">inputs</span><span class="p-Indicator">:</span>
-</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-input</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">run</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ls</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">args</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;-alR&#39;</span><span class="p-Indicator">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see our input name is called <code>my-input</code> and we will use the cli to map the local folder <code>my-data-folder</code> to the parameter name:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci e -c inputs_required.yml -i my-input<span class="o">=</span>./my-data-folder/
-</span><span class='line'>
-</span><span class='line'>executing build <span class="m">32</span> at http://10.20.30.40/builds/32
-</span><span class='line'>initializing
-</span><span class='line'>my-input: 262.13 KiB/s 0s
-</span><span class='line'>running ls -alR
-</span><span class='line'>.:
-</span><span class='line'>total 0
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">16</span> Feb <span class="m">10</span> 08:53 .
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">16</span> Feb <span class="m">10</span> 08:53 ..
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">36</span> Feb <span class="m">10</span> 08:53 my-input
-</span><span class='line'>
-</span><span class='line'>./my-input:
-</span><span class='line'>total 0
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">36</span> Feb <span class="m">10</span> 08:53 .
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">16</span> Feb <span class="m">10</span> 08:53 ..
-</span><span class='line'>-rw-r--r--    <span class="m">1</span> <span class="m">501</span>      staff            <span class="m">0</span> Feb <span class="m">10</span> 08:52 test1.txt
-</span><span class='line'>-rw-r--r--    <span class="m">1</span> <span class="m">501</span>      staff            <span class="m">0</span> Feb <span class="m">10</span> 08:52 test2.txt
-</span><span class='line'>succeeded
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see from the above output, the folder was uploaded and placed inside the container where we ran our task.</p>
-
-<h2>Task Inputs: Parent Directory</h2>
-
-<p>Then we can use parent directories. Running a task that relies on the input path which will be our current working directory. Note: the input name should be the same as the current working directory</p>
-
-<p>The input name will be the only thing that differs, which will look like:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>inputs:
-</span><span class='line'>- name: my-data-folder
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Running the task:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd </span>my-data-folder
-</span><span class='line'><span class="nv">$ </span>fly -t ci e -c ../input_parent_dir.yml
-</span><span class='line'>
-</span><span class='line'>executing build <span class="m">35</span> at http://10.20.30.40/builds/35
-</span><span class='line'>initializing
-</span><span class='line'>my-data-folder: 395.85 KiB/s 0s
-</span><span class='line'>running ls -alR
-</span><span class='line'>.:
-</span><span class='line'>total 0
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">38</span> Feb <span class="m">10</span> 09:17 .
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">16</span> Feb <span class="m">10</span> 09:17 ..
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">18</span> Feb <span class="m">10</span> 09:17 my-data-folder
-</span><span class='line'>
-</span><span class='line'>./my-data-folder:
-</span><span class='line'>total 0
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">18</span> Feb <span class="m">10</span> 09:17 .
-</span><span class='line'>drwxr-xr-x    <span class="m">1</span> root     root            <span class="m">38</span> Feb <span class="m">10</span> 09:17 ..
-</span><span class='line'>-rw-r--r--    <span class="m">1</span> <span class="m">501</span>      staff            <span class="m">0</span> Feb <span class="m">10</span> 09:15 test1.txt
-</span><span class='line'>-rw-r--r--    <span class="m">1</span> <span class="m">501</span>      staff            <span class="m">0</span> Feb <span class="m">10</span> 09:15 test2.txt
-</span><span class='line'>succeeded
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The source code for this can be found at <a href="https://github.com/ruanbekker/concourse-tutorial/tree/master/02-task-inputs">https://github.com/ruanbekker/concourse-tutorial/tree/master/02-task-inputs</a></p>
-
-<h2>Task Scripts:</h2>
-
-<p>In conjunction with inputs, we can let our task configuration reference a script that we want to execute, and using inputs, we can upload the current working directory to concourse, so then the container has context about the data that it needs.</p>
-
-<p>Our task configuration <code>task_show_hostname.yml</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>platform: linux
-</span><span class='line'>
-</span><span class='line'>image_resource:
-</span><span class='line'>  <span class="nb">type</span>: docker-image
-</span><span class='line'>  <span class="nb">source</span>: <span class="o">{</span>repository: busybox<span class="o">}</span>
-</span><span class='line'>
-</span><span class='line'>inputs:
-</span><span class='line'>- name: 03-task-scripts
-</span><span class='line'>
-</span><span class='line'>run:
-</span><span class='line'>  path: ./03-task-scripts/task_show_hostname.sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our executable script <code>03-task-scripts/task_show_hostname.sh</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/bin/sh</span>
-</span><span class='line'>
-</span><span class='line'><span class="nv">get_hostname</span><span class="o">=</span><span class="k">$(</span>hostname<span class="k">)</span>
-</span><span class='line'><span class="nb">echo</span> <span class="s2">&quot;Hostname is: ${get_hostname}&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Make sure to apply the executable permissions to the script:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chmod +x 03-task-scripts/task_show_hostname.sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>With this configuration, it uploads the current working directory to concourse, and the data inside the directory gets placed on the container&rsquo;s working directory: 03-task-scripts, which is the name of the input.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci e -c 03-task-scripts/task_show_hostname.yml
-</span><span class='line'>
-</span><span class='line'>executing build <span class="m">39</span> at http://10.20.30.40/builds/39
-</span><span class='line'>initializing
-</span><span class='line'>03-task-scripts: 347.15 KiB/s 0s
-</span><span class='line'>running ./03-task-scripts/task_show_hostname.sh
-</span><span class='line'>Hostname is: 3ccb3c28-d452-4068-5ea1-101153803d93
-</span><span class='line'>succeeded
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The source code for this example can be found at <a href="https://github.com/ruanbekker/concourse-tutorial/tree/master/03-task-scripts">https://github.com/ruanbekker/concourse-tutorial/tree/master/03-task-scripts</a></p>
-
-<p>That&rsquo;s it for Task Inputs and Task Scripts on Concourse, please feel free to have a look at my other content about <a href="http://blog.ruanbekker.com/blog/categories/concourse/">Concourse</a></p>
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/11">&larr; Older</a>
@@ -2432,6 +2422,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/06/13/improve-mysql-write-performance-using-batch-writes/">Improve MySQL Write Performance Using Batch Writes</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/06/08/build-a-ghost-blog-with-nginx-cache-on-docker/">Increase Performance With Your Ghost Blog on Docker</a>
       </li>
     
@@ -2445,10 +2439,6 @@
     
       <li class="post">
         <a href="/blog/2020/05/09/selecting-and-returning-specific-data-with-jq/">Selecting and Returning Specific Data With JQ</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/05/08/server-backups-to-google-drive-using-the-drive-cli-tool/">Server Backups to Google Drive Using the Drive CLI Tool</a>
       </li>
     
   </ul>

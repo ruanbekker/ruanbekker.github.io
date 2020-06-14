@@ -2,6 +2,7 @@
 layout: post
 title: "Setup a Hugo Blog with the Kiera Theme"
 date: 2020-06-14 15:23:51 +0200
+description: "Hugo is a must when you want to start a lightweight blog which is super fast"
 comments: true
 categories: ["hugo"] 
 ---
@@ -12,10 +13,15 @@ In this tutorial we will setup a Hugo Blog with the Kiera theme on Linux and wil
 
 ## Dependencies
 
-We require golang and hugo, so let's first start with installing go:
+We require git to download the theme from github, so first update your package managers indexes, and install git:
 
 ```
 $ apt update && apt install git -y
+```
+
+Install golang (optional):
+
+```
 $ VERSION=1.14.4
 $ wget "https://dl.google.com/go/go${VERSION}.linux-amd64.tar.gz"
 $ tar -xf go$VERSION.linux-amd64.tar.gz -C /usr/local
@@ -35,6 +41,8 @@ Now to install Hugo:
 
 ```
 $ mkdir -p /usr/local/hugo/bin
+$ wget https://github.com/gohugoio/hugo/releases/download/v0.72.0/hugo_0.72.0_Linux-64bit.tar.gz
+$ tar -xf hugo_0.72.0_Linux-64bit.tar.gz -C /usr/local/hugo/bin
 $ echo 'export HUGO_HOME=/usr/local/hugo' >> ~/.profile
 $ echo 'export PATH=$PATH:$HUGO_HOME/bin' >> ~/.profile
 ```

@@ -112,3 +112,6 @@ Head over to nagios user interface at http://nagios-ip/nagios and you should see
 
 Next up, [Setup the NRPE Server and Client](https://blog.ruanbekker.com/blog/2019/03/18/setup-nrpe-client-and-server-for-monitoring-remote-services-in-nagios/) to monitor remote systems using the nrpe plugin.
 
+## Thanks
+
+Thank you for reading

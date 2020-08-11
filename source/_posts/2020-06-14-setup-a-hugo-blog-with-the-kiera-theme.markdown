@@ -240,4 +240,4 @@ $ hugo server \
 
 ## Thanks
 
-Thanks for reading
+Thanks for reading, feel free to reach out to me on [@ruanbekker](https://twitter.com/ruanbekker)

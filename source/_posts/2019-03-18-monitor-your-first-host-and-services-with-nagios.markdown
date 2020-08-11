@@ -14,7 +14,7 @@ If you have not setup the [Nagios Server](https://blog.ruanbekker.com/blog/2019/
 
 I like to setup an isolated path for my custom host/service configigurations. First we will declare the configuration path for our servers.
 
-Open up: `/usr/local/nagios/etc/nagios.cfg` and add a new `cfg_dir`:
+Open up: `/usr/local/nagios/etc/nagios.cfg` and add a new cfg_dir:
 
 ```
 cfg_dir=/usr/local/nagios/etc/servers
@@ -112,6 +112,3 @@ Head over to nagios user interface at http://nagios-ip/nagios and you should see
 
 Next up, [Setup the NRPE Server and Client](https://blog.ruanbekker.com/blog/2019/03/18/setup-nrpe-client-and-server-for-monitoring-remote-services-in-nagios/) to monitor remote systems using the nrpe plugin.
 
-## Thanks
-
-Thank you for reading

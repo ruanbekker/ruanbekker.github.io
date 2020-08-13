@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-08-13T07:01:47+00:00</updated>
+  <updated>2020-08-13T15:46:30+00:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,415 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Getting Started on Logging With Loki Using Docker]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/08/13/getting-started-on-logging-with-loki-using-docker/"/>
+    <updated>2020-08-13T13:39:28+00:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/08/13/getting-started-on-logging-with-loki-using-docker</id>
+    <content type="html"><![CDATA[<p>Logging with Loki is AMAZING!</p>
+
+<p>In the past couple of months i&rsquo;ve been working a lot with logging, but more specifically logging with loki. As most of my metrics reside in prometheus, I use grafana quite extensively and logging was always the one that stood out a bit as I pushed my logs to elasticsearch and consumed them from grafana. Which worked pretty well, but the maintenance and resource costs was a bit too much for what I was looking for.</p>
+
+<p>And then grafana released Loki, which is like prometheus, but for logs. And that was just super, exactly what I was looking for. For my use case, I was looking for something that can be consumed by grafana as a presentation layer, central based so I can push all sorts of logs, and want a easy way to grep for logs and a bonus would be to have a cli tool.</p>
+
+<p>And Loki checked all those boxes!</p>
+
+<div class="tenor-gif-embed" data-postid="7644619" data-share-method="host" data-width="100%" data-aspect-ratio="1.1971153846153846"><a href="https://tenor.com/view/oh-yeah-gif-7644619">Oh Yeah Parks And Recreation GIF</a> from <a href="https://tenor.com/search/ohyeah-gifs">Ohyeah GIFs</a></div>
+
+
+<script type="text/javascript" async src="https://tenor.com/embed.js"></script>
+
+
+<h2>What can you expect from this blog</h2>
+
+<p>In this post will be a getting started guide to Loki, we will provision Loki, Grafana and Nginx using Docker to get our environment up and running, so that we can push our nginx container logs to the loki datasource, and access the logs via grafana.</p>
+
+<p>We will then generate some logs so that we can show a couple of query examples using the log query language (LogQL) and use the LogCLI to access our logs via cli.</p>
+
+<p>In a <a href="">future post</a>, I will demonstrate how to setup Loki for a non-docker deployment.</p>
+
+<h2>Some useful information about Loki</h2>
+
+<p>Let&rsquo;s first talk about Loki compared with Elasticsearch, as they are not the same:</p>
+
+<ol>
+<li>Loki does not index the text of the logs, instead grouping entries into streams and index those with labels</li>
+<li>Things like full text search engines tokenizes your text into k/v pairs and gets written to an inverted index, which over time in my opinion gets complex to maintain, expensive to scale, storage retention, etc.</li>
+<li>Loki is advertised as easy to scale, affordable to operate as it uses DynamoDB for Indexing and S3 for Storage</li>
+<li>When using Loki, you may need to forget what you know and look to see how the problem can be solved differently with parallelization. Loki’s superpower is breaking up queries into small pieces and dispatching them in parallel so that you can query huge amounts of log data in small amounts of time.</li>
+</ol>
+
+
+<p>If we look at the <strong>Loki Log Model</strong>, we can see that the timestamp and the labels are indexed and the content of the logs are not indexed:</p>
+
+<p><img src="https://img.sysadmins.co.za/cpr6n7.png" alt="loki" /></p>
+
+<p>A <strong>log stream</strong> is a stream of log entries with the same exact label set:</p>
+
+<p><img src="https://img.sysadmins.co.za/el6djk.png" alt="loki" /></p>
+
+<p>For the <strong>storage</strong> side, inside each chunk, log entries are sorted by timestamp. Loki only indexes minimum and maximum timestamps of a chunk. Storage options support local storage, AWS S3, Google Cloud Storage and Azure</p>
+
+<p><img src="https://img.sysadmins.co.za/959pjw.png" alt="loki" /></p>
+
+<p>For <strong>chunks and querying</strong>, chunks are filled per stream and they are flushed of a few criterias such as age and size:</p>
+
+<p><img src="https://img.sysadmins.co.za/ekm8cy.png" alt="loki" /></p>
+
+<p>And one of the most important parts are the <strong>labels</strong>, labels define the stream and therefore its very important.</p>
+
+<p>High cardinality is bad for labels, as something like a IP address can reduce your performance a lot, as it will create a stream for every unique IP label.</p>
+
+<p>Static defined labels such as environment, hostnames are good, you can read more up about it <a href="https://grafana.com/blog/2020/04/21/how-labels-in-loki-can-make-log-queries-faster-and-easier/">here</a></p>
+
+<p>Here is a info graphic on how one log line can be split up into 36 streams:</p>
+
+<p><img src="https://img.sysadmins.co.za/g119oq.png" alt="" /></p>
+
+<p>So with that being said, <strong>good labels</strong> will be considered as cluster, job, namespace, environment, etc where as <strong>bad labels</strong> will be things such as userid, ip address, url path, etc</p>
+
+<h2>Selecting logstreams with Loki</h2>
+
+<p>Selecting logstreams, is done by using <strong>label matchers</strong> and <strong>filter expressions</strong>, such as this example:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs", environment="development"} |= "POST" |~ "196.35.64.+"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Label Matchers and Filter Expressions support:</p>
+
+<ul>
+<li><code>=</code> Contains string</li>
+<li><code>!=</code> Does not contain string</li>
+<li><code>=~</code> Matches regular expression</li>
+<li><code>!~</code> Does not match regular expression</li>
+</ul>
+
+
+<h2>Supported Clients</h2>
+
+<p>At the moment of writing, loki supports the following log clients:</p>
+
+<ul>
+<li>Promtail (tails logs and ships to Loki)</li>
+<li>Docker Driver</li>
+<li>Fluentd</li>
+<li>Fluent Bit</li>
+<li>Logstash</li>
+</ul>
+
+
+<p>We will be going into more detail on using promtail in a <a href="">future post</a>, but you can read more up about it <a href="https://github.com/grafana/loki/tree/master/cmd">here</a></p>
+
+<h2>Loki in Action</h2>
+
+<p>Time to get to the fun part, clone my <a href="https://github.com/ruanbekker/loki-docker-nginx-example">github repo</a>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/ruanbekker/loki-docker-nginx-example
+</span><span class='line'>$ cd loki-docker-nginx-example</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can inspect the docker-compose.yml:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat docker-compose.yml
+</span><span class='line'>version: "3.4"
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  my-nginx-service:
+</span><span class='line'>    image: nginx
+</span><span class='line'>    container_name: my-nginx-service
+</span><span class='line'>    ports:
+</span><span class='line'>      - 8000:80
+</span><span class='line'>    environment:
+</span><span class='line'>      - FOO=bar
+</span><span class='line'>    logging:
+</span><span class='line'>      driver: loki
+</span><span class='line'>      options:
+</span><span class='line'>        loki-url: http://localhost:3100/loki/api/v1/push
+</span><span class='line'>        loki-external-labels: job=dockerlogs,owner=ruan,environment=development
+</span><span class='line'>
+</span><span class='line'>  grafana:
+</span><span class='line'>    image: grafana/grafana:7.1.1
+</span><span class='line'>    volumes:
+</span><span class='line'>    - ./config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+</span><span class='line'>    ports:
+</span><span class='line'>    - "3000:3000"
+</span><span class='line'>
+</span><span class='line'>  loki:
+</span><span class='line'>   image: grafana/loki:v1.3.0
+</span><span class='line'>   volumes:
+</span><span class='line'>     - ./config/loki.yaml:/etc/config/loki.yaml
+</span><span class='line'>   entrypoint:
+</span><span class='line'>     - /usr/bin/loki
+</span><span class='line'>     - -config.file=/etc/config/loki.yaml
+</span><span class='line'>   ports:
+</span><span class='line'>     - "3100:3100"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see loki will be the datasource where we will be pushing our logs to from our nginx container and we are defining our logging section where it should find loki and we are also setting labels to that log stream using <code>loki-external-labels</code>. Then we are using grafana to auto configure the loki datasource from the <code>./config/datasource.yml</code> section so that we can visualize our logs.</p>
+
+<p>If you don&rsquo;t want to define the logging section per container, you can always set the defaults using the <code>/etc/docker/daemon.json</code> by following <a href="https://grafana.com/docs/loki/latest/clients/docker-driver/configuration/#change-the-default-logging-driver">this guide</a></p>
+
+<p>Let&rsquo;s boot up our stack:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After everything is up, you should be able to access nginx by visiting: <code>http://nginx.localdns.xyz:8000/</code>, after you received a response, visit Grafana on <code>http://grafana.localdns.xyz:3000</code> using the username and password: <code>admin/admin</code>.</p>
+
+<p>If you head over to datasources, you should see the loki datasource which was provisioned for you:</p>
+
+<p><img src="https://img.sysadmins.co.za/tyn0ny.png" alt="loki-grafana" /></p>
+
+<p>When you head to the left on explore and you select the loki datasource on <code>http://grafana.localdns.xyz:3000/explore</code> you should see the following:</p>
+
+<p><img src="https://img.sysadmins.co.za/5kp07m.png" alt="loki-grafana" /></p>
+
+<p>You will see that grafana discovers logstreams with the label <code>job</code> as you can see that our <code>job="dockerlogs"</code> can be seen there. We can either click on it, select the log labels from the left and browse the label we want to select or manually enter the query.</p>
+
+<p>I will be using the query manually:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs"}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So now we will get all the logs that has that label associated and as you can see, we see our request that we made:</p>
+
+<p><img src="https://img.sysadmins.co.za/gra0oe.png" alt="nginx-grafana-loki" /></p>
+
+<p>We can see one error due to the favicon.ico that it could not find, but let&rsquo;s first inspect our first log line:</p>
+
+<p><img src="https://img.sysadmins.co.za/6dbuqn.png" alt="loki" /></p>
+
+<p>Here we can see the labels assigned to that log event, which we can include in our query, like if we had multiple services and different environments, we can use a query like the following to only see logs for a specific service and environment:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs", environment="development", compose_service="my-nginx-service"}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the example above we used the selectors to select the logs we want to see, now we can use our filter expressions, to &ldquo;grep&rdquo; our logs.</p>
+
+<p>Let&rsquo;s say we want to focus only on one service, and we want to filter for any logs with GET requests, so first we select to service then apply the filter expression:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET"</span></code></pre></td></tr></table></div></figure>
+
+
+<p><img src="https://img.sysadmins.co.za/vv609g.png" alt="loki-logs" /></p>
+
+<p>As you can see we can see the ones we were looking for, we can also chain them, so we want to se GET&rsquo;s and errors:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And lets say for some reason we only want to see the logs that comes from a 192.168.32 subnet:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32."</span></code></pre></td></tr></table></div></figure>
+
+
+<p>But we dont want to see requests from &ldquo;nginx.localdns.xyz&rdquo;:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32." != "nginx.localdns.xyz"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Make two extra get requests to &ldquo;foo.localdns.xyz:8000&rdquo; and &ldquo;bar.localdns.xyz:8000&rdquo; and then we change the query to say that we only want to see errors and hostnames coming from the 2 requests that we made:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "error" |~ "(foo|bar).localdns.xyz"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we expand one of the log lines, we can do a ad-hoc analysis to see the percentage of logs by source for example:</p>
+
+<p><img src="https://img.sysadmins.co.za/9ctz6d.png" alt="loki-logs" /></p>
+
+<h2>LogCLI</h2>
+
+<p>If you prefer the cli to query logs, logcli is the command line client for loki, allows you to query logs from your terminal and has clients for linux, mac and windows.</p>
+
+<p>Check the releases for the latest version:</p>
+
+<ul>
+<li><a href="https://github.com/grafana/loki/releases">https://github.com/grafana/loki/releases</a></li>
+</ul>
+
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/grafana/loki/releases/download/v1.5.0/logcli-darwin-amd64.zip
+</span><span class='line'>$ unzip logcli-darwin-amd64.zip
+</span><span class='line'>$ mv logcli-darwin-amd64 /usr/local/bin/logcli</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set your environment details, in our case we dont have a username and password for loki:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ #export LOKI_USERNAME=${MYUSER}
+</span><span class='line'>$ #export LOKI_PASSWORD=${MYPASS}
+</span><span class='line'>$ export LOKI_ADDR=http://localhost:3001</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can view all our labels, let’s view all the job labels:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli labels job
+</span><span class='line'>http://localhost:3001/loki/api/v1/label/job/values
+</span><span class='line'>dockerlogs</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let’s look at family apps nginx logs:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query '{job="dockerlogs"}'
+</span><span class='line'>http://localhost:3001/loki/api/v1/query_range?direction=BACKWARD&end=1587727924005496000&limit=30&query=%7Bjob%3D%22dockerlogs%22%2C&start=1587724324005496000
+</span><span class='line'>Common labels: {environment="development", owner="ruan", compose_service="my-nginx-service", job="dockerlogs", host="docker-desktop", compose_project="loki-nginx-docker"}
+</span><span class='line'>2020-08-13 17:08:40 192.168.32.1 - - [13/Aug/2020:15:08:40 +0000] "GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:79.0) Gecko/20100101 Firefox/79.0" "-"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also pipe that output to grep, awk, etc:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query '{job="dockerlogs"}' | grep GREP | awk -F 'X' '{print  $1}'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Supported arguments:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query --help
+</span><span class='line'>usage: logcli query [&lt;flags&gt;] &lt;query&gt;
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>Run a LogQL query.
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>Flags:
+</span><span class='line'>      --help             Show context-sensitive help (also try --help-long and --help-man).
+</span><span class='line'>      --version          Show application version.
+</span><span class='line'>  -q, --quiet            suppress everything but log lines
+</span><span class='line'>      --stats            show query statistics
+</span><span class='line'>  -o, --output=default   specify output mode [default, raw, jsonl]
+</span><span class='line'>  -z, --timezone=Local   Specify the timezone to use when formatting output timestamps [Local, UTC]
+</span><span class='line'>      --addr="http://localhost:3100"
+</span><span class='line'>                         Server address. Can also be set using LOKI_ADDR env var.
+</span><span class='line'>      --username=""      Username for HTTP basic auth. Can also be set using LOKI_USERNAME env var.
+</span><span class='line'>      --password=""      Password for HTTP basic auth. Can also be set using LOKI_PASSWORD env var.
+</span><span class='line'>      --ca-cert=""       Path to the server Certificate Authority. Can also be set using LOKI_CA_CERT_PATH env var.
+</span><span class='line'>      --tls-skip-verify  Server certificate TLS skip verify.
+</span><span class='line'>      --cert=""          Path to the client certificate. Can also be set using LOKI_CLIENT_CERT_PATH env var.
+</span><span class='line'>      --key=""           Path to the client certificate key. Can also be set using LOKI_CLIENT_KEY_PATH env var.
+</span><span class='line'>      --org-id=ORG-ID    org ID header to be substituted for auth
+</span><span class='line'>      --limit=30         Limit on number of entries to print.
+</span><span class='line'>      --since=1h         Lookback window.
+</span><span class='line'>      --from=FROM        Start looking for logs at this absolute time (inclusive)
+</span><span class='line'>      --to=TO            Stop looking for logs at this absolute time (exclusive)
+</span><span class='line'>      --step=STEP        Query resolution step width
+</span><span class='line'>      --forward          Scan forwards through logs.
+</span><span class='line'>      --no-labels        Do not print any labels
+</span><span class='line'>      --exclude-label=EXCLUDE-LABEL ...
+</span><span class='line'>                         Exclude labels given the provided key during output.
+</span><span class='line'>      --include-label=INCLUDE-LABEL ...
+</span><span class='line'>                         Include labels given the provided key during output.
+</span><span class='line'>      --labels-length=0  Set a fixed padding to labels
+</span><span class='line'>  -t, --tail             Tail the logs
+</span><span class='line'>      --delay-for=0      Delay in tailing by number of seconds to accumulate logs for re-ordering
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>Args:
+</span><span class='line'>  &lt;query&gt;  eg '{foo="bar",baz=~".*blip"} |~ ".*error.*"'</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank you</h2>
+
+<p>I hope this was useful</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup a Hugo Blog With the Kiera Theme]]></title>
@@ -5529,203 +5938,6 @@
 <li><a href="https://docs.openfaas.com/reference/async/">https://docs.openfaas.com/reference/async/</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Traefik Ingress for OpenFaas on Kubernetes (K3d)]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/"/>
-    <updated>2020-02-17T23:36:33+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d</id>
-    <content type="html"><![CDATA[<p>In this post we will deploy <a href="https://www.openfaas.com/">OpenFaas</a> on Kubernetes locally using <a href="https://github.com/alexellis/k3sup">k3sup</a> and <a href="https://github.com/rancher/k3d">k3d</a>, then deploy a Traefik Ingress so that we can access the OpenFaas Gateway on HTTP over the standard port 80.</p>
-
-<p>K3d is a amazing wrapper that deploys a k3s cluster on docker, and k3sup makes it very easy to provision OpenFaas to your Kubernetes cluster.</p>
-
-<h2>Deploy a Kubernetes Cluster</h2>
-
-<p>If you have not installed k3d, you can install k3d on mac with brew:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ brew install k3d</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We will deploy our cluster with 2 worker nodes and publish port 80 to the containers port 80:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ k3d create --name="demo" --workers="2" --publish="80:80"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Point the kubeconfig to the location that k3d generated:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ export KUBECONFIG="$(k3d get-kubeconfig --name='demo')"</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy OpenFaas</h2>
-
-<p>First we need to get k3sup:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -sLfS https://get.k3sup.dev | sudo sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once k3sup is installed, deploy OpenFaas to your cluster:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ k3sup app install openfaas</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Give it a minute or so and check if everything is running:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get pods -n openfaas
-</span><span class='line'>NAMESPACE     NAME                                 READY   STATUS      RESTARTS   AGE
-</span><span class='line'>openfaas      alertmanager-546f66b6c6-qtb69        1/1     Running     0          5m
-</span><span class='line'>openfaas      basic-auth-plugin-79b9878b7b-7vlln   1/1     Running     0          4m59s
-</span><span class='line'>openfaas      faas-idler-db8cd9c7d-8xfpp           1/1     Running     2          4m57s
-</span><span class='line'>openfaas      gateway-7dcc6d694d-dmvqn             2/2     Running     0          4m56s
-</span><span class='line'>openfaas      nats-d6d574749-rt9vw                 1/1     Running     0          4m56s
-</span><span class='line'>openfaas      prometheus-d99669d9b-mfxc8           1/1     Running     0          4m53s
-</span><span class='line'>openfaas      queue-worker-75f44b56b9-mhhbv        1/1     Running     0          4m52s</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Traefik Ingress</h2>
-
-<p>In my scenario, I am using <code>openfaas.localdns.xyz</code> which resolves to <code>127.0.0.1</code>. Next we need to know to which service to route the traffic to, we can find that by:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get svc/gateway -n openfaas
-</span><span class='line'>NAME      TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
-</span><span class='line'>gateway   ClusterIP   10.43.174.57   &lt;none&gt;        8080/TCP   23m</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Below is our ingress.yml:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>apiVersion: extensions/v1beta1
-</span><span class='line'>kind: Ingress
-</span><span class='line'>metadata:
-</span><span class='line'>  name: openfaas-gateway-ingress
-</span><span class='line'>  namespace: openfaas
-</span><span class='line'>  annotations:
-</span><span class='line'>    kubernetes.io/ingress.class: traefik
-</span><span class='line'>spec:
-</span><span class='line'>  rules:
-</span><span class='line'>  - host: openfaas.localdns.xyz
-</span><span class='line'>    http:
-</span><span class='line'>      paths:
-</span><span class='line'>      - backend:
-</span><span class='line'>          serviceName: gateway
-</span><span class='line'>          servicePort: 8080</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Apply the ingress:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f ingress.yml
-</span><span class='line'>ingress.extensions/openfaas-gateway-ingress created</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can the verify that our ingress is visible:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get ingress -n openfaas
-</span><span class='line'>NAMESPACE   NAME                       HOSTS               ADDRESS      PORTS   AGE
-</span><span class='line'>openfaas    openfaas-gateway-ingress   openfaas.co.local   172.25.0.4   80      28s</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>OpenFaas CLI</h2>
-
-<p>Install the OpenFaas CLI:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -SLsf https://cli.openfaas.com | sudo sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Export the <code>OPENFAAS_URL</code> to our ingress endpoint and <code>OPENFAAS_PREFIX</code> for your dockerhub username:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ export OPENFAAS_URL=http://openfaas.localdns.xyz
-</span><span class='line'>$ export OPENFAAS_PREFIX=ruanbekker # change to your username</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Get your credentials for the OpenFaas Gateway and login with the OpenFaas CLI:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ PASSWORD=$(kubectl get secret -n openfaas basic-auth -o jsonpath="{.data.basic-auth-password}" | base64 --decode; echo)
-</span><span class='line'>$ echo -n $PASSWORD | faas-cli login --username admin --password-stdin</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy a Function</h2>
-
-<p>Deploy the figlet function as an example:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ faas-cli store deploy figlet
-</span><span class='line'>
-</span><span class='line'>Deployed. 202 Accepted.
-</span><span class='line'>URL: http://openfaas.localdns.xyz/function/figlet</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Invoke the function:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://openfaas.localdns.xyz/function/figlet -d 'hello, world'
-</span><span class='line'> _          _ _                             _     _
-</span><span class='line'>| |__   ___| | | ___    __      _____  _ __| | __| |
-</span><span class='line'>| '_ \ / _ \ | |/ _ \   \ \ /\ / / _ \| '__| |/ _` |
-</span><span class='line'>| | | |  __/ | | (_) |   \ V  V / (_) | |  | | (_| |
-</span><span class='line'>|_| |_|\___|_|_|\___( )   \_/\_/ \___/|_|  |_|\__,_|
-</span><span class='line'>                    |/</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Delete the Cluster</h2>
-
-<p>Delete your k3d Kubernetes Cluster:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ k3d delete --name demo</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
 ]]></content>
   </entry>
   

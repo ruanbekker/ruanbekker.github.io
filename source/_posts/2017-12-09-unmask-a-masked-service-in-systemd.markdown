@@ -8,8 +8,7 @@ categories: ["systemd", "linux"]
 
 I was busy setting up a `docker-volume-netshare` plugin to use NFS Volumes for Docker, which relies on the `nfs-utils/nfs-common` package, and when trying to start the service, I found that the `nfs-common` service is `masked`:
 
-<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
-
+<a href="https://www.civo.com/?ref=6cfeff"><img src="https://www.civo.com/images/referral-banners/static/728x90.png" width="728" height="90"></a>
 
 ```bash
 $ sudo systemctl start docker-volume-netshare.service
@@ -19,7 +18,7 @@ Failed to start docker-volume-netshare.service: Unit nfs-common.service is maske
 Looking at the `nfs-common` service:
 
 ```bash
-sudo systemctl is-enabled nfs-common
+$ sudo systemctl is-enabled nfs-common
 masked
 
 $ sudo systemctl enable nfs-common
@@ -83,13 +82,8 @@ $ sudo systemctl is-enabled nfs-common
 enabled
 ```
 
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+[![Say Thanks!](https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg)](https://saythanks.io/to/ruan.ru.bekker@gmail.com) 
+
+Thanks for reading. If you would like to check out more of my content, check out my website at [ruan.dev](https://ruan.dev) or follow me on Twitter <a href="https://twitter.com/ruanbekker" target="_blank" rel="nofollow">@ruanbekker</a>
+
+

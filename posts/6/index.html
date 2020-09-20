@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="At this time of writing (2019.06.10) Scaleway&rsquo;s Kubernetes as a Service, named Kapsule is in Private Beta and got access and pretty stoked on &hellip;">
+  <meta name="description" content="If you have not provisioned a Kubernetes Cluster, you can see this tutorial on how to provision a Kubernetes Cluster on Scaleway What will we be &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,341 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/06/10/setup-traefik-as-an-ingress-controller-on-kubernetes/">Setup Traefik as an Ingress Controller on Kubernetes</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-06-10T16:21:36-04:00'><span class='date'><span class='date-month'>Jun</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>4:21 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/59225379-db498e00-8bd0-11e9-9f20-62aecf915431.png" alt="image" /></p>
+
+<p>If you have not provisioned a Kubernetes Cluster, you can <a href="https://blog.ruanbekker.com/blog/2019/06/10/testing-out-scaleways-kapsule-their-kubernetes-as-a-service-offering/">see this tutorial</a> on how to provision a Kubernetes Cluster on Scaleway</p>
+
+<h2>What will we be doing</h2>
+
+<p>In this tutorial we will setup Traefik as an Ingress Controller on Kubernetes and deploy a logos web app to our Kubernetes Cluster, using frontend rules to map subdomains to specific services.</p>
+
+<p>We will have 3 subdomains, being mapped to containers from the below docker images:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>FQDN                     Image Name
+</span><span class='line'>- python.domain.com   -&gt; ruanbekker/logos:python
+</span><span class='line'>- openfaas.domain.com -&gt; ruanbekker/logos:openfaas
+</span><span class='line'>- rancher.domain.com  -&gt; ruanbekker/logos:rancher</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Get the sources</h2>
+
+<p>If you would like to get the source code for this demonstration you can checkout this repository: <a href="https://github.com/ruanbekker/traefik-kubernetes-scaleway-demo">https://github.com/ruanbekker/traefik-kubernetes-scaleway-demo</a></p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/ruanbekker/traefik-kubernetes-scaleway-demo
+</span><span class='line'>$ cd traefik-kubernetes-scaleway-demo</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Provision Traefik as an Ingress Controller</h2>
+
+<p>Apply role based access control to authorize Traefik to use the Kubernetes API:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f traefik/01-traefik-rbac.yaml
+</span><span class='line'>clusterrole.rbac.authorization.k8s.io/traefik-ingress-controller created
+</span><span class='line'>clusterrolebinding.rbac.authorization.k8s.io/traefik-ingress-controller created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Consulting <a href="https://docs.traefik.io/user-guide/kubernetes/#deploy-traefik-using-a-deployment-or-daemonset">Traefik&rsquo;s</a> documentation, when deploying Traefik, it&rsquo;s possible to use a deployment or a demonset, not both. <a href="https://docs.traefik.io/user-guide/kubernetes/#deploy-traefik-using-a-deployment-or-daemonset">More details on why</a></p>
+
+<p>I will go ahead and apply the Daemon Set:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f traefik/03-traefik-ds.yaml
+</span><span class='line'>serviceaccount/traefik-ingress-controller created
+</span><span class='line'>daemonset.extensions/traefik-ingress-controller created
+</span><span class='line'>service/traefik-ingress-service created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The Traefik UI Service will be associated with a FQDN, remember to set the FQDN for the endpoint, as example:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat traefik/04-traefik-ui.yaml
+</span><span class='line'>...
+</span><span class='line'>spec:
+</span><span class='line'>  rules:
+</span><span class='line'>  - host: traefik-ui.x-x-x-x-x.nodes.k8s.fr-par.scw.cloud
+</span><span class='line'>    http:
+</span><span class='line'>      paths:
+</span><span class='line'>      - path: /
+</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Traefik UI Service:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f traefik/04-traefik-ui.yaml
+</span><span class='line'>service/traefik-web-ui created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Traefik UI Ingress:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f traefik/05-traefik-ui-ingress.yaml
+</span><span class='line'>ingress.extensions/traefik-web-ui created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>View the services:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get services --namespace=kube-system
+</span><span class='line'>NAME                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                  AGE
+</span><span class='line'>coredns                   ClusterIP   x.x.x.x         &lt;none&gt;        53/UDP,53/TCP,9153/TCP   11h
+</span><span class='line'>heapster                  ClusterIP   x.x.x.x         &lt;none&gt;        80/TCP                   11h
+</span><span class='line'>kubernetes-dashboard      ClusterIP   x.x.x.x         &lt;none&gt;        443/TCP                  11h
+</span><span class='line'>metrics-server            ClusterIP   x.x.x.x         &lt;none&gt;        443/TCP                  11h
+</span><span class='line'>monitoring-influxdb       ClusterIP   x.x.x.x         &lt;none&gt;        8086/TCP                 11h
+</span><span class='line'>traefik-ingress-service   ClusterIP   x.x.x.x         &lt;none&gt;        80/TCP,8080/TCP          24m
+</span><span class='line'>traefik-web-ui            ClusterIP   x.x.x.x         &lt;none&gt;        80/TCP                   24m</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the Logo App to the Cluster</h2>
+
+<p>We will deploy the logo app to our cluster:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f logos-app/logos-services.yaml
+</span><span class='line'>service/openfaas created
+</span><span class='line'>service/rancher created
+</span><span class='line'>service/python created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the deployment:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f logos-app/logos-deployments.yaml
+</span><span class='line'>deployment.extensions/openfaas created
+</span><span class='line'>deployment.extensions/rancher created
+</span><span class='line'>deployment.extensions/python created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Before creating the ingress for the logo&rsquo;s applications, we need to set the fqdn endpoints that we want to route traffic to as below as an example:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat logos-app/logos-ingress.yaml
+</span><span class='line'>...
+</span><span class='line'>spec:
+</span><span class='line'>  rules:
+</span><span class='line'>  - host: openfaas.x-x-x-x-x.nodes.k8s.fr-par.scw.cloud
+</span><span class='line'>    http:
+</span><span class='line'>      paths:
+</span><span class='line'>      - path: /
+</span><span class='line'>        backend:
+</span><span class='line'>          serviceName: openfaas
+</span><span class='line'>          servicePort: http
+</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the ingress:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl apply -f logos-app/logos-ingress.yaml
+</span><span class='line'>ingress.extensions/logo created</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After some time, have a look at the pods to get the status:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get pods
+</span><span class='line'>NAME                                     READY   STATUS    RESTARTS   AGE
+</span><span class='line'>openfaas-cffdddc4-lvn5w                  1/1     Running   0          4m6s
+</span><span class='line'>openfaas-cffdddc4-wbcl6                  1/1     Running   0          4m6s
+</span><span class='line'>python-65ccf9c74b-8kmgp                  1/1     Running   0          4m6s
+</span><span class='line'>python-65ccf9c74b-dgnqb                  1/1     Running   0          4m6s
+</span><span class='line'>rancher-597b6b8554-mgcjr                 1/1     Running   0          4m6s
+</span><span class='line'>rancher-597b6b8554-mpk62                 1/1     Running   0          4m6s</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Navigating with Kubectl</h2>
+
+<p>Show nodes:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get nodes
+</span><span class='line'>NAME                                             STATUS   ROLES    AGE   VERSION
+</span><span class='line'>scw-k8s-mystifying-torvald-jovial-mclar-25a942   Ready    node     20h   v1.14.1
+</span><span class='line'>scw-k8s-mystifying-torvald-jovial-mclar-eaf1a2   Ready    node     20h   v1.14.1
+</span><span class='line'>scw-k8s-mystifying-torvalds-default-7f263aabab   Ready    master   20h   v1.14.1</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Show services:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get services
+</span><span class='line'>NAME                    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)           AGE
+</span><span class='line'>kubernetes              ClusterIP   10.32.0.1      &lt;none&gt;        443/TCP           20h
+</span><span class='line'>openfaas                ClusterIP   10.41.47.185   &lt;none&gt;        80/TCP            9h
+</span><span class='line'>python                  ClusterIP   10.42.56.141   &lt;none&gt;        80/TCP            9h
+</span><span class='line'>rancher                 ClusterIP   10.32.41.218   &lt;none&gt;        80/TCP            9h</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Show Pods:</p>
+
+<p><em>To see pods from the kube-system namespace add -n kube-system</em></p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get pods
+</span><span class='line'>NAME                                     READY   STATUS    RESTARTS   AGE
+</span><span class='line'>openfaas-cffdddc4-lvn5w                  1/1     Running   0          9h
+</span><span class='line'>openfaas-cffdddc4-wbcl6                  1/1     Running   0          9h
+</span><span class='line'>python-65ccf9c74b-8kmgp                  1/1     Running   0          9h
+</span><span class='line'>python-65ccf9c74b-dgnqb                  1/1     Running   0          9h
+</span><span class='line'>rancher-597b6b8554-mgcjr                 1/1     Running   0          9h
+</span><span class='line'>rancher-597b6b8554-mpk62                 1/1     Running   0          9h</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Show deployments:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get deployments -o wide
+</span><span class='line'>NAME                    READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS  IMAGES                      SELECTOR
+</span><span class='line'>openfaas                2/2     2            2           9h    logo        ruanbekker/logos:openfaas   app=logo,task=openfaas
+</span><span class='line'>python                  2/2     2            2           9h    logo        ruanbekker/logos:python     app=logo,task=python
+</span><span class='line'>rancher                 2/2     2            2           9h    logo        ruanbekker/logos:rancher    app=logo,task=rancher</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Show ingress:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get ingress -o wide
+</span><span class='line'>NAME      HOSTS                                                          ADDRESS   PORTS   AGE
+</span><span class='line'>logo      openfaas.domain.com,rancher.domain.com,python.domain.com       80      9h</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Show system ingress:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ kubectl get ingress -o wide -n kube-system
+</span><span class='line'>NAME             HOSTS                     ADDRESS   PORTS   AGE
+</span><span class='line'>traefik-web-ui   traefik-ui.domain.com               80      9h</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Access your Applications</h2>
+
+<p>Access the Traefik-UI, and filter for one of the applications. Let&rsquo;s take OpenFaaS for an example:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/59177432-63418080-8b5c-11e9-8e54-20600508e510.png" alt="image" /></p>
+
+<p>Access the OpenFaaS Page via the URL:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/59177206-a4856080-8b5b-11e9-8954-238590f18e5c.png" alt="image" /></p>
+
+<h2>Resources</h2>
+
+<ul>
+<li><a href="https://docs.traefik.io/user-guide/kubernetes/">https://docs.traefik.io/user-guide/kubernetes/</a></li>
+</ul>
+
+
+<center>
+        <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script>
+</center>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2327,210 +2662,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/">Create Secrets With Vaults Transits Secret Engine</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-05-07T16:31:54-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>7</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>4:31 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://camo.githubusercontent.com/b2223b0ca7077fcf9919372582183757239e4153/68747470733a2f2f6c6561726e2e6861736869636f72702e636f6d2f6173736574732f696d616765732f7661756c742d656e6372797074696f6e2e706e67" alt="" /></p>
-
-<p>Vault&rsquo;s transit secrets engine handles cryptographic functions on data-in-transit. Vault doesn&rsquo;t store the data sent to the secrets engine, so it can also be viewed as encryption as a service.</p>
-
-<p>In this tutorial we will demonstrate how to use Vault&rsquo;s Transit Secret Engine.</p>
-
-<p>Related Posts:</p>
-
-<ul>
-<li><a href="https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">Setup a Vault Server on Docker</a></li>
-<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/">Use the S3 Storage Backend to Persist Data</a></li>
-</ul>
-
-
-<h2>Enable the Transit Engine:</h2>
-
-<p>Enable transit secret engine using the /sys/mounts endpoint:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl --header "X-Vault-Token: $VAULT_TOKEN" -XPOST -d '{"type": "transit", "description": "encs encryption"}' http://127.0.0.1:8200/v1/sys/mounts/transit</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the Key Ring:</h2>
-
-<p>Create an encryption key ring named <code>fookey</code> using the transit/keys endpoint:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s --header "X-Vault-Token: $VAULT_TOKEN" -XGET http://127.0.0.1:8200/v1/transit/keys/fookey | jq
-</span><span class='line'>{
-</span><span class='line'>  "request_id": "8375227a-4a9f-a108-0b89-84c448419e80",
-</span><span class='line'>  "lease_id": "",
-</span><span class='line'>  "renewable": false,
-</span><span class='line'>  "lease_duration": 0,
-</span><span class='line'>  "data": {
-</span><span class='line'>    "allow_plaintext_backup": false,
-</span><span class='line'>    "deletion_allowed": false,
-</span><span class='line'>    "derived": false,
-</span><span class='line'>    "exportable": false,
-</span><span class='line'>    "keys": {
-</span><span class='line'>      "1": 1554654295
-</span><span class='line'>    },
-</span><span class='line'>    "latest_version": 1,
-</span><span class='line'>    "min_available_version": 0,
-</span><span class='line'>    "min_decryption_version": 1,
-</span><span class='line'>    "min_encryption_version": 0,
-</span><span class='line'>    "name": "fookey",
-</span><span class='line'>    "supports_decryption": true,
-</span><span class='line'>    "supports_derivation": true,
-</span><span class='line'>    "supports_encryption": true,
-</span><span class='line'>    "supports_signing": false,
-</span><span class='line'>    "type": "aes256-gcm96"
-</span><span class='line'>  },
-</span><span class='line'>  "wrap_info": null,
-</span><span class='line'>  "warnings": null,
-</span><span class='line'>  "auth": null
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Encoding</h2>
-
-<p>Encode your string:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ base64 &lt;&lt;&lt; "hello world"
-</span><span class='line'>aGVsbG8gd29ybGQK</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Encrypt</h2>
-
-<p>To encrypt your secret, use the transit/encrypt endpoint:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s --header "X-Vault-Token: $VAULT_TOKEN" --request POST  --data '{"plaintext": "aGVsbG8gd29ybGQK"}' http://127.0.0.1:8200/v1/transit/encrypt/fookey | jq
-</span><span class='line'>{
-</span><span class='line'>  "request_id": "ab00ba0f-9e45-0aca-e3c1-7765fd83fc3c",
-</span><span class='line'>  "lease_id": "",
-</span><span class='line'>  "renewable": false,
-</span><span class='line'>  "lease_duration": 0,
-</span><span class='line'>  "data": {
-</span><span class='line'>    "ciphertext": "vault:v1:Yo4U6xXFM2FoBOaUrw0w3EpSlJS6gmsa4HP1xKtjrk0+xSqi5Rvjvg=="
-</span><span class='line'>  },
-</span><span class='line'>  "wrap_info": null,
-</span><span class='line'>  "warnings": null,
-</span><span class='line'>  "auth": null
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Decrypt:</h2>
-
-<p>Use the transit/decrypt endpoint to decrypt the ciphertext:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -s --header "X-Vault-Token: $VAULT_TOKEN" --request POST  --data '{"ciphertext": "vault:v1:Yo4U6xXFM2FoBOaUrw0w3EpSlJS6gmsa4HP1xKtjrk0+xSqi5Rvjvg=="}' http://127.0.0.1:8200/v1/transit/decrypt/fookey | jq
-</span><span class='line'>{
-</span><span class='line'>  "request_id": "3d9743a0-2daf-823c-f413-8c8a90753479",
-</span><span class='line'>  "lease_id": "",
-</span><span class='line'>  "renewable": false,
-</span><span class='line'>  "lease_duration": 0,
-</span><span class='line'>  "data": {
-</span><span class='line'>    "plaintext": "aGVsbG8gd29ybGQK"
-</span><span class='line'>  },
-</span><span class='line'>  "wrap_info": null,
-</span><span class='line'>  "warnings": null,
-</span><span class='line'>  "auth": null
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Decoding</h2>
-
-<p>Decode the response:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ base64 --decode &lt;&lt;&lt; "aGVsbG8gd29ybGQK"
-</span><span class='line'>hello world</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources</h2>
-
-<ul>
-<li><a href="https://learn.hashicorp.com/vault/encryption-as-a-service/eaas-transit">Vault Documentation on this topic</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -2581,6 +2712,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/09/20/setup-a-nfs-server-with-docker/">Setup a NFS Server With Docker</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/08/14/using-if-statements-in-bash-to-check-if-environment-variables-exist/">Using if Statements in Bash to Check if Environment Variables Exist</a>
       </li>
     
@@ -2594,10 +2729,6 @@
     
       <li class="post">
         <a href="/blog/2020/06/13/using-proxyjump-with-ssh-for-vms-with-no-public-ips/">Using ProxyJump With SSH for VMs With No Public IPs</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/06/13/using-a-ssh-reverse-tunnel-to-access-nodes-on-private-ranges/">Using a SSH Reverse Tunnel to Access Nodes on Private Ranges</a>
       </li>
     
   </ul>

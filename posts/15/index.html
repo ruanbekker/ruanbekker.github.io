@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive &hellip;">
+  <meta name="description" content="In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,437 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Get Application Performance Metrics on Python Flask With Elastic APM on Kibana and Elasticsearch</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-11-11T13:09:18-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>1:09 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-banner.png" alt="" /></p>
+
+<p>In this post we will setup a Python Flask Application which includes the APM Agent which will collect metrics, that gets pushed to the APM Server. If you have not setup the Elastic Stack with / or APM Server, you <a href="https://blog.ruanbekker.com/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">can follow this post</a> to setup the needed.</p>
+
+<p>Then we will make a bunch of HTTP Requests to our Application and will go through the metrics per request type.</p>
+
+<h2>Application Metrics</h2>
+
+<p>Our Application will have the following Request Paths:</p>
+
+<ul>
+<li><code>/</code> - Returns static text</li>
+<li><code>/delay</code> - random delays to simulate increased response latencies</li>
+<li><code>/upstream</code> - get data from a upstream provider, if statements to provide dummy 200, 404 and 502 reponses to visualize</li>
+<li><code>/5xx</code> - request path that will raise an exception so that we can see the error via apm</li>
+<li><code>/sql-write</code> - inserts 5 rows into a sqlite database</li>
+<li><code>/sql-read</code> - executes a select all from the database</li>
+<li><code>/sql-group</code> - sql query to group all the cities and count them</li>
+</ul>
+
+
+<p>This is just simple request paths to demonstrate the metrics via APM (Application Performance Monitoring) on Kibana.</p>
+
+<h2>Install Flask and APM Agent</h2>
+
+<p>Create a virtual environment and install the dependencies:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install python python-setuptools -y
+</span><span class='line'><span class="nv">$ </span>easy_install pip
+</span><span class='line'><span class="nv">$ </span>pip install virtualenv
+</span><span class='line'><span class="nv">$ </span>pip install elastic-apm<span class="o">[</span>flask<span class="o">]</span>
+</span><span class='line'><span class="nv">$ </span>pip install flask
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For more info on <a href="https://www.elastic.co/guide/en/apm/agent/python/current/getting-started.html">APM Configuration</a>.</p>
+
+<h2>Instrument a Bare Bones Python Flask app with APM:</h2>
+
+<p>A Barebones app with APM Configured will look like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.contrib.flask</span> <span class="kn">import</span> <span class="n">ElasticAPM</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.handlers.logging</span> <span class="kn">import</span> <span class="n">LoggingHandler</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'><span class="n">apm</span> <span class="o">=</span> <span class="n">ElasticAPM</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">server_url</span><span class="o">=</span><span class="s">&#39;http://localhost:8200&#39;</span><span class="p">,</span> <span class="n">service_name</span><span class="o">=</span><span class="s">&#39;flask-app-1&#39;</span><span class="p">,</span> <span class="n">logging</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response ok&quot;</span><span class="p">}),</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This will provide metrics on the <code>/</code> request path. In order to trace transaction ids from the metrics, we need to configure the index on Kibana. To do this, head over to Kibana, Management, Index Patterns, Add Index Pattern, <code>apm*</code>, select <code>@timestamp</code> as the time filter field name.</p>
+
+<p>This will allow you to see the data when tracing the transaction id&rsquo;s via the Discover UI.</p>
+
+<h2>Create the Python Flask App</h2>
+
+<p>Create the Flask App with the request paths as mentioned in the beginning:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">sqlite3</span><span class="o">,</span> <span class="nn">requests</span><span class="o">,</span> <span class="nn">time</span><span class="o">,</span> <span class="nn">logging</span><span class="o">,</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.contrib.flask</span> <span class="kn">import</span> <span class="n">ElasticAPM</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">elasticapm.handlers.logging</span> <span class="kn">import</span> <span class="n">LoggingHandler</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;ruan&#39;</span><span class="p">,</span> <span class="s">&#39;stefan&#39;</span><span class="p">,</span> <span class="s">&#39;philip&#39;</span><span class="p">,</span> <span class="s">&#39;norman&#39;</span><span class="p">,</span> <span class="s">&#39;frank&#39;</span><span class="p">,</span> <span class="s">&#39;pete&#39;</span><span class="p">,</span> <span class="s">&#39;johnny&#39;</span><span class="p">,</span> <span class="s">&#39;peter&#39;</span><span class="p">,</span> <span class="s">&#39;adam&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">cities</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;cape town&#39;</span><span class="p">,</span> <span class="s">&#39;johannesburg&#39;</span><span class="p">,</span> <span class="s">&#39;pretoria&#39;</span><span class="p">,</span> <span class="s">&#39;dublin&#39;</span><span class="p">,</span> <span class="s">&#39;kroonstad&#39;</span><span class="p">,</span> <span class="s">&#39;bloemfontein&#39;</span><span class="p">,</span> <span class="s">&#39;port elizabeth&#39;</span><span class="p">,</span> <span class="s">&#39;auckland&#39;</span><span class="p">,</span> <span class="s">&#39;sydney&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">lastnames</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;smith&#39;</span><span class="p">,</span> <span class="s">&#39;bekker&#39;</span><span class="p">,</span> <span class="s">&#39;admams&#39;</span><span class="p">,</span> <span class="s">&#39;phillips&#39;</span><span class="p">,</span> <span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;adamson&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;CREATE TABLE IF NOT EXISTS people (name STRING, age INTEGER, surname STRING, city STRING)&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="c">#sqlquery_write = conn.execute(&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;.format(random.choice(names), random.randint(18,40), random.choice(lastnames), random.choice(cities)))</span>
+</span><span class='line'><span class="n">seconds</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.003</span><span class="p">,</span> <span class="mf">0.004</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.009</span><span class="p">,</span> <span class="mf">0.015</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">,</span> <span class="mf">0.009</span><span class="p">,</span> <span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mf">0.030</span><span class="p">,</span> <span class="mf">0.018</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'><span class="n">apm</span> <span class="o">=</span> <span class="n">ElasticAPM</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">server_url</span><span class="o">=</span><span class="s">&#39;http://localhost:8200&#39;</span><span class="p">,</span> <span class="n">service_name</span><span class="o">=</span><span class="s">&#39;my-app-01&#39;</span><span class="p">,</span> <span class="n">logging</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response ok&quot;</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/delay&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">delay</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">seconds</span><span class="p">))</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="s">&quot;response delay&quot;</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/upstream&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">upstream</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;https://api.ruanbekker.com/people&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;italy&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Italalia!&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>    <span class="k">elif</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;country&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;canada&#39;</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Canada!&#39;</span><span class="p">,</span> <span class="mi">502</span>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="k">return</span> <span class="s">&#39;Not Found&#39;</span><span class="p">,</span> <span class="mi">404</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/5xx&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">fail_with_5xx</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">value</span> <span class="o">=</span> <span class="s">&#39;a&#39;</span> <span class="o">+</span> <span class="mi">1</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="n">value</span><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-write&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">sqlw</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;INSERT INTO people VALUES(&quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;)&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">18</span><span class="p">,</span><span class="mi">40</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">lastnames</span><span class="p">),</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">cities</span><span class="p">)))</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-read&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">sqlr</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+</span><span class='line'>    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select * from people&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/sql-group&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">slqg</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s">&#39;database.db&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">row_factory</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Row</span>
+</span><span class='line'>    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&#39;select count(*) as num, city from people group by city&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+</span><span class='line'>    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&#39;ok&#39;</span><span class="p">,</span> <span class="mi">200</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the app:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>python app.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>At this point, we wont have any data on APM as we need to make requests to our application. Let&rsquo;s make 10 HTTP GET Requests on the <code>/</code> Request Path:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ count</span><span class="o">=</span><span class="m">0</span> <span class="o">&amp;&amp;</span> <span class="k">while</span> <span class="o">[</span> <span class="nv">$count</span> -lt <span class="m">10</span> <span class="o">]</span><span class="p">;</span> <span class="k">do</span> curl http://application-routable-address:80/<span class="p">;</span> sleep 1<span class="p">;</span> <span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span><span class="p">;</span> <span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Visualize the Root Request Path</h2>
+
+<p>Head over to Kibana, Select APM and you will see something similar like below when selecting the timepicker to 15 minutes at the right top corner. This page will give you the overview of all your configured applications and the average response times over the selected time, transactions per minute, errors per minute etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-home-root.png" alt="" /></p>
+
+<p>When you select your application, you will find the graphs on you response times and requests per minute, also a breakdown per request path:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-1.png" alt="" /></p>
+
+<p>When selecting the request path, in this case <code>GET /</code>, you will find a breakdown of metrics only for that request and also the response time distribution for that request path, if you select frame from the response time distribution, it will filter the focus to that specific transaction.</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-1.png" alt="" /></p>
+
+<p>When you scroll a bit down to the Transaction Sample section, you will find data about the request, response, system etc:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-transaction-1.png" alt="" /></p>
+
+<p>From the Transaction Sample, you can select the View Transaction in Discover button, which will trace that transaction id on the Discover UI:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-transaction-disc-1.png" alt="" /></p>
+
+<p>Increasing the http curl clients running simultaneously from different servers and increasing the time for 15 minutes to have more metrics will result in the screenshot below, notice the 6ms response time can easily be traced selecting it in the response time distribution, then discovering it in the UI, which will give you the raw data from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-req-view-2.png" alt="" /></p>
+
+<h2>Viewing Application Errors in APM</h2>
+
+<p>Make a couple of requests to <code>/5xx</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://application-routable-endpoint:80/5xx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Navigate to the app, select Errors, then you will see the exception details that was returned. Here we can see that in our code we tried to concatenate integers with strings:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-1.png" alt="" /></p>
+
+<p>Furthermore we can select that error and it will provide us a direct view on where in our code the error gets generated:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-error-details-1.png" alt="" /></p>
+
+<p>Pretty cool right?! You can also further select the library frames, which will take you to the lower level code that raised the exception. If this errors can be drilled down via the discover ui, to group by source address etc.</p>
+
+<h2>Simulate Response Latencies:</h2>
+
+<p>Make a couple of requests to the <code>/delay</code> request path, and you should see the increased response times from earlier:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-view-delay.png" alt="" /></p>
+
+<h2>Requests where Database Calls are Executed</h2>
+
+<p>The while loop to call random request paths:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">count</span><span class="o">=</span><span class="m">0</span> <span class="o">&amp;&amp;</span> <span class="k">while</span> <span class="o">[</span> <span class="nv">$count</span> -lt <span class="m">1000</span> <span class="o">]</span><span class="p">;</span>
+</span><span class='line'><span class="k">do</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-read<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-us-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-read<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-us-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-write<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-eu-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  curl -H <span class="s2">&quot;Host: my-za-server&quot;</span> -i http://x.x.x.x/sql-group<span class="p">;</span>
+</span><span class='line'>  <span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span><span class="p">;</span>
+</span><span class='line'><span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When we look at our applications performance monitoring overview, we can see the writes provide more latencies as the group by&rsquo;s:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-view-1.png" alt="" /></p>
+
+<p>The <code>/sql-write</code> request overview:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1.png" alt="" /></p>
+
+<p>When selecting a transaction sample, we can see the timeline of each database call:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlwrite-1-details.png" alt="" /></p>
+
+<p>When looking at the <code>/sql-group</code> request overview, we can see that the response times increasing overtime, as more data is written to the database, it takes longer to read and group all the data from the database:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1.png" alt="" /></p>
+
+<p>The transaction details shows the timeline of the database query from that request:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-details.png" alt="" /></p>
+
+<p>When you select the database select query on the timeline view, it will take you to the exact database query that was executed:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlgroup-1-span.png" alt="" /></p>
+
+<p>When we include a database call with a external request to a remote http endpoint, we will see something like:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-db-sqlread-ext.png" alt="" /></p>
+
+<h2>Viewing 4xx and 5xx Response Codes</h2>
+
+<p>From the application code we are returning 2xx, 4xx, and 5xx response codes for this demonstration to visualize them:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-app-response-codes.png" alt="" /></p>
+
+<h2>Configuring more Applications</h2>
+
+<p>Once more apps are configured, and they start serving traffic, they will start appearing on the APM UI as below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-apps.png" alt="" /></p>
+
+<p>APM is available for other languages as well and provides a getting started snippets from the APM UI. For more information on APM, have a look at their <a href="https://www.elastic.co/solutions/apm">Documentation</a></p>
+
+<p>Hope this was useful.</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2656,270 +3087,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">Nginx Caching Performance for Static Content on Docker Swarm With RaspberryPi</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-23T16:41:41-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>4:41 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/nginx-logo.png" alt="" /></p>
-
-<h2>The Environment:</h2>
-
-<p>I had my Ghost Blog listening on port 2368 and exposing port 80 on Docker so that the port translation directs port 80 traffic to port 2368 on Ghost directly.</p>
-
-<p>Alex responded on my tweet and introduced Nginx Caching:</p>
-
-<ul>
-<li><a href="https://twitter.com/alexellisuk/status/882347698636165121">https://twitter.com/alexellisuk/status/882347698636165121</a></li>
-</ul>
-
-
-<p><img src="https://objects.ruanbekker.com/assets/images/tweet-alexellis-04072017.png" alt="" /></p>
-
-<p>With this approach benchmarking results was not so great in terms of requests per second, and as this hostname will be only used for a blog, its a great idea to cache the content, this was achieved with the help from Alex&rsquo;s blog: <a href="https://blog.alexellis.io/save-and-boost-with-nginx/">blog.alexellis.io/save-and-boost-with-nginx/</a></p>
-
-<h2>How Nginx was Configured:</h2>
-
-<p>I have a <a href="http://rbkr.ddns.net/building-nginx-on-alpine-image-for-docker-swarm-with-caching-enabled-config/">blogpost</a> on how I setup Nginx on an Alpine Image, where I setup caching and proxy-pass the connections through to my ghost blog.</p>
-
-<h2>Benchmarking: Before Nginx with Caching was Implemented:</h2>
-
-<p>When doing an apache benchmark I got <b>9.31 requests per second</b> performing the test on my LAN:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ab -n <span class="m">500</span> -c <span class="m">10</span> http://rbkr.ddns.net/
-</span><span class='line'>
-</span><span class='line'>This is ApacheBench, Version 2.3 &lt;<span class="nv">$Revision</span>: <span class="m">1706008</span> <span class="nv">$&gt;</span>
-</span><span class='line'>Copyright <span class="m">1996</span> Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
-</span><span class='line'>Licensed to The Apache Software Foundation, http://www.apache.org/
-</span><span class='line'>
-</span><span class='line'>Benchmarking rbkr.ddns.net <span class="o">(</span>be patient<span class="o">)</span>
-</span><span class='line'>Completed <span class="m">100</span> requests
-</span><span class='line'>Completed <span class="m">200</span> requests
-</span><span class='line'>Completed <span class="m">300</span> requests
-</span><span class='line'>Completed <span class="m">400</span> requests
-</span><span class='line'>Completed <span class="m">500</span> requests
-</span><span class='line'>Finished <span class="m">500</span> requests
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Server Software:
-</span><span class='line'>Server Hostname:        blog.pistack.co.za
-</span><span class='line'>Server Port:            80
-</span><span class='line'>
-</span><span class='line'>Document Path:          /
-</span><span class='line'>Document Length:        <span class="m">5470</span> bytes
-</span><span class='line'>
-</span><span class='line'>Concurrency Level:      10
-</span><span class='line'>Time taken <span class="k">for</span> tests:   53.725 seconds
-</span><span class='line'>Complete requests:      500
-</span><span class='line'>Failed requests:        0
-</span><span class='line'>Total transferred:      <span class="m">2863000</span> bytes
-</span><span class='line'>HTML transferred:       <span class="m">2735000</span> bytes
-</span><span class='line'>Requests per second:    9.31 <span class="o">[</span><span class="c">#/sec] (mean)</span>
-</span><span class='line'>Time per request:       1074.501 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean<span class="o">)</span>
-</span><span class='line'>Time per request:       107.450 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean, across all concurrent requests<span class="o">)</span>
-</span><span class='line'>Transfer rate:          52.04 <span class="o">[</span>Kbytes/sec<span class="o">]</span> received
-</span><span class='line'>
-</span><span class='line'>Connection Times <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>              min  mean<span class="o">[</span>+/-sd<span class="o">]</span> median   max
-</span><span class='line'>Connect:        <span class="m">1</span>    <span class="m">2</span>   0.5      <span class="m">2</span>       6
-</span><span class='line'>Processing:   <span class="m">685</span> <span class="m">1068</span>  68.7   <span class="m">1057</span>    1306
-</span><span class='line'>Waiting:      <span class="m">683</span> <span class="m">1067</span>  68.6   <span class="m">1056</span>    1306
-</span><span class='line'>Total:        <span class="m">689</span> <span class="m">1070</span>  68.7   <span class="m">1058</span>    1312
-</span><span class='line'>
-</span><span class='line'>Percentage of the requests served within a certain <span class="nb">time</span> <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>  50%   1058
-</span><span class='line'>  66%   1088
-</span><span class='line'>  75%   1102
-</span><span class='line'>  80%   1110
-</span><span class='line'>  90%   1163
-</span><span class='line'>  95%   1218
-</span><span class='line'>  98%   1240
-</span><span class='line'>  99%   1247
-</span><span class='line'> 100%   <span class="m">1312</span> <span class="o">(</span>longest request<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Benchmarking: After Nginx Caching was Implemented:</h2>
-
-<p>After Nginx Caching was Implemented, I got <b>1067.73 requests per second</b> using apache benchmark over a LAN connection! Absolutely awesome!</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ab -n <span class="m">500</span> -c <span class="m">10</span> http://blog.pistack.co.za/
-</span><span class='line'>This is ApacheBench, Version 2.3 &lt;<span class="nv">$Revision</span>: <span class="m">1706008</span> <span class="nv">$&gt;</span>
-</span><span class='line'>Copyright <span class="m">1996</span> Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
-</span><span class='line'>Licensed to The Apache Software Foundation, http://www.apache.org/
-</span><span class='line'>
-</span><span class='line'>Benchmarking blog.pistack.co.za <span class="o">(</span>be patient<span class="o">)</span>
-</span><span class='line'>Completed <span class="m">100</span> requests
-</span><span class='line'>Completed <span class="m">200</span> requests
-</span><span class='line'>Completed <span class="m">300</span> requests
-</span><span class='line'>Completed <span class="m">400</span> requests
-</span><span class='line'>Completed <span class="m">500</span> requests
-</span><span class='line'>Finished <span class="m">500</span> requests
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Server Software:        nginx
-</span><span class='line'>Server Hostname:        blog.pistack.co.za
-</span><span class='line'>Server Port:            80
-</span><span class='line'>
-</span><span class='line'>Document Path:          /
-</span><span class='line'>Document Length:        <span class="m">5470</span> bytes
-</span><span class='line'>
-</span><span class='line'>Concurrency Level:      10
-</span><span class='line'>Time taken <span class="k">for</span> tests:   0.468 seconds
-</span><span class='line'>Complete requests:      500
-</span><span class='line'>Failed requests:        0
-</span><span class='line'>Total transferred:      <span class="m">2880500</span> bytes
-</span><span class='line'>HTML transferred:       <span class="m">2735000</span> bytes
-</span><span class='line'>Requests per second:    1067.73 <span class="o">[</span><span class="c">#/sec] (mean)</span>
-</span><span class='line'>Time per request:       9.366 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean<span class="o">)</span>
-</span><span class='line'>Time per request:       0.937 <span class="o">[</span>ms<span class="o">]</span> <span class="o">(</span>mean, across all concurrent requests<span class="o">)</span>
-</span><span class='line'>Transfer rate:          6007.05 <span class="o">[</span>Kbytes/sec<span class="o">]</span> received
-</span><span class='line'>
-</span><span class='line'>Connection Times <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>              min  mean<span class="o">[</span>+/-sd<span class="o">]</span> median   max
-</span><span class='line'>Connect:        <span class="m">3</span>    <span class="m">4</span>   1.4      <span class="m">4</span>      10
-</span><span class='line'>Processing:     <span class="m">3</span>    <span class="m">5</span>   1.6      <span class="m">4</span>      10
-</span><span class='line'>Waiting:        <span class="m">2</span>    <span class="m">4</span>   1.6      <span class="m">4</span>      10
-</span><span class='line'>Total:          <span class="m">6</span>    <span class="m">9</span>   2.7      <span class="m">8</span>      17
-</span><span class='line'>
-</span><span class='line'>Percentage of the requests served within a certain <span class="nb">time</span> <span class="o">(</span>ms<span class="o">)</span>
-</span><span class='line'>  50%      8
-</span><span class='line'>  66%      8
-</span><span class='line'>  75%      9
-</span><span class='line'>  80%      9
-</span><span class='line'>  90%     15
-</span><span class='line'>  95%     15
-</span><span class='line'>  98%     15
-</span><span class='line'>  99%     16
-</span><span class='line'> 100%     <span class="m">17</span> <span class="o">(</span>longest request<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<p>Thanks to Alex Ellis for the suggestion on this, and definitely have a look at <a href="https://blog.alexellis.io/tag/nginx/">blog.alexellis.io</a> as he has some epic content on his blog!</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/16">&larr; Older</a>
@@ -2970,6 +3137,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/10/26/easy-ad-hoc-vpns-with-sshuttle/">Easy Ad-Hoc VPNs With Sshuttle</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/10/26/use-a-ssh-jump-host-with-ansible/">Use a SSH Jump Host With Ansible</a>
       </li>
     
@@ -2983,10 +3154,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/10/07/setup-a-kvm-host-for-virtualization-on-oneprovider/">Setup a KVM Host for Virtualization on OneProvider</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/09/27/using-the-local-exec-provisioner-with-terraform/">Using the Local-exec Provisioner With Terraform</a>
       </li>
     
   </ul>

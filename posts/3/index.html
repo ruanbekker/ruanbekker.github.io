@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we will be setting up a analytical dashboard using grafana to visualize our nginx access logs. In this tutorial I will be using my other &hellip;">
+  <meta name="description" content="In this tutorial we will visualize our Redis Cluster&rsquo;s Metrics with Grafana. In order to do that we will setup a redis exporter which will &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,199 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/05/05/how-to-setup-a-redis-exporter-for-prometheus/">How to Setup a Redis Exporter for Prometheus</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-05-05T23:14:52+02:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>5</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>11:14 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial we will visualize our Redis Cluster&rsquo;s Metrics with Grafana. In order to do that we will setup a <a href="https://github.com/oliver006/redis_exporter">redis exporter</a> which will authenticate with redis and then configure prometheus to scrape the endpoint of the redis exporter&rsquo;s http endpoint to write the time series data to prometheus.</p>
+
+<h2>Install Golang</h2>
+
+<p>We need to build a binary from the redis exporter project, and we need a Golang environment. If you don&rsquo;t have golang installed already:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cd /tmp/
+</span><span class='line'>$ wget https://dl.google.com/go/go1.14.2.linux-amd64.tar.gz
+</span><span class='line'>$ tar -xf go1.14.2.linux-amd64.tar.gz -C /usr/local
+</span><span class='line'>$ mkdir -p $HOME/go/{bin,src,pkg}
+</span><span class='line'>$ export GOPATH=/go
+</span><span class='line'>$ export PATH=${PATH}:${GOPATH}/bin:/usr/local/go/bin</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You should now be able to get a response:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ go version
+</span><span class='line'>go version go1.14.2 linux/amd64</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Redis Exporter</h2>
+
+<p>Get the source code and build the binary:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/oliver006/redis_exporter.git
+</span><span class='line'>$ cd redis_exporter
+</span><span class='line'>$ go build .</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now the binary should be built, and you should be able to get a response when running the following:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ./redis_exporter --help</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Copy the binary the the following path:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cp redis_exporter /usr/bin/</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the systemd unit file, in <code>/etc/systemd/system/redis_exporter.service</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>[Unit]
+</span><span class='line'>Description=Redis Exporter
+</span><span class='line'>Wants=network-online.target
+</span><span class='line'>After=network-online.target
+</span><span class='line'>
+</span><span class='line'>[Service]
+</span><span class='line'>User=root
+</span><span class='line'>Group=root
+</span><span class='line'>Type=simple
+</span><span class='line'>ExecStart=/usr/bin/redis_exporter \
+</span><span class='line'>    -web.listen-address ":9121" \
+</span><span class='line'>    -redis.addr "redis://ip.of.redis.server:6379" \
+</span><span class='line'>    -redis.password "your-strong-redis-password"
+</span><span class='line'>
+</span><span class='line'>[Install]
+</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload systemd:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl daemon-relaod</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then start the redis exporter:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart redis_exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now you should be able to get redis metrics when you hit the redis exporter:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://127.0.0.1:9121/metrics
+</span><span class='line'>...
+</span><span class='line'># TYPE redis_commands_duration_seconds_total counter
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="auth"} 0.000308
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="client"} 0.000251
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="config"} 0.010594
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="evalsha"} 229.214873
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="get"} 0.002343
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="info"} 0.013722
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="latency"} 0.000557
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="lrange"} 11.102069
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="ltrim"} 3.731263
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="ping"} 2e-05
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="rpush"} 3.460981
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="script"} 0.008393
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="set"} 0.001329
+</span><span class='line'>redis_commands_duration_seconds_total{cmd="slowlog"} 0.001308
+</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configure Prometheus</h2>
+
+<p>If you don&rsquo;t have prometheus setup, you can <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">view this blogpost</a> to get it setup.</p>
+
+<p>Then configure your <code>prometheus.yml</code> and add the target to scrape the redis exporter endpoint to write the time series data into prometheus:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>scrape_configs:
+</span><span class='line'>  - job_name: redis_exporter
+</span><span class='line'>    static_configs:
+</span><span class='line'>    - targets: ['ip.of.redis.exporter:9121']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then restart prometheus, if you have docker redeploy your stack or prometheus container. For prometheus as a service you can use <code>systemctl restart prometheus</code>, depending on your operating system distribution.</p>
+
+<h2>Grafana</h2>
+
+<p>Head over to Grafana, if you don&rsquo;t have Grafana, you can <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">view this post</a> to install Grafana.</p>
+
+<p>Then import the dashboard <a href="https://grafana.com/grafana/dashboards/763">763</a> and after some time, you should see a dashboard more or less like this:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/81118917-0b58f880-8f2a-11ea-941a-b43696fab9b0.png"></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3263,198 +3456,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/02/12/install-openfaas-on-k3d-kubernetes/">Install OpenFaas on K3d Kubernetes</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-02-12T00:57:47+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>12</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>12:57 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this post we will deploy i<a href="https://www.openfaas.com">openfaas</a> on kubernetes (<a href="https://github.com/rancher/k3d">k3d</a>)</p>
-
-<h2>Kubernetes on k3d</h2>
-
-<p>k3d is a helper tool that provisions a kubernetes distribution, called k3s on docker. To deploy a kubernetes cluster on k3d, you can follow <a href="https://blog.ruanbekker.com/blog/2020/02/12/lightweight-development-kubernetes-options-k3d/">this blog post</a></p>
-
-<h2>Deploy a 3 Node Kubernetes Cluster</h2>
-
-<p>Using k3d, let&rsquo;s deploy a kubernetes cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>k3d create --name<span class="o">=</span><span class="s2">&quot;demo&quot;</span> --workers<span class="o">=</span><span class="s2">&quot;2&quot;</span> --publish<span class="o">=</span><span class="s2">&quot;80:80&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Export the kubeconfig:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">KUBECONFIG</span><span class="o">=</span><span class="s2">&quot;$(k3d get-kubeconfig --name=&#39;demo&#39;)&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify that you are able to communicate with your kubernetes cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy OpenFaas</h2>
-
-<p>First we need to get <a href="https://k3sup.dev">k3sup</a> :</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -sLfS https://get.k3sup.dev <span class="p">|</span> sudo sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once k3sup is installed, deploy openfaas to your cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>k3sup app install openfaas
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Give it a minute or so and check if everything is running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods -n openfaas
-</span><span class='line'>NAMESPACE     NAME                                 READY   STATUS      RESTARTS   AGE
-</span><span class='line'>openfaas      alertmanager-546f66b6c6-qtb69        1/1     Running     <span class="m">0</span>          5m
-</span><span class='line'>openfaas      basic-auth-plugin-79b9878b7b-7vlln   1/1     Running     <span class="m">0</span>          4m59s
-</span><span class='line'>openfaas      faas-idler-db8cd9c7d-8xfpp           1/1     Running     <span class="m">2</span>          4m57s
-</span><span class='line'>openfaas      gateway-7dcc6d694d-dmvqn             2/2     Running     <span class="m">0</span>          4m56s
-</span><span class='line'>openfaas      nats-d6d574749-rt9vw                 1/1     Running     <span class="m">0</span>          4m56s
-</span><span class='line'>openfaas      prometheus-d99669d9b-mfxc8           1/1     Running     <span class="m">0</span>          4m53s
-</span><span class='line'>openfaas      queue-worker-75f44b56b9-mhhbv        1/1     Running     <span class="m">0</span>          4m52s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install the openfaas-cli:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -SLsf https://cli.openfaas.com <span class="p">|</span> sudo sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In a screen session, forward port 8080 to the gateway service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>screen -S portfwd-process -m -d sh -c <span class="s2">&quot;kubectl port-forward -n openfaas svc/gateway 8080:8080&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Expose the gateway password as an environment variable:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ PASSWORD</span><span class="o">=</span><span class="k">$(</span>kubectl get secret -n openfaas basic-auth -o <span class="nv">jsonpath</span><span class="o">=</span><span class="s2">&quot;{.data.basic-auth-password}&quot;</span> <span class="p">|</span> base64 --decode<span class="p">;</span> <span class="nb">echo</span><span class="k">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then login to the gateway:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> -n <span class="nv">$PASSWORD</span> <span class="p">|</span> faas-cli login --username admin --password-stdin
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy a OpenFaas Function</h2>
-
-<p>To list all the functions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli store list
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To deploy the figlet function:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli store deploy figlet
-</span><span class='line'>
-</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
-</span><span class='line'>URL: http://127.0.0.1:8080/function/figlet
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>List your deployed functions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli list
-</span><span class='line'>Function                          Invocations     Replicas
-</span><span class='line'>figlet                            <span class="m">0</span>                1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Invoke your function:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://127.0.0.1:8080/function/figlet -d <span class="s1">&#39;hello, world&#39;</span>
-</span><span class='line'> _          _ _                             _     _
-</span><span class='line'><span class="p">|</span> <span class="p">|</span>__   ___<span class="p">|</span> <span class="p">|</span> <span class="p">|</span> ___    __      _____  _ __<span class="p">|</span> <span class="p">|</span> __<span class="p">|</span> <span class="p">|</span>
-</span><span class='line'><span class="p">|</span> <span class="s1">&#39;_ \ / _ \ | |/ _ \   \ \ /\ / / _ \| &#39;</span>__<span class="p">|</span> <span class="p">|</span>/ _<span class="sb">`</span> <span class="p">|</span>
-</span><span class='line'><span class="p">|</span> <span class="p">|</span> <span class="p">|</span> <span class="p">|</span>  __/ <span class="p">|</span> <span class="p">|</span> <span class="o">(</span>_<span class="o">)</span> <span class="p">|</span>   <span class="se">\ </span>V  V / <span class="o">(</span>_<span class="o">)</span> <span class="p">|</span> <span class="p">|</span>  <span class="p">|</span> <span class="p">|</span> <span class="o">(</span>_<span class="p">|</span> <span class="p">|</span>
-</span><span class='line'><span class="p">|</span>_<span class="p">|</span> <span class="p">|</span>_<span class="p">|</span><span class="se">\_</span>__<span class="p">|</span>_<span class="p">|</span>_<span class="p">|</span><span class="se">\_</span>__<span class="o">(</span> <span class="o">)</span>   <span class="se">\_</span>/<span class="se">\_</span>/ <span class="se">\_</span>__/<span class="p">|</span>_<span class="p">|</span>  <span class="p">|</span>_<span class="p">|</span><span class="se">\_</span>_,_<span class="p">|</span>
-</span><span class='line'>                    <span class="p">|</span>/
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Delete your Cluster</h2>
-
-<p>When you are done, delete your kubernetes cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>k3d delete --name demo
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Thank you for reading. If you like my content, feel free to visit me at <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<p><a href="https://twitter.com/ruanbekker"><img src="https://user-images.githubusercontent.com/567298/71188576-e2410f80-2289-11ea-8667-08f0c14ab7b5.png" alt="" /></a></p>
-
-<p><a href="https://ko-fi.com/A6423ZIQ"><img src="https://www.ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" /></a></p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/4">&larr; Older</a>
@@ -3505,6 +3506,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/10/26/upload-public-ssh-keys-using-ansible/">Upload Public SSH Keys Using Ansible</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/10/26/easy-ad-hoc-vpns-with-sshuttle/">Easy Ad-Hoc VPNs With Sshuttle</a>
       </li>
     
@@ -3518,10 +3523,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/10/08/using-the-libvirt-provisioner-with-terraform-for-kvm/">Using the Libvirt Provisioner With Terraform for KVM</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/10/07/setup-a-kvm-host-for-virtualization-on-oneprovider/">Setup a KVM Host for Virtualization on OneProvider</a>
       </li>
     
   </ul>

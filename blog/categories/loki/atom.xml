@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Loki | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/loki/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-10-29T08:24:36+00:00</updated>
+  <updated>2020-10-29T09:58:32+00:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,454 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Running Loki Behind Nginx Reverse Proxy]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy/"/>
+    <updated>2020-10-29T08:29:13+00:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy</id>
+    <content type="html"><![CDATA[<p>In this tutorial I will demonstrate how to run <strong>Loki v2.0.0</strong> behind a <strong>Nginx Reverse Proxy</strong> with basic http authentication enabled on Nginx and what to do to configure Nginx for <strong>websockets</strong>, which is required when you want to use <strong>tail in logcli</strong> via Nginx.</p>
+
+<h2>Assumptions</h2>
+
+<p>My environment consists of a AWS Application LoadBalancer with a Host entry and a Target Group associated to port 80 of my Nginx/Loki EC2 instance.</p>
+
+<p>Health checks to my EC2 instance are being performed to <code>instance:80/ready</code></p>
+
+<p>I have a S3 bucket and a DynamoDB table already running in my account which Loki will use. But <strong>NOTE</strong> that boltdb-shipper is now production ready since <a href="https://github.com/grafana/loki/blob/v2.0.0/CHANGELOG.md#20">v2.0.0</a>, which is awesome, because now you only require a object store such as S3, so you don&rsquo;t need DynamoDB.</p>
+
+<p>More information on this topic can be found under their <a href="https://github.com/grafana/loki/blob/v2.0.0/CHANGELOG.md#20">changelog</a></p>
+
+<h2>What can you expect from this blogpost</h2>
+
+<p>We will go through the following topics:</p>
+
+<ul>
+<li>Install Loki v2.0.0 and Nginx</li>
+<li>Configure HTTP Basic Authentication to Loki&rsquo;s API Endpoints</li>
+<li>Bypass HTTP Basic Authentication to the <code>/ready</code> endpoint for our Load Balancer to perform healthchecks</li>
+<li>Enable Nginx to upgrade websocket connections so that we can use <code>logcli --tail</code></li>
+<li>Test out access to Loki via our Nginx Reverse Proxy</li>
+<li>Install and use LogCLI</li>
+</ul>
+
+
+<h2>Install Software</h2>
+
+<p>First we will install <code>nginx</code> and <code>apache2-utils</code>. In my use-case I will be using Ubuntu 20 as my operating system:</p>
+
+<pre><code>$ sudo apt update &amp;&amp; sudp apt install nginx apache2-utils -y
+</code></pre>
+
+<p>Next we will install Loki v2.0.0, if you are upgrading from a previous version of Loki, I would recommend checking out the <a href="https://github.com/grafana/loki/releases/tag/v2.0.0">upgrade guide</a> mentioned on their releases page.</p>
+
+<p>Download the package:</p>
+
+<pre><code>$ curl -O -L "https://github.com/grafana/loki/releases/download/v2.0.0/loki-linux-amd64.zip"
+</code></pre>
+
+<p>Unzip the archive:</p>
+
+<pre><code>$ unzip loki-linux-amd64.zip
+</code></pre>
+
+<p>Move the binary to your $PATH:</p>
+
+<pre><code>$ sudo mv loki-linux-amd64 /usr/local/bin/loki
+</code></pre>
+
+<p>And ensure that the binary is executable:</p>
+
+<pre><code>$ sudo chmod a+x /usr/local/bin/loki
+</code></pre>
+
+<h2>Configuration</h2>
+
+<p>Create the user that will be responsible for running loki:</p>
+
+<pre><code>$ useradd --no-create-home --shell /bin/false loki
+</code></pre>
+
+<p>Create the directory where we will place the loki configuration:</p>
+
+<pre><code>$ mkdir /etc/loki
+</code></pre>
+
+<p>Create the loki configuration file:</p>
+
+<pre><code>$ cat /etc/loki/loki-config.yml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  http_listen_address: 127.0.0.1
+  http_server_read_timeout: 1000s
+  http_server_write_timeout: 1000s
+  http_server_idle_timeout: 1000s
+  log_level: info
+
+ingester:
+  lifecycler:
+    address: 127.0.0.1
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+    final_sleep: 0s
+  chunk_encoding: snappy
+  chunk_idle_period: 1h
+  chunk_target_size: 1048576
+  chunk_retain_period: 30s
+  max_transfer_retries: 0
+
+# https://grafana.com/docs/loki/latest/configuration/#schema_config
+schema_config:
+  configs:
+    - from: 2020-05-15
+      store: aws
+      object_store: s3
+      schema: v11
+      index:
+        prefix: loki-logging-index
+
+storage_config:
+  aws:
+    http_config:
+      idle_conn_timeout: 90s
+      response_header_timeout: 0s
+    s3: s3://myak:mysk@eu-west-1/loki-logs-datastore
+
+    dynamodb:
+      dynamodb_url: dynamodb://myak:mysk@eu-west-1
+
+limits_config:
+  enforce_metric_name: false
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  ingestion_rate_mb: 30
+  ingestion_burst_size_mb: 60
+
+# https://grafana.com/docs/loki/latest/operations/storage/retention/
+# To avoid querying of data beyond the retention period, max_look_back_period config in chunk_store_config
+# must be set to a value less than or equal to what is set in table_manager.retention_period
+chunk_store_config:
+  max_look_back_period: 720h
+
+# https://grafana.com/docs/loki/latest/operations/storage/retention/
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 720h
+  chunk_tables_provisioning:
+    inactive_read_throughput: 10
+    inactive_write_throughput: 10
+    provisioned_read_throughput: 50
+    provisioned_write_throughput: 20
+  index_tables_provisioning:
+    inactive_read_throughput: 10
+    inactive_write_throughput: 10
+    provisioned_read_throughput: 50
+    provisioned_write_throughput: 20
+</code></pre>
+
+<p>Apply permissions so that the loki user has access to it&rsquo;s configuration:</p>
+
+<pre><code>$ chown -R loki:loki /etc/loki
+</code></pre>
+
+<p>Create a systemd unit file:</p>
+
+<pre><code>$ cat /etc/systemd/system/loki.service
+[Unit]
+Description=Loki
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=loki
+Group=loki
+Type=simple
+Restart=on-failure
+ExecStart=/usr/local/bin/loki -config.file /etc/loki/loki-config.yml
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<p>Create the main nginx config:</p>
+
+<pre><code>$ cat /etc/nginx/nginx.conf
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+worker_rlimit_nofile 100000;
+
+events {
+        worker_connections 4000;
+        use epoll;
+        multi_accept on;
+}
+
+http {
+
+    # basic settings
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+        open_file_cache_valid 30s;
+        open_file_cache_min_uses 2;
+        open_file_cache_errors on;
+
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+        # ssl settings
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+
+    # websockets config
+    map $http_upgrade $connection_upgrade {
+            default upgrade;
+            '' close;
+        }
+
+    # logging settings
+    access_log off;
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    # gzip settings
+    gzip on;
+        gzip_min_length 10240;
+        gzip_comp_level 1;
+        gzip_vary on;
+        gzip_disable msie6;
+        gzip_proxied expired no-cache no-store private auth;
+        gzip_types
+        text/css
+        text/javascript
+        text/xml
+        text/plain
+        text/x-component
+        application/javascript
+        application/x-javascript
+        application/json
+    application/xml
+        application/rss+xml
+    application/atom+xml
+        font/truetype
+        font/opentype
+        application/vnd.ms-fontobject
+        image/svg+xml;
+        reset_timedout_connection on;
+        client_body_timeout 10;
+        send_timeout 2;
+        keepalive_requests 100000;
+
+        # virtual host configs
+    include /etc/nginx/conf.d/loki.conf;
+}
+</code></pre>
+
+<p>Create the virtual host config:</p>
+
+<pre><code>$ cat /etc/nginx/conf.d/loki.conf
+upstream loki {
+  server 127.0.0.1:3100;
+  keepalive 15;
+}
+
+server {
+  listen 80;
+  server_name loki.localdns.xyz;
+
+  auth_basic "loki auth";
+  auth_basic_user_file /etc/nginx/passwords;
+
+  location / {
+    proxy_read_timeout 1800s;
+    proxy_connect_timeout 1600s;
+    proxy_pass http://loki;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+  }
+
+  location /ready {
+    proxy_pass http://loki;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "Keep-Alive";
+    proxy_set_header Proxy-Connection "Keep-Alive";
+    proxy_redirect off;
+    auth_basic "off";
+  }
+}
+</code></pre>
+
+<p>As you&rsquo;ve noticed, we are providing a <code>auth_basic_user_file</code> to <code>/etc/nginx/passwords</code>, so let&rsquo;s create a user that we will be using to authenticate against loki:</p>
+
+<pre><code>$ htpasswd -c /etc/nginx/passwords lokiisamazing
+</code></pre>
+
+<h2>Enable and Start Services</h2>
+
+<p>Because we created a systemd unit file, we need to reload the systemd daemon:</p>
+
+<pre><code>$ sudo systemctl daemon-reload
+</code></pre>
+
+<p>Then enable nginx and loki on boot:</p>
+
+<pre><code>$ sudo systemctl enable nginx
+$ sudo systemctl enable loki
+</code></pre>
+
+<p>Then start or restart both services:</p>
+
+<pre><code>$ sudo systemctl restart nginx
+$ sudo systemctl restart loki
+</code></pre>
+
+<p>You should see both ports, 80 and 3100 are listening:</p>
+
+<pre><code>$ sudo netstat -tulpn | grep -E '(3100|80)'
+tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      8949/nginx: master
+tcp        0      0 127.0.0.1:3100          0.0.0.0:*               LISTEN      23498/loki
+</code></pre>
+
+<h2>Test Access</h2>
+
+<p>You will notice that I have a <code>/ready</code> endpoint that I am proxy passing to loki, which bypasses authentication, this has been setup for my AWS Application Load Balancer&rsquo;s Target Group to perform health checks against.</p>
+
+<p>We can verify if we are getting a 200 response code without passing authentication:</p>
+
+<pre><code>$ curl -i http://loki.localdns.xyz/ready
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Thu, 29 Oct 2020 09:15:52 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 6
+Connection: keep-alive
+X-Content-Type-Options: nosniff
+
+ready
+</code></pre>
+
+<p>If we try to make a request to Loki&rsquo;s labels API endpoint, you will notice that we are returned with a 401 unauthorized response:</p>
+
+<pre><code>$ curl -i http://loki.localdns.xyz/loki/api/v1/labels
+HTTP/1.1 401 Unauthorized
+Server: nginx/1.14.0 (Ubuntu)
+Date: Thu, 29 Oct 2020 09:16:52 GMT
+Content-Type: text/html
+Content-Length: 204
+Connection: keep-alive
+WWW-Authenticate: Basic realm="loki auth"
+</code></pre>
+
+<p>So let&rsquo;s access the labels API endpoint by passing our basic auth credentials. To leave no leaking passwords behind, create a file and save your password content in that file:</p>
+
+<pre><code>$ vim /tmp/.pass
+-&gt; then enter your password and save the file &lt;-
+</code></pre>
+
+<p>Expose the content as an environment variable:</p>
+
+<pre><code>$ pass=$(cat /tmp/.pass)
+</code></pre>
+
+<p>Now make a request to Loki&rsquo;s labels endpoint by passing authentication:</p>
+
+<pre><code>$ curl -i -u lokiisawesome:$pass http://loki.localdns.xyz/loki/api/v1/labels
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Thu, 29 Oct 2020 09:20:20 GMT
+Content-Type: application/json; charset=UTF-8
+Content-Length: 277
+Connection: keep-alive
+
+{"status":"success","data":["__name__","aws_account","cluster_name","container_name","environment","filename","job","service","team"]}
+</code></pre>
+
+<p>Then ensure that your remove the password file:</p>
+
+<pre><code>$ rm -rf /tmp/.pass
+</code></pre>
+
+<p>And unset your pass environment variable, to clean up your tracks:</p>
+
+<pre><code>$ unset pass
+</code></pre>
+
+<h2>LogCLI</h2>
+
+<p>Now for my favorite part, using logcli to interact with Loki, but more specifically using <code>--tail</code> as it requires websockets, nginx will now be able to upgrade those connections:</p>
+
+<p>Install logcli, in my case I am using a mac, so I will be using darwin:</p>
+
+<pre><code>$ wget https://github.com/grafana/loki/releases/download/v2.0.0/logcli-darwin-amd64.zip
+$ unzip logcli-darwin-amd64.zip
+$ mv logcli-darwin-amd64 /usr/local/bin/logcli
+</code></pre>
+
+<p>Set your environment variables for logcli:</p>
+
+<pre><code>$ export LOKI_ADDR=https://loki.yourdomain.com # im doing ssl termination on the aws alb
+$ export LOKI_USERNAME=lokiisawesome
+$ export LOKI_PASSWORD=$pass 
+</code></pre>
+
+<p>Now for that sweetness of tailing ALL THE LOGS!! :-D . Let&rsquo;s first discover the label that we want to select:</p>
+
+<pre><code>$ logcli labels --quiet container_name | grep deadman
+ecs-deadmanswitch-4-deadmanswitch-01234567890abcdefghi
+</code></pre>
+
+<p>Then tail for the win!</p>
+
+<pre><code>$ logcli query --quiet --output raw --tail '{job="prod/dockerlogs", container_name=~"ecs-deadmanswitch.*"}'
+time="2020-10-29T09:03:36Z" level=info msg="timerID: xxxxxxxxxxxxxxxxxxxx"
+time="2020-10-29T09:03:36Z" level=info msg="POST - /ping/xxxxxxxxxxxxxxxxxxx"
+</code></pre>
+
+<p>Awesome right?</p>
+
+<p><img src="https://media.giphy.com/media/3ohzdIuqJoo8QdKlnW/giphy.gif" alt="" /></p>
+
+<h2>Thank You</h2>
+
+<p>Hope that you found this useful, make sure to follow Grafana&rsquo;s blog for more awesome content:</p>
+
+<ul>
+<li><a href="https://grafana.com/blog/">https://grafana.com/blog/</a></li>
+</ul>
+
+
+<p>If you liked this content, please make sure to share or come say hi on my website or twitter:</p>
+
+<ul>
+<li><a href="https://ruan.dev">w: ruan.dev</a></li>
+<li><a href="https://ruan.dev">t: @ruanbekker</a></li>
+</ul>
+
+
+<p>For other content of mine on Loki:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/categories/loki/">https://blog.ruanbekker.com/blog/categories/loki/</a></li>
+<li><a href="https://github.com/ruanbekker/docker-loki-distributed-minio">https://github.com/ruanbekker/docker-loki-distributed-minio</a></li>
+<li><a href="https://github.com/ruanbekker/loki-docker-nginx-example">https://github.com/ruanbekker/loki-docker-nginx-example</a></li>
+<li><a href="https://github.com/ruanbekker/loki-minio-docker">https://github.com/ruanbekker/loki-minio-docker</a></li>
+<li><a href="https://github.com/ruanbekker/cheatsheets/tree/master/loki">https://github.com/ruanbekker/cheatsheets/tree/master/loki</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Getting Started on Logging With Loki Using Docker]]></title>

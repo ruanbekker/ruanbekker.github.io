@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Nginx is a great product! And today we will use nginx to setup a http reverse proxy to access our backend applications. Our Setup We will have a &hellip;">
+  <meta name="description" content="Good old nagios! Nagios is a great Open Source Monitoring Server that monitors your servers and services/applications that is hosted on top of them &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,247 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/03/13/how-to-setup-a-nagios-monitoring-server/">How to Setup a Nagios Monitoring Server</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-03-13T17:53:42-04:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>13</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>5:53 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/54547916-65f26680-49af-11e9-8d42-e27c57ef8e2e.png" alt="" /></p>
+
+<p>Good old nagios! Nagios is a great Open Source Monitoring Server that monitors your servers and services/applications that is hosted on top of them, and has the ability to notify in the event when they go down.</p>
+
+<p>I&rsquo;ve been using Nagios for the last 7 years and worked for 3 business that chose Nagios as their preferred server monitoring solution.</p>
+
+<p>All <a href="https://blog.ruanbekker.com/blog/categories/nagios/">Nagios</a> related posts are grouped under the <a href="https://blog.ruanbekker.com/blog/categories/nagios/">#nagios</a> category.</p>
+
+<h2>What we are doing today</h2>
+
+<p>Today we will setup a Nagios server and its plugins. The plugins helps to check different endpoints, such as custom tcp checks, ssh, snmp etc.</p>
+
+<p>In this nagios tutorial series, I will publish a couple of post which will include:</p>
+
+<ul>
+<li>Setup the Nagios Server and its Plugins - this post</li>
+<li>Setup the NRPE Server and NRPE Client Server (this is nice for local ports or custom checks)</li>
+<li>Setup Nagiosgraph (Graph performance data and add it as extra host configuration)</li>
+<li>Setup a custom Bash and Python Nagios Plugin for Custom Checks</li>
+<li>Setup a Telegram / Slack Plugin</li>
+</ul>
+
+
+<h2>Installing Dependencies:</h2>
+
+<p>Go ahead and install all the dependencies needed by nagios and add the nagios user and group:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update
+</span><span class='line'><span class="nv">$ </span>apt install build-essential libgd-dev openssl libssl-dev unzip apache2 -y
+</span><span class='line'><span class="nv">$ </span>apt install autoconf gcc libc6 make wget unzip apache2 php libapache2-mod-php7.2 libgd-dev
+</span><span class='line'><span class="nv">$ </span>apt install libmcrypt-dev libssl-dev bc gawk dc build-essential libnet-snmp-perl gettext
+</span><span class='line'><span class="nv">$ </span>apt install libcarp-clan-perl rrdtool php-rrd libssl1.0-dev
+</span><span class='line'><span class="nv">$ </span>useradd nagios
+</span><span class='line'><span class="nv">$ </span>groupadd nagcmd
+</span><span class='line'><span class="nv">$ </span>usermod -a -G nagcmd nagios
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install Nagios</h2>
+
+<p>Download the nagios tarball from their website, have a look at <a href="https://www.nagios.org/downloads/">https://www.nagios.org/downloads/</a> for the latest version.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget -O nagios.tar.gz <span class="s1">&#39;https://assets.nagios.com/downloads/nagioscore/releases/nagios-4.4.3.tar.gz?__hstc=118811158.7bdae752f04b6d927ddf150ae1ce5c71.1552389135285.1552394646569.1552410974898.3&amp;__hssc=118811158.1.1552410974898&amp;__hsfp=2323916385#_ga=2.246938692.1332751653.1552389134-913645931.1552389134&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Extract the archive:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>tar xpf nagios*.tar.gz
+</span><span class='line'><span class="nv">$ </span><span class="nb">cd </span>nagios-4.4.3/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure with nagios user and nagcmd group, install and change the ownership of the generated data:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>./configure --with-nagios-group<span class="o">=</span>nagios --with-command-group<span class="o">=</span>nagcmd
+</span><span class='line'><span class="nv">$ </span>make -j4 all
+</span><span class='line'><span class="nv">$ </span>make install
+</span><span class='line'><span class="nv">$ </span>make install-commandmode
+</span><span class='line'><span class="nv">$ </span>make install-init
+</span><span class='line'><span class="nv">$ </span>make install-config
+</span><span class='line'><span class="nv">$ </span>/usr/bin/install -c -m <span class="m">644</span> sample-config/httpd.conf /etc/apache2/sites-available/nagios.conf
+</span><span class='line'><span class="nv">$ </span>usermod -a -G nagcmd www-data
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install Nagios Plugins</h2>
+
+<p>Get the nagios plugins tarball, extract and install:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget nagios-plugins.tar.gz <span class="s1">&#39;https://nagios-plugins.org/download/nagios-plugins-2.2.1.tar.gz#_ga=2.250909126.1332751653.1552389134-913645931.1552389134&#39;</span>
+</span><span class='line'><span class="nv">$ </span>tar xpf nagios-plugins*.tar.gz
+</span><span class='line'><span class="nv">$ </span><span class="nb">cd </span>nagios-plugins-2.2.1
+</span><span class='line'><span class="nv">$ </span>./configure --with-nagios-user<span class="o">=</span>nagios --with-nagios-group<span class="o">=</span>nagcmd --with-openssl
+</span><span class='line'><span class="nv">$ </span>make -j4
+</span><span class='line'><span class="nv">$ </span>make install
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Access Nagios</h2>
+
+<p>Enable apache modules:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>a2enmod rewrite
+</span><span class='line'><span class="nv">$ </span>a2enmod cgi
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup basic auth for logging onto nagios:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>htpasswd -c /usr/local/nagios/etc/htpasswd.users nagiosadmin
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup a symlink for apache&rsquo;s nagios configuration</p>
+
+<p>The configuration for the above will look more or less like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/apache2/sites-enabled/nagios.conf
+</span><span class='line'>
+</span><span class='line'>...
+</span><span class='line'>         Require all granted
+</span><span class='line'>         AuthName <span class="s2">&quot;Nagios Access&quot;</span>
+</span><span class='line'>         AuthType Basic
+</span><span class='line'>         AuthUserFile /usr/local/nagios/etc/htpasswd.users
+</span><span class='line'>         Require valid-user
+</span><span class='line'>...
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p></p>
+
+<p>Create the systemd unit file for nagios <code>/etc/systemd/system/nagios.service</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="o">[</span>Unit<span class="o">]</span>
+</span><span class='line'><span class="nv">Description</span><span class="o">=</span>Nagios
+</span><span class='line'><span class="nv">BindTo</span><span class="o">=</span>network.target
+</span><span class='line'>
+</span><span class='line'><span class="o">[</span>Install<span class="o">]</span>
+</span><span class='line'><span class="nv">WantedBy</span><span class="o">=</span>multi-user.target
+</span><span class='line'>
+</span><span class='line'><span class="o">[</span>Service<span class="o">]</span>
+</span><span class='line'><span class="nv">Type</span><span class="o">=</span>simple
+</span><span class='line'><span class="nv">User</span><span class="o">=</span>nagios
+</span><span class='line'><span class="nv">Group</span><span class="o">=</span>nagcmd
+</span><span class='line'><span class="nv">ExecStart</span><span class="o">=</span>/usr/local/nagios/bin/nagios /usr/local/nagios/etc/nagios.cfg
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload the daemon:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl daemon-reload
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable</span> /etc/systemd/system/nagios.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure nagios is started:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl restart nagios
+</span><span class='line'><span class="nv">$ </span>systemctl restart apache2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Access nagios on <a href="http://nagios-ip/nagios">http://nagios-ip/nagios</a> with the credentials that you configured earlier.</p>
+
+<h2>Up Next</h2>
+
+<p>In the next posts I will cover the following:</p>
+
+<ol>
+<li><a href="https://blog.ruanbekker.com/blog/2019/03/18/how-to-setup-the-nagiosgraph-plugin-on-nagios-monitoring-server/">Setup NagiosGraph for monitoring performance data</a></li>
+<li>Show you how to create a custom nagios plugin in python</li>
+<li>Create a Custom Notification service to send notifications to Telegram (or any API)</li>
+</ol>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2461,171 +2702,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/02/19/parallel-processing-on-aws-lambda-with-python-using-multiprocessing/">Parallel Processing on AWS Lambda With Python Using Multiprocessing</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-02-19T09:39:47-05:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>19</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>9:39 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/53020033-c51b9480-345e-11e9-9625-b73062e2464a.png" alt="" /></p>
-
-<p>If you are trying to use <code>multiprocessing.Queue</code> or <code>multiprocessing.Pool</code> on AWS Lambda, you are probably getting the exception:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[Errno 38] Function not implemented: OSError
-</span><span class='line'>
-</span><span class='line'>    sl = self._semlock = _multiprocessing.SemLock(kind, value, maxvalue)
-</span><span class='line'>OSError: [Errno 38] Function not implemented</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The reason for that is due to the Lambda execution environment not having support on shared memory for processes, therefore you can’t use <code>multiprocessing.Queue</code> or <code>multiprocessing.Pool</code>.</p>
-
-<p>As a workaround, Lambda does support the usage of <code>multiprocessing.Pipe</code> instead of Queue.</p>
-
-<h2>Parallel Processing on Lambda Example</h2>
-
-<p>Below is a very basic example on how you would achieve the task of executing parallel processing on AWS Lambda for Python:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">time</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">multiprocessing</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">region_maps</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;eu-west-1&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>            <span class="s">&quot;dynamodb&quot;</span><span class="p">:</span><span class="s">&quot;dynamodb.eu-west-1.amazonaws.com&quot;</span>
-</span><span class='line'>        <span class="p">},</span>
-</span><span class='line'>        <span class="s">&quot;us-east-1&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>            <span class="s">&quot;dynamodb&quot;</span><span class="p">:</span><span class="s">&quot;dynamodb.us-east-1.amazonaws.com&quot;</span>
-</span><span class='line'>        <span class="p">},</span>
-</span><span class='line'>        <span class="s">&quot;us-east-2&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>            <span class="s">&quot;dynamodb&quot;</span><span class="p">:</span> <span class="s">&quot;dynamodb.us-east-2.amazonaws.com&quot;</span>
-</span><span class='line'>        <span class="p">}</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">multiprocessing_func</span><span class="p">(</span><span class="n">region</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-</span><span class='line'>    <span class="n">endpoint</span> <span class="o">=</span> <span class="n">region_maps</span><span class="p">[</span><span class="n">region</span><span class="p">][</span><span class="s">&#39;dynamodb&#39;</span><span class="p">]</span>
-</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&#39;endpoint for {} is {}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">region</span><span class="p">,</span> <span class="n">endpoint</span><span class="p">))</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">starttime</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
-</span><span class='line'>    <span class="n">processes</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span class='line'>    <span class="n">regions</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;us-east-1&#39;</span><span class="p">,</span> <span class="s">&#39;us-east-2&#39;</span><span class="p">,</span> <span class="s">&#39;eu-west-1&#39;</span><span class="p">]</span>
-</span><span class='line'>    <span class="k">for</span> <span class="n">region</span> <span class="ow">in</span> <span class="n">regions</span><span class="p">:</span>
-</span><span class='line'>        <span class="n">p</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">multiprocessing_func</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">region</span><span class="p">,))</span>
-</span><span class='line'>        <span class="n">processes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
-</span><span class='line'>        <span class="n">p</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="k">for</span> <span class="n">process</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">:</span>
-</span><span class='line'>        <span class="n">process</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="n">output</span> <span class="o">=</span> <span class="s">&#39;That took {} seconds&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">starttime</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">output</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The output when the function gets invoked:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">pid</span><span class="p">:</span> <span class="mi">30913</span> <span class="o">-</span> <span class="n">endpoint</span> <span class="k">for</span> <span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mi">1</span> <span class="ow">is</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mf">1.</span><span class="n">amazonaws</span><span class="o">.</span><span class="n">com</span>
-</span><span class='line'><span class="n">pid</span><span class="p">:</span> <span class="mi">30914</span> <span class="o">-</span> <span class="n">endpoint</span> <span class="k">for</span> <span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mi">2</span> <span class="ow">is</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">us</span><span class="o">-</span><span class="n">east</span><span class="o">-</span><span class="mf">2.</span><span class="n">amazonaws</span><span class="o">.</span><span class="n">com</span>
-</span><span class='line'><span class="n">pid</span><span class="p">:</span> <span class="mi">30915</span> <span class="o">-</span> <span class="n">endpoint</span> <span class="k">for</span> <span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mi">1</span> <span class="ow">is</span> <span class="n">dynamodb</span><span class="o">.</span><span class="n">eu</span><span class="o">-</span><span class="n">west</span><span class="o">-</span><span class="mf">1.</span><span class="n">amazonaws</span><span class="o">.</span><span class="n">com</span>
-</span><span class='line'><span class="n">That</span> <span class="n">took</span> <span class="mf">1.014902114868164</span> <span class="n">seconds</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/12">&larr; Older</a>
@@ -2676,6 +2752,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy/">Running Loki Behind Nginx Reverse Proxy</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/10/26/upload-public-ssh-keys-using-ansible/">Upload Public SSH Keys Using Ansible</a>
       </li>
     
@@ -2689,10 +2769,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/10/23/basic-ping-role-with-ansible-in-a-playbook/">Basic Ping Role With Ansible in a Playbook</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/10/08/using-the-libvirt-provisioner-with-terraform-for-kvm/">Using the Libvirt Provisioner With Terraform for KVM</a>
       </li>
     
   </ul>

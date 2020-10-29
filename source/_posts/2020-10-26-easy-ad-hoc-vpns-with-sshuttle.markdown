@@ -92,7 +92,7 @@ Now source that to your environment:
 $ source ~/.functions
 ```
 
-hen you should be able to use `vpn_dev` and `vpn_prod` from your terminal:
+Then you should be able to use `vpn_dev` and `vpn_prod` from your terminal:
 
 ```
 $ vpn_prod
@@ -106,6 +106,44 @@ And in a new terminal we can connect to a RDS MySQL Database sitting in a privat
 ```
 $ mysql -h my-prod-db.pvt.mydomain.com -u dbadmin -p$pass
 mysql>
+```
+
+## Sshuttle as a Service
+
+You can create a systemd unit file to run a sshuttle vpn as a service. In this scenario I provided 2 different vpn routes, dev and prod, so you can create 2 seperate systemd unit files, but my case I will only create for prod:
+
+```
+$ cat /etc/systemd/system/vpn_prod.service
+[Unit]
+Description=ShuttleProdVPN
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=500
+StartLimitBurst=5
+
+[Service]
+User=root
+Group=root
+Type=simple
+Restart=on-failure
+RestartSec=10s
+ExecStart=/usr/bin/sshuttle -r prod-jump-host 172.31.0.0/16
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload the systemd daemon:
+
+```
+$ sudo systemctl daemon-reload
+```
+
+Enable and start the service:
+
+```
+$ sudo systemctl enable vpn_prod
+$ sudo systemctl start vpn_prod
 ```
 
 ## Thank You

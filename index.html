@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial I will demonstrate how to run Loki v2.0.0 behind a Nginx Reverse Proxy with basic http authentication enabled on Nginx and what to &hellip;">
+  <meta name="description" content="In this quick post I will demonstrate how to discover a EC2 Instance&rsquo;s Private IP Address using the AWS API by using Tags then use Paramiko in &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,240 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/11/02/running-ssh-commands-on-aws-ec2-instances-with-python/">Running SSH Commands on AWS EC2 Instances With Python</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-11-02T09:55:43+00:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>2</span><span class='date-suffix'>nd</span>, <span class='date-year'>2020</span></span> <span class='time'>9:55 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this quick post I will demonstrate how to discover a EC2 Instance&rsquo;s Private IP Address using the AWS API by using Tags then use Paramiko in Python to SSH to the EC2 instance and run SSH commands on the target instance.</p>
+
+<p>Install the required dependencies:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ virtualenv -p python3 .venv
+</span><span class='line'>$ source .venve/bin/activate
+</span><span class='line'>$ pip install boto3 paramiko</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I have my development profile for aws configured under <code>dev</code> as can seen below:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile dev configure list
+</span><span class='line'>      Name                    Value             Type    Location
+</span><span class='line'>      ----                    -----             ----    --------
+</span><span class='line'>   profile                      dev           manual    --profile
+</span><span class='line'>access_key     ****************xxxx      assume-role
+</span><span class='line'>secret_key     ****************xxxx      assume-role
+</span><span class='line'>    region                eu-west-1      config-file    ~/.aws/config</span></code></pre></td></tr></table></div></figure>
+
+
+<p>First we need to discover the private ip address from the api by referencing tags, and in this example we will use the <code>Name</code> tag:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>import boto3
+</span><span class='line'>ec2 = boto3.Session(profile_name='dev', region_name='eu-west-1').client('ec2')
+</span><span class='line'>
+</span><span class='line'>target_instances = ec2.describe_instances(
+</span><span class='line'>    Filters=[{'Name':'tag:Name','Values':['my-demo-ec2-instance']}]
+</span><span class='line'>)
+</span><span class='line'>
+</span><span class='line'>ec2_instances = []
+</span><span class='line'>for each_instance in target_instances['Reservations']:
+</span><span class='line'>    for found_instance in each_instance['Instances']:
+</span><span class='line'>        ec2_instances.append(found_instance['PrivateIpAddress'])
+</span><span class='line'>
+</span><span class='line'># ec2_instances
+</span><span class='line'># ['172.31.2.89']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So we are instantiating a ec2 instance with our configured dev profile, then we describe all our instances using the tag key <code>Name</code> and value <code>my-demo-ec2-instance</code> and then access the private ip address and append it to our <code>ec2_instances</code> list.</p>
+
+<p>Next we want to define the commands that we want to run on the target ec2 instance:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>commands = [
+</span><span class='line'>    "echo hi",
+</span><span class='line'>    "whoami",
+</span><span class='line'>    "hostname"
+</span><span class='line'>]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In my case I only have 1 ec2 instance with the name <code>my-demo-ec2-instance</code>, but if you have more you can just loop through the list and perform the actions.</p>
+
+<p>Next we want to establish the SSH connection:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>k = paramiko.RSAKey.from_private_key_file("/Users/ruan/.ssh/id_rsa")
+</span><span class='line'>c = paramiko.SSHClient()
+</span><span class='line'>c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+</span><span class='line'>c.connect(hostname=ec2_instances[0], username="ruan", pkey=k, allow_agent=False, look_for_keys=False)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once our SSH connection has established, we can loop through our commands and execute them:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>for command in commands:
+</span><span class='line'>    print("running command: {}".format(command))
+</span><span class='line'>    stdin , stdout, stderr = c.exec_command(command)
+</span><span class='line'>    print(stdout.read())
+</span><span class='line'>    print(stderr.read())</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Which will output the folling:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>running command: echo hi
+</span><span class='line'>b'hi\n'
+</span><span class='line'>b''
+</span><span class='line'>running command: whoami
+</span><span class='line'>b'ruan\n'
+</span><span class='line'>b''
+</span><span class='line'>running command: hostname
+</span><span class='line'>b'ip-172-31-2-89\n'
+</span><span class='line'>b''</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And then close the SSH connection:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>c.close()</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And the full script will look like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="n">ssh_username</span> <span class="o">=</span> <span class="s">&quot;ruan&quot;</span>
+</span><span class='line'><span class="n">ssh_key_file</span> <span class="o">=</span> <span class="s">&quot;/Users/ruan/.ssh/id_rsa&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">ec2</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">profile_name</span><span class="o">=</span><span class="s">&#39;dev&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;ec2&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">target_instances</span> <span class="o">=</span> <span class="n">ec2</span><span class="o">.</span><span class="n">describe_instances</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Filters</span><span class="o">=</span><span class="p">[{</span><span class="s">&#39;Name&#39;</span><span class="p">:</span><span class="s">&#39;tag:Name&#39;</span><span class="p">,</span><span class="s">&#39;Values&#39;</span><span class="p">:[</span><span class="s">&#39;my-demo-ec2-instance&#39;</span><span class="p">]}]</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">ec2_instances</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'><span class="k">for</span> <span class="n">each_instance</span> <span class="ow">in</span> <span class="n">target_instances</span><span class="p">[</span><span class="s">&#39;Reservations&#39;</span><span class="p">]:</span>
+</span><span class='line'>    <span class="k">for</span> <span class="n">found_instance</span> <span class="ow">in</span> <span class="n">each_instance</span><span class="p">[</span><span class="s">&#39;Instances&#39;</span><span class="p">]:</span>
+</span><span class='line'>        <span class="n">ec2_instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">found_instance</span><span class="p">[</span><span class="s">&#39;PrivateIpAddress&#39;</span><span class="p">])</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">commands</span> <span class="o">=</span> <span class="p">[</span>
+</span><span class='line'>    <span class="s">&quot;echo hi&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&quot;whoami&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&quot;hostname&quot;</span>
+</span><span class='line'><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">k</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">RSAKey</span><span class="o">.</span><span class="n">from_private_key_file</span><span class="p">(</span><span class="n">ssh_key_file</span><span class="p">)</span>
+</span><span class='line'><span class="n">c</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+</span><span class='line'><span class="n">c</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+</span><span class='line'><span class="n">c</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">hostname</span><span class="o">=</span><span class="n">ec2_instances</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">username</span><span class="o">=</span><span class="n">ssh_username</span><span class="p">,</span> <span class="n">pkey</span><span class="o">=</span><span class="n">k</span><span class="p">,</span> <span class="n">allow_agent</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span> <span class="n">look_for_keys</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">command</span> <span class="ow">in</span> <span class="n">commands</span><span class="p">:</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&quot;running command: {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">command</span><span class="p">))</span>
+</span><span class='line'>    <span class="n">stdin</span> <span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="n">command</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="n">stderr</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">c</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2779,95 +3013,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/08/14/using-if-statements-in-bash-to-check-if-environment-variables-exist/">Using if Statements in Bash to Check if Environment Variables Exist</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-08-14T11:00:25+00:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>14</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>11:00 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>This is a quick post to demonstrate how to use <strong>if statements</strong> in bash to check if we have the required environment variables in our environment before we continue a script.</p>
-
-<p>Let&rsquo;s say we require <code>FOO</code> and <code>BAR</code> in our environment before we can continue, we can do this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="o">[</span> -z <span class="k">${</span><span class="nv">FOO</span><span class="k">}</span> <span class="o">]</span> <span class="o">||</span> <span class="o">[</span> -z <span class="k">${</span><span class="nv">BAR</span><span class="k">}</span> <span class="o">]</span> <span class="p">;</span>
-</span><span class='line'>  <span class="k">then</span>
-</span><span class='line'>    <span class="nb">echo</span> <span class="s2">&quot;required environment variables does not exist&quot;</span>
-</span><span class='line'>    <span class="nb">exit </span>1
-</span><span class='line'>  <span class="k">else</span>
-</span><span class='line'>    <span class="nb">echo</span> <span class="s2">&quot;required environment variables are set&quot;</span>
-</span><span class='line'>    <span class="c"># do things</span>
-</span><span class='line'>    <span class="nb">exit </span>0
-</span><span class='line'><span class="k">fi</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So now if <code>FOO</code> or <code>BAR</code> is not set in our environment, the script will exit with return code 1.</p>
-
-<p>To test it, when we pass no environment variables:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chmod +x ./update.sh
-</span><span class='line'><span class="nv">$ </span>./update.sh
-</span><span class='line'>required environment variables does not exist
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If we only pass one environment variable:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ FOO</span><span class="o">=</span><span class="m">1</span> ./update.sh
-</span><span class='line'>required environment variables does not exist
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And as the result we want, when we pass both required environment variables, we have success:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ FOO</span><span class="o">=</span><span class="m">1</span> <span class="nv">BAR</span><span class="o">=</span><span class="m">2</span> ./update.sh
-</span><span class='line'>required environment variables are <span class="nb">set</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/2">&larr; Older</a>
@@ -2916,6 +3061,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/11/02/running-ssh-commands-on-aws-ec2-instances-with-python/">Running SSH Commands on AWS EC2 Instances With Python</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy/">Running Loki Behind Nginx Reverse Proxy</a>
       </li>
     
@@ -2929,10 +3078,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/10/26/use-a-ssh-jump-host-with-ansible/">Use a SSH Jump Host With Ansible</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/10/23/basic-ping-role-with-ansible-in-a-playbook/">Basic Ping Role With Ansible in a Playbook</a>
       </li>
     
   </ul>

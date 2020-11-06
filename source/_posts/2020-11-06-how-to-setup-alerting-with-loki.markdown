@@ -8,17 +8,19 @@ categories: ["loki", "alertmanager", "docker", "grafana"]
 
 ![image](https://user-images.githubusercontent.com/567298/98380823-bd948880-2051-11eb-8ab4-c8d5f5d3e612.png)
 
-Recently Grafana Labs announced [Loki v2](https://grafana.com/blog/2020/10/28/loki-2.0-released-transform-logs-as-youre-querying-them-and-set-up-alerts-within-loki/) and its awesome! Definitely check out their blog post on more details.
+Recently Grafana Labs announced **[Loki v2](https://grafana.com/blog/2020/10/28/loki-2.0-released-transform-logs-as-youre-querying-them-and-set-up-alerts-within-loki/)** and its awesome! Definitely check out their blog post on more details.
 
-Loki has a index option called boltdb-shipper, which allows you to run Loki with only a object store and you no longer need a dedicated index store such as DynamoDB. You can extract labels from log lines at query time, which is CRAZY! And I really like how they've implemented it, you can parse, filter and format like mad. I really like that.
+Loki has a index option called **boltdb-shipper**, which allows you to run Loki with only a object store and you **no longer need a dedicated index store** such as DynamoDB. You can extract labels from log lines at query time, which is CRAZY! And I really like how they've implemented it, you can parse, filter and format like mad. I really like that.
 
 And then generating alerts from any query, which we will go into today. Definitely check out [this blogpost](https://grafana.com/blog/2020/10/28/loki-2.0-released-transform-logs-as-youre-querying-them-and-set-up-alerts-within-loki/) and [this video](https://grafana.com/blog/2020/11/04/video-top-three-features-of-the-new-loki-2.0/) for more details on the features of Loki v2.
 
 ## What will we be doing today
 
-In this tutorial we will setup an alert using the Loki local ruler to alert us when we have a high number of log events coming in. For example, let's say someone has debug logging enabled in their application and we want to send a alert to slack when it breaches the threshold.
+In this tutorial we will setup a alert using the Loki local ruler to alert us when we have **high number of log events coming in**. For example, let's say someone has debug logging enabled in their application and we want to send a alert to slack when it breaches the threshold.
 
-I will simulate this with a `http-client` container which runs `curl` in a while loop to fire a bunch of http requests against the nginx container which logs to Loki, so we can see how the alerting works. And after that we will stop our http-client container to see how the alarm resolves when the log rate comes down again.
+I will simulate this with a `http-client` container which runs `curl` in a while loop to fire a bunch of http requests against the nginx container which logs to Loki, so we can see how the alerting works, and in this scenario we will alert to Slack. 
+
+And after that we will stop our http-client container to see how the alarm resolves when the log rate comes down again.
 
 All the components are available in the `docker-compose.yml` on my [github repository](https://github.com/ruanbekker/loki-alerts-docker)
 
@@ -72,7 +74,7 @@ groups:
 
 In my expression, I am using LogQL to return per second rate of all my docker logs within the last minute per compose service for my dockerlogs job and we are specifying that it should alert when the threshold is above 60.
 
-As you can see I have a couple of labels and annotations, which becomes very helpful when you have dashboard links, runbooks etc and you would like to map that to your alert. I am doing the mapping in my `alertmanager.yml` config:
+As you can see I have a couple of **labels and annotations**, which becomes **very useful** when you have dashboard links, runbooks etc and you would like to map that to your alert. I am doing the mapping in my `alertmanager.yml` config:
 
 ```
 route:
@@ -107,15 +109,15 @@ receivers:
         {{ end }}
 ```
 
-As you can see, when my alert matches nothing it will go to my catch all receiver, but when my label contains `devops` and the route the alert to my `warning-devops-slack` receiver, and then we will be parsing our labels and annotations to include the values in our alarm on slack.
+As you can see, when my alert matches nothing it will go to my catchall receiver, but when my label contains `devops` and the route the alert to my `warning-devops-slack` receiver, and then we will be parsing our labels and annotations to include the values in our alarm on slack.
 
 ## Demo
 
 Enough with the background details, and it's time to get into the action.
 
-All the code for this demonstration will be available in my github repository: [github.com/ruanbekker/loki-alerts-docker](https://github.com/ruanbekker/loki-alerts-docker)
+All the code for this demonstration will be available in my github repository: **[github.com/ruanbekker/loki-alerts-docker](https://github.com/ruanbekker/loki-alerts-docker)**
 
-The docker-compose will have a container of grafana, alertmanager, loki, nginx and a http-client.
+The docker-compose will have a container of **grafana**, **alertmanager**, **loki**, **nginx** and a **http-client**.
 
 The http-client is curl in a while loop that will just make a bunch of http requests against the nginx container, which will be logging to loki.
 
@@ -217,6 +219,6 @@ Pretty epic stuff right? I really love how cost effective Loki is as logging use
 
 ## Thanks
 
-I hope you found this useful, feel free to reach out to me on Twitter [@ruanbekker](https://twitter.com/ruanbekker) or visit me on my website [ruan.dev](https://ruan.dev)
+I hope you found this useful, feel free to reach out to me on Twitter **[@ruanbekker](https://twitter.com/ruanbekker)** or visit me on my website **[ruan.dev](https://ruan.dev)**
 
 

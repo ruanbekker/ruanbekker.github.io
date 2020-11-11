@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-11-11T13:47:41+00:00</updated>
+  <updated>2020-11-11T14:40:41+00:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,311 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Deploy Loki on Multipass]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/11/11/deploy-loki-on-multipass/"/>
+    <updated>2020-11-11T14:19:05+00:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/11/11/deploy-loki-on-multipass</id>
+    <content type="html"><![CDATA[<p><img src="https://sysadmins.co.za/content/images/size/w1600/2020/11/loki-banner-2.png" alt="" /></p>
+
+<p>In this post I will demonstrate how to deploy Grafana Labs&rsquo;s <strong>Loki</strong> on <strong>Multipass</strong> using cloud-init so that you can run your own dev environment and run a couple of queries to get you started.</p>
+
+<h2>About</h2>
+
+<p>If you haven&rsquo;t heard of <a href="https://multipass.run/">Multipass</a>, it allows you to run Ubuntu VMs on your Mac or Windows workstation.</p>
+
+<p>If you haven&rsquo;t heard of <a href="https://grafana.com/oss/loki/">Loki</a>, as described by Grafana Labs: <em>&ldquo;Loki is a horizontally-scalable, highly-available, multi-tenant log aggregation system inspired by Prometheus.&rdquo;</em></p>
+
+<h2>Install Multipass</h2>
+
+<p>Head over to <a href="https://multipass.run/">multipass.run</a> to get the installer for your operating system, and if you are curious about Multipass, I wrote a beginners guide on Multipass which can be <strong><a href="https://sysadmins.co.za/getting-started-with-multipass-vms/">found here</a></strong></p>
+
+<h2>Cloud Init for Loki</h2>
+
+<p>We will be making use of <strong><a href="https://cloudinit.readthedocs.io/en/latest/">cloud-init</a></strong> to bootstrap <strong><a href="https://github.com/grafana/loki/releases/tag/v2.0.0">Loki v2.0.0</a></strong> to our multipass instance.</p>
+
+<p>V2.0.0 is the current release of the time of writing, so depending on the time when you read this, have a look at the <a href="https://github.com/grafana/loki/releases">Loki Releases</a> page for the latest version and adjust the cloud-init.yml according to the version if it differs from the one I&rsquo;m mentioning.</p>
+
+<p>(Optional) If you want to use SSH to your Multipass VM, you can use your existing SSH key or generate a new one, if you want to create a new key, you can <a href="https://sysadmins.co.za/getting-started-with-multipass-vms/">follow this post</a></p>
+
+<p>Copy your public key, in my case <code>~/.ssh/id_rsa.pub</code> and paste it under the ssh <code>authorized_keys</code> section.</p>
+
+<p>Our <code>cloud-init.yml</code> has a couple of sections, but to break it down it will do the following:</p>
+
+<ul>
+<li>We provide it our public ssh key so that we can ssh with our private key</li>
+<li>Updates the index repository</li>
+<li>Installs the packages, unzip and wget</li>
+<li>Creates the loki systemd unit file and places it under /etc/systemd/system/</li>
+<li>When the vm boots it will create the user loki and creates the loki etc directory</li>
+<li>Once that completes, we are downloading the loki, logcli and promtail binaries from github</li>
+</ul>
+
+
+<pre><code class="yaml">#cloud-config
+ssh_authorized_keys:
+  - ssh-rsa AAAA...Ha9 your-comment
+
+package_update: true
+
+packages:
+ - unzip
+ - wget
+
+write_files:
+  - content: |-
+      [Unit]
+      Description=Loki
+      User=loki
+      Group=loki
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      Type=simple
+      Restart=on-failure
+      ExecStart=/usr/local/bin/loki -config.file /etc/loki/loki-local-config.yaml
+      [Install]
+      WantedBy=multi-user.target
+
+    owner: root:root
+    path: /etc/systemd/system/loki.service
+    permissions: '0644'
+
+bootcmd:
+  - useradd --no-create-home --shell /bin/false loki
+  - mkdir /etc/loki
+  - chown -R loki:loki /etc/loki
+
+runcmd:
+ - for app in loki logcli promtail; do wget "https://github.com/grafana/loki/releases/download/v2.0.0/${app}-linux-amd64.zip"; done
+ - for app in loki logcli promtail; do unzip "${app}-linux-amd64.zip"; done
+ - for app in loki logcli promtail; do mv "${app}-linux-amd64" /usr/local/bin/${app}; done
+ - for app in loki logcli promtail; do rm -f "${app}-linux-amd64.zip"; done
+ - wget https://raw.githubusercontent.com/grafana/loki/v2.0.0/cmd/loki/loki-local-config.yaml
+ - mv ./loki-local-config.yaml /etc/loki/loki-local-config.yaml
+ - chown loki:loki /etc/loki/loki-local-config.yaml
+ - systemctl daemon-reload
+ - systemctl start loki
+ - sleep 5
+ - echo "this is a test" | promtail --stdin --client.url http://localhost:3100/loki/api/v1/push --client.external-labels=app=cli -server.disable
+</code></pre>
+
+<p>You will notice that the VM will have <code>loki</code>, <code>logcli</code> and <code>promtail</code> available on it, so you will have an environment to use all of them together.</p>
+
+<p>As you can see once we start loki, we are piping <code>this is a test</code> to Loki using Promtail, so that we can verify that the data is visible in Loki. That step is not required, but just added it to this demo.</p>
+
+<h2>Deploy Loki on Multipass</h2>
+
+<p>We will provision a Multipass VM using the Ubuntu Focal distribution and spec our VM with 1 CPU, 512MB of Memory and 1GB of disk and then bootstrap our installation of Loki using cloud-init:</p>
+
+<pre><code class="bash">$ multipass launch focal \
+  --name loki \
+  --cpus 1 \
+  --mem 512m \
+  --disk 1G \
+  --cloud-init cloud-init.yml
+
+Creating: loki
+Waiting for initialization to complete 
+Launched: loki
+</code></pre>
+
+<p>We can validate if our Multipass VM is running:</p>
+
+<pre><code class="bash">$ multipass list
+Name                    State             IPv4             Image
+loki                    Running           192.168.64.19    Ubuntu 20.04 LTS
+</code></pre>
+
+<h2>Test Loki inside the VM</h2>
+
+<p>First we will exec into the VM (or SSH), then we will test out Loki inside the VM since we already have logcli available:</p>
+
+<pre><code class="bash">$ multipass exec loki -- bash
+To run a command as administrator (user "root"), use "sudo &lt;command&gt;".
+See "man sudo_root" for details.
+
+ubuntu@loki:~$
+</code></pre>
+
+<p>Remembered in our cloud-init, we instructed this command to run:</p>
+
+<pre><code class="bash">echo "this is a test" | promtail --stdin --client.url http://localhost:3100/loki/api/v1/push --client.external-labels=app=cli -server.disable
+</code></pre>
+
+<p>So if we use logcli, we can inspect our visible labels:</p>
+
+<pre><code>$ logcli --quiet labels
+__name__
+app
+hostname
+job
+</code></pre>
+
+<p>And as we expect, we will see the app label from the <code>--client.external-labels=app=cli</code> argument that we passed. We can also look at the values for a given label:</p>
+
+<pre><code class="bash">$ logcli --quiet labels app
+cli
+</code></pre>
+
+<p>Now let&rsquo;s query our logs using the label selector: <code>{app="cli"}</code>:</p>
+
+<pre><code class="bash">$ logcli --quiet --output raw query '{app="cli"}'
+this is a test
+</code></pre>
+
+<p>If we remove the extra arguments, we will see more verbose output like the following:</p>
+
+<pre><code class="bash">$ logcli query '{app="cli"}'
+
+http://localhost:3100/loki/api/v1/query_range?direction=BACKWARD&amp;end=1605092055756745122&amp;limit=30&amp;query=%7Bapp%3D%22cli%22%7D&amp;start=1605088455756745122
+Common labels: {app="cli", hostname="loki", job="stdin"}
+2020-11-11T12:45:20+02:00 {} this is a test
+http://localhost:3100/loki/api/v1/query_range?direction=BACKWARD&amp;end=1605091520778438972&amp;limit=30&amp;query=%7Bapp%3D%22cli%22%7D&amp;start=1605088455756745122
+Common labels: {app="cli", hostname="loki", job="stdin"}
+</code></pre>
+
+<p>We can pipe some more output to Loki:</p>
+
+<pre><code class="bash">$ echo "this is another test" | promtail --stdin --client.url http://localhost:3100/loki/api/v1/push --client.external-labels=app=cli -server.disable
+</code></pre>
+
+<p>And querying our logs:</p>
+
+<pre><code class="bash">$ logcli --quiet --output raw query '{app="cli"}'
+this is another test
+this is a test
+</code></pre>
+
+<h2>Testing Loki Outside our VM</h2>
+
+<p>Let&rsquo;s exit the VM and test Loki from our local workstation, first you will need to get the logcli for your OS, head over to the <a href="https://github.com/grafana/loki/releases">releases</a> page and get the binary of your choice.</p>
+
+<p>I will be demonstrating using a mac:</p>
+
+<pre><code class="bash">$ wget https://github.com/grafana/loki/releases/download/v2.0.0/logcli-darwin-amd64.zip
+$ unzip logcli-darwin-amd64.zip
+$ sudo mv logcli-darwin-amd64 /usr/local/bin/logcli
+$ rm -f logcli-darwin-amd64.zip
+</code></pre>
+
+<p>Now we need to tell logcli where our Loki server resides, so let&rsquo;s get the IP address of Loki:</p>
+
+<pre><code class="bash">$ multipass info --all --format json | jq -r '.info.loki.ipv4[]'
+192.168.64.19
+</code></pre>
+
+<p>We can either set the Loki host as an environment variable:</p>
+
+<pre><code class="bash">$ export LOKI_ADDR=http://192.168.64.19
+</code></pre>
+
+<p>or you can specify it using the <code>--addr</code> argument:</p>
+
+<pre><code class="bash">$ logcli --addr="http://192.168.64.19:3100"
+</code></pre>
+
+<p>For the sake of simplicity and not having to type the <code>--addr</code> the whole time, I will be setting the Loki address as an environment variable:</p>
+
+<pre><code class="bash">$ export LOKI_ADDR="http://$(multipass info --all --format json | jq -r '.info.loki.ipv4[]'):3100"
+</code></pre>
+
+<p>And when we inspect our labels using logcli, we can see that we are getting our labels from Loki on our Multipass VM:</p>
+
+<pre><code class="bash">$ logcli labels
+http://192.168.64.19:3100/loki/api/v1/labels?end=1605093229877731000&amp;start=1605089629877731000
+__name__
+app
+hostname
+job
+</code></pre>
+
+<h2>Write Logs to Loki using the Loki Docker Driver</h2>
+
+<p>We have used promtail before to pipe logs to Loki and in this example we will be making use of the Loki Docker Logging Plugin to write data to Loki.</p>
+
+<p>If you have docker installed, install the Loki plugin:</p>
+
+<pre><code class="bash">$ docker plugin install \
+  grafana/loki-docker-driver:latest \
+  --alias loki \
+  --grant-all-permissions
+</code></pre>
+
+<p>Now we will use a docker container to echo stdout to the loki docker driver, which will send the output to Loki.</p>
+
+<p>Let&rsquo;s alias a command loki_echo that we will use to send our output to the docker container:</p>
+
+<pre><code class="bash">$ alias 'loki_echo=docker run --rm -it --log-driver loki --log-opt loki-url="http://192.168.64.19:3100/loki/api/v1/push" --log-opt loki-external-labels="app=echo-container" busybox echo'
+</code></pre>
+
+<p>So every time we run <code>loki_echo {string}</code> we will run a docker container from the busybox image and pass the <code>{string}</code> as an argument to the echo command inside the container, which will be sent to the loki log driver and land up in Loki.</p>
+
+<p>Let&rsquo;s push 100 log events to Loki:</p>
+
+<pre><code class="bash">$ count=0
+$ while [ ${count} != 100 ]
+  do 
+    for color in red blue white silver green;
+    do 
+      loki_echo "there are ${RANDOM} items of ${color} available";
+      count=$((count+1))
+    done
+  done
+
+there are 26890 items of green available
+there are 14856 items of red available
+there are 31162 items of blue available
+there are 23993 items of white available
+there are 22310 items of silver available
+there are 10700 items of green available
+there are 14077 items of red available
+there are 20642 items of blue available
+there are 31576 items of white available
+there are 26053 items of silver available
+there are 2973 items of green available
+there are 2203 items of red available
+there are 8557 items of blue available
+...
+</code></pre>
+
+<p>We can verify how many log events we have with:</p>
+
+<pre><code>$ logcli query '{app="echo-container"}' --quiet --limit 200 --output raw | wc -l
+100
+</code></pre>
+
+<p>To see how many logs we have with the line &ldquo;blue&rdquo; in it:</p>
+
+<pre><code class="bash">$ logcli query '{app="echo-container"} |= "blue"' --quiet --limit 200 --output raw | wc -l
+20
+</code></pre>
+
+<p>Let&rsquo;s look for logs with blue or green and limit the results to 5:</p>
+
+<pre><code class="bash">$ logcli query '{app="echo-container"} |~ "items of (blue|green)"' --quiet --limit 5 --output raw
+there are 28985 items of green available
+there are 10289 items of blue available
+there are 12316 items of green available
+there are 23775 items of blue available
+there are 20 items of green available
+</code></pre>
+
+<h2>Teardown</h2>
+
+<p>If you followed along, you can terminate your Multipass VM with:</p>
+
+<pre><code class="bash">$ multipass delete --purge loki
+</code></pre>
+
+<p>You can get the example code in my <strong><a href="https://github.com/ruanbekker/multipassfiles/tree/master/loki">multipassfiles github repository</a></strong></p>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Setup Alerting With Loki]]></title>
@@ -787,51 +1092,6 @@ volumes:
 <h2>Test Caching</h2>
 
 <p>Once your containers are in a running state, open your browsers devloper tools and look at the networking tab, then access your ghost blog on <code>http://localhost:80/</code>, the first time a image is opened you should see the cache shows <code>MISS</code> when you refresh again you should see a <code>HIT</code>, which means that the object is being returned from your cache.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Setting the Correct Service Name in Datadog Logging for Docker Swarm]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/12/11/setting-the-correct-service-name-in-datadog-logging-for-docker-swarm/"/>
-    <updated>2019-12-11T23:35:53+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/12/11/setting-the-correct-service-name-in-datadog-logging-for-docker-swarm</id>
-    <content type="html"><![CDATA[<p>For some reason, when logging to datadog from your applications running on docker swarm, the service names in datadog appears to have the names on the docker image. The application talks to the datadog agent which runs in global mode on swarm.</p>
-
-<p>Setting <code>DATADOG_SERVICE_NAME</code> or <code>DD_SERVICE_NAME</code> as environment variables on the swarm service has zero affect, as they keep showing the service name as the docker image name, as example:</p>
-
-<p><img width="1268" alt="08496333-01C4-4492-807E-FAC40826AFDE" src="https://user-images.githubusercontent.com/567298/70661591-49007080-1c6d-11ea-8230-0dbe086bd168.png"></p>
-
-<p>If we inspect the tags, we can see that the docker image shows as the source and maps through as the docker service name. As you can see the swarm service name is what we want to be the service name (not alpine):</p>
-
-<p><img width="1269" alt="783C6D52-62B2-4F2B-A6D4-28150CC58005" src="https://user-images.githubusercontent.com/567298/70661651-65041200-1c6d-11ea-858b-90034099c319.png"></p>
-
-<p>One way how to fix this is to setup a pipeline processor, head over to Logs -> Configuration:</p>
-
-<p><img width="267" alt="93CEE277-55A6-4DE1-8AE6-A02C64B0ACAD" src="https://user-images.githubusercontent.com/567298/70661767-adbbcb00-1c6d-11ea-8274-ad5da6ddfdd7.png"></p>
-
-<p>Select &ldquo;Pipelines&rdquo; and add a new pipeline, select the filter <code>source:alpine</code> to limit down the results to the alpine image, and name your processor:</p>
-
-<p><img width="763" alt="0BF3D6A6-9646-442D-A494-8DF489C5217F" src="https://user-images.githubusercontent.com/567298/70661837-cdeb8a00-1c6d-11ea-8fb4-2c272fda596f.png"></p>
-
-<p>Next add a new processor and set the type to remapper, select the tag group as &ldquo;swarm_service&rdquo; and set the attribute to service and name the processor:</p>
-
-<p><img width="762" alt="C02092F4-0EEC-4AF9-9E2A-F7A126560CD8" src="https://user-images.githubusercontent.com/567298/70662081-3a668900-1c6e-11ea-9ea9-9f80dfc669f3.png"></p>
-
-<p>Add a new processor:</p>
-
-<p><img width="1151" alt="5C2F7FB9-8948-4588-A283-86E94BC07513" src="https://user-images.githubusercontent.com/567298/70661901-e6f43b00-1c6d-11ea-9dbc-8c4c3a24b51b.png"></p>
-
-<p>Select a service remapper, set the attribute to service and name the processor:</p>
-
-<p><img width="761" alt="852904AE-9395-4B4B-B1F4-54427D88C970" src="https://user-images.githubusercontent.com/567298/70661986-0ab78100-1c6e-11ea-9edc-5fd748d73d0c.png"></p>
-
-<p>Now when you go back to logs, you will find that the service name is being set to the correct service name in datadog:</p>
-
-<p><img width="1159" alt="0F11DDC4-E99C-4A2F-B6AB-7409B4E7546C" src="https://user-images.githubusercontent.com/567298/70662290-95987b80-1c6e-11ea-8d8c-bec4d44cde60.png"></p>
-
-<p>When you inspect one of the logs, you will see that the attribute is being set to the log:</p>
-
-<p><img width="633" alt="4B098970-6345-40B9-9F90-411D8FE6A9E6" src="https://user-images.githubusercontent.com/567298/70662330-a9dc7880-1c6e-11ea-8b48-51900161cf01.png"></p>
 ]]></content>
   </entry>
   

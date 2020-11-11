@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Misleading title?? Perhaps, depends on how you look at it. Amazon Kinesis is a fully managed, cloud-based service for real-time processing of &hellip;">
+  <meta name="description" content="Using OpenFaaS with Amazon DynamoDB You can use your OpenFaaS functions to store and retrieve data to and from a persistent layer that sits outside &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,945 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/07/06/using-openfaas-with-amazon-dynamodb/">Using OpenFaas With Amazon DynamoDB</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-07-06T19:11:23-04:00'><span class='date'><span class='date-month'>Jul</span> <span class='date-day'>6</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>7:11 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img width="1105" alt="image" src="https://user-images.githubusercontent.com/567298/60761941-f4205480-a053-11e9-9ad5-9e45948c9833.png"></p>
+
+<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /> <img src="https://img.shields.io/twitter/follow/ruanbekker.svg?style=social" alt="Twitter Follow" /></p>
+
+<h1>Using OpenFaaS with Amazon DynamoDB</h1>
+
+<p>You can use your OpenFaaS functions to store and retrieve data to and from a persistent layer that sits outside the OpenFaaS framework. The database that we will use in this tutorial is Amazon&rsquo;s DynamoDB.</p>
+
+<p>If you are not familiar with the service, Amazon&rsquo;s DynamoDB is a fully managed NoSQL database service that provides fast and predictable performance with seamless scalability.</p>
+
+<p>At the end of this tutorial you will be able to invoke your functions to read and write items to DynamoDB with a dedicated IAM User that is only allowed to access DynamoDB, and secrets managed by your OpenFaaS framework.</p>
+
+<h2>What we will be doing in this Tutorial</h2>
+
+<p>In this tutorial we will cover a couple of things, and a summary on the to do list is:</p>
+
+<ul>
+<li>Create a OpenFaaS IAM User, DynamoDB IAM Policy, associate the Policy to the User using the AWS CLI</li>
+<li>Create a AWS Access Key, and save the Access Key and Secret key to file</li>
+<li>Create OpenFaaS Secrets of the Access Key and Secret Key, remove the files from disk</li>
+<li>Create 3 OpenFaaS Functions: write, lookup and get</li>
+<li>Invoke the functions, read and write from DynamoDB</li>
+</ul>
+
+
+<p>Our 3 functions will do very basic operations for this demonstration, but I believe this is a good starting point.</p>
+
+<p>All the examples of this blog post is available in <a href="https://github.com/ruanbekker/blog-assets/tree/master/openfaas-dynamodb">this github repository</a></p>
+
+<h2>The Use-Case Scenario</h2>
+
+<p>In this scenario we want to store user information into DynamoDB, we will use a hash that we will calculate using the users ID Number + Lastname. So when we have thousands or millions of items, we dont need to search through the entire table, but since we can re-calculate the sha hash, we can do a single GetItem operation to find the entry about the user in question.</p>
+
+<ul>
+<li>Lookup Function:</li>
+</ul>
+
+
+<p>The lookup function will calculate the hash by passing the users ID Number and Lastname, this will return a hash which will be teh primary key attribute of our table design. This hash value is required to do a GetItem on the user in question.</p>
+
+<ul>
+<li>Get Function:</li>
+</ul>
+
+
+<p>The Get function will interface with DynamoDB, it reads the AWS access key and secret key from the secrets path to authenticate with AWS and utilizes environment variables for the region and table name. This will do a GetItem on the DynamoDB Table and retrieve the Item. If the item is not found, it will return it in the response.</p>
+
+<ul>
+<li>Write Function:</li>
+</ul>
+
+
+<p>The write function will also interface with DynamoDB, the ID, Name and Payload will be included in the request body on our POST Request.</p>
+
+<h2>Note on Secrets and Environment Variables</h2>
+
+<p>I am treating my environment variables and secrets different from each other. The secrets such as my AWS access keys are stored on the cluster and the application reads them and stores the values in memory.</p>
+
+<p>The environment variables such as non-secret information, such as my dynamodb table name and aws region, is defined in my environment variables.</p>
+
+<p>This <a href="http://movingfast.io/articles/environment-variables-considered-harmful/">post</a> and this <a href="https://diogomonica.com/2017/03/27/why-you-shouldnt-use-env-variables-for-secret-data/">post</a> goes a bit more into detail on why you should not use environment variables for secret data, which I found from <a href="https://github.com/openfaas/faas-netes/issues/153#issuecomment-370924478">this link</a></p>
+
+<p>Enough info, let&rsquo;s get to the fun stuff</p>
+
+<h2>Pre-Requirements:</h2>
+
+<p>You need a AWS Account (or you can use dynamodb-local), OpenFaaS and faas-cli. Documentation available below:
+- <a href="https://docs.openfaas.com/contributing/get-started/">https://docs.openfaas.com/contributing/get-started/</a></p>
+
+<h2>Provision a DynamoDB Table</h2>
+
+<p>I have a admin IAM account configured on my default profile, using the aws-cli tools generate the cli-skeleton that is required to provision a dynamodb table:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws dynamodb create-table --generate-cli-skeleton &gt; ddb.json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>My table name will be <code>lookup-table</code> with the primary key <code>hash_value</code> and provisoned my throughput to 1 Read and Write Capacity Unit. Which will enable us 4KB/s for reads and 1KB/s for writes.</p>
+
+<p>For demonstration purposes, I am sharing my altered <code>ddb.json</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
+</span><span class='line'>    <span class="nt">&quot;AttributeDefinitions&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="nt">&quot;AttributeName&quot;</span><span class="p">:</span> <span class="s2">&quot;hash_value&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;AttributeType&quot;</span><span class="p">:</span> <span class="s2">&quot;S&quot;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">],</span>
+</span><span class='line'>    <span class="nt">&quot;TableName&quot;</span><span class="p">:</span> <span class="s2">&quot;lookup_table&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="nt">&quot;KeySchema&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="nt">&quot;AttributeName&quot;</span><span class="p">:</span> <span class="s2">&quot;hash_value&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;KeyType&quot;</span><span class="p">:</span> <span class="s2">&quot;HASH&quot;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">],</span>
+</span><span class='line'>    <span class="nt">&quot;ProvisionedThroughput&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="nt">&quot;ReadCapacityUnits&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>        <span class="nt">&quot;WriteCapacityUnits&quot;</span><span class="p">:</span> <span class="mi">1</span>
+</span><span class='line'>    <span class="p">},</span>
+</span><span class='line'>    <span class="nt">&quot;Tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="nt">&quot;Key&quot;</span><span class="p">:</span> <span class="s2">&quot;Name&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;Value&quot;</span><span class="p">:</span> <span class="s2">&quot;lookup-table&quot;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">]</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we have the file saved, create the dynamodb table:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws dynamodb create-table --cli-input-json file://ddb.json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the tables:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws dynamodb list-tables
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;TableNames&quot;</span>: <span class="o">[</span>
+</span><span class='line'>        <span class="s2">&quot;lookup_table&quot;</span>
+</span><span class='line'>    <span class="o">]</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check if the table is provisioned:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws dynamodb describe-table --table-name lookup_table <span class="p">|</span> jq -r <span class="s1">&#39;.Table.TableStatus&#39;</span>
+</span><span class='line'>ACTIVE
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Getting the ARN string, as we will need it when we create our IAM Policy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws dynamodb describe-table --table-name lookup_table <span class="p">|</span> jq -r <span class="s1">&#39;.Table.TableArn&#39;</span>
+</span><span class='line'>arn:aws:dynamodb:eu-west-1:x-x:table/lookup_table
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the OpenFaaS IAM User</h2>
+
+<p>Create the IAM Policy document which defines the access that we want to grant. You can see that we are only allowing Put and GetItem on the provisioned DynamoDB resource:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat dynamodb-iam-policy.json
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;Version&quot;</span>: <span class="s2">&quot;2012-10-17&quot;</span>,
+</span><span class='line'>    <span class="s2">&quot;Statement&quot;</span>: <span class="o">[</span>
+</span><span class='line'>        <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;Sid&quot;</span>: <span class="s2">&quot;OpenFaasFunctionAceessForDynamoDB&quot;</span>,
+</span><span class='line'>            <span class="s2">&quot;Effect&quot;</span>: <span class="s2">&quot;Allow&quot;</span>,
+</span><span class='line'>            <span class="s2">&quot;Action&quot;</span>: <span class="o">[</span>
+</span><span class='line'>                <span class="s2">&quot;dynamodb:PutItem&quot;</span>,
+</span><span class='line'>                <span class="s2">&quot;dynamodb:GetItem&quot;</span>
+</span><span class='line'>            <span class="o">]</span>,
+</span><span class='line'>            <span class="s2">&quot;Resource&quot;</span>: <span class="s2">&quot;arn:aws:dynamodb:eu-west-1:x-accountid-x:table/lookup_table&quot;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">]</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the IAM Policy and provide the policy document for the given policy name:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws iam create-policy --policy-name openfaas-dynamodb-access --policy-document file://dynamodb-iam-policy.json
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;Policy&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;PolicyName&quot;</span>: <span class="s2">&quot;openfaas-dynamodb-access&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;PolicyId&quot;</span>: <span class="s2">&quot;ANPATPRT2G4SL4K63SUWQ&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Arn&quot;</span>: <span class="s2">&quot;arn:aws:iam::x-accountid-x:policy/openfaas-dynamodb-access&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Path&quot;</span>: <span class="s2">&quot;/&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;DefaultVersionId&quot;</span>: <span class="s2">&quot;v1&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;AttachmentCount&quot;</span>: 0,
+</span><span class='line'>        <span class="s2">&quot;PermissionsBoundaryUsageCount&quot;</span>: 0,
+</span><span class='line'>        <span class="s2">&quot;IsAttachable&quot;</span>: <span class="nb">true</span>,
+</span><span class='line'>        <span class="s2">&quot;CreateDate&quot;</span>: <span class="s2">&quot;2019-07-06T11:54:26Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;UpdateDate&quot;</span>: <span class="s2">&quot;2019-07-06T11:54:26Z&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the IAM User that will be used to authenticate requests against DynamoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws iam create-user --user-name openfaas-user
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;User&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;Path&quot;</span>: <span class="s2">&quot;/&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;UserName&quot;</span>: <span class="s2">&quot;openfaas-user&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;UserId&quot;</span>: <span class="s2">&quot;AIDATPRT2G4SIRYTNHLZK&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Arn&quot;</span>: <span class="s2">&quot;arn:aws:iam::x-accountid-x:user/openfaas-user&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;CreateDate&quot;</span>: <span class="s2">&quot;2019-07-06T11:56:53Z&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the Access Key, which will be our API keys for our application to authenticate requests. Save the AccessKeyId and SecretAccessKey temporarily to 2 seperate files, which we will delete after we create our secrets to our cluster:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws iam create-access-key --user-name openfaas-user
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;AccessKey&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;UserName&quot;</span>: <span class="s2">&quot;openfaas-user&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;AccessKeyId&quot;</span>: <span class="s2">&quot;AKIAT..redacted.x&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Status&quot;</span>: <span class="s2">&quot;Active&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;SecretAccessKey&quot;</span>: <span class="s2">&quot;b..redacted.x&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;CreateDate&quot;</span>: <span class="s2">&quot;2019-07-06T11:57:37Z&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Associate the IAM Policy to the IAM User:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws iam attach-user-policy --user-name openfaas-user --policy-arn arn:aws:iam::x-x:policy/openfaas-dynamodb-access
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To test if the access keys work, save them to a new profile using the aws-cli tools:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws configure --profile openfaas
+</span><span class='line'>AWS Access Key ID <span class="o">[</span>None<span class="o">]</span>: AKIAT..
+</span><span class='line'>AWS Secret Access Key <span class="o">[</span>None<span class="o">]</span>: b..x
+</span><span class='line'>Default region name <span class="o">[</span>None<span class="o">]</span>: eu-west-1
+</span><span class='line'>Default output format <span class="o">[</span>None<span class="o">]</span>: json
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Write an Item to DynamoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile openfaas dynamodb put-item <span class="se">\</span>
+</span><span class='line'>--table-name lookup_table <span class="se">\</span>
+</span><span class='line'>--item <span class="s1">&#39;{&quot;hash_value&quot;: {&quot;S&quot;: &quot;aGVsbG8td29ybGQK&quot;}, &quot;message&quot;: {&quot;S&quot;: &quot;hello-world&quot;}}&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the Item from DynamoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile openfaas dynamodb get-item <span class="se">\</span>
+</span><span class='line'>--table-name lookup_table <span class="se">\</span>
+</span><span class='line'>--key <span class="s1">&#39;{&quot;hash_value&quot;: {&quot;S&quot;: &quot;aGVsbG8td29ybGQK&quot;}}&#39;</span>
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;Item&quot;</span>: <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;hash_value&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;S&quot;</span>: <span class="s2">&quot;aGVsbG8td29ybGQK&quot;</span>
+</span><span class='line'>        <span class="o">}</span>,
+</span><span class='line'>        <span class="s2">&quot;message&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;S&quot;</span>: <span class="s2">&quot;hello-world&quot;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can now confirm our permissions are in place to continue.</p>
+
+<h3>Create OpenFaaS Secrets</h3>
+
+<p>The AccessKeyId and SecretKey has been saved to disk, and we will use those files to create secrets from:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli secret create openfaas-aws-access-key --from-file<span class="o">=</span>openfaas_aws_access_key.txt
+</span><span class='line'>Creating secret: openfaas-aws-access-key
+</span><span class='line'>Created: <span class="m">201</span> Created
+</span></code></pre></td></tr></table></div></figure>
+
+
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli secret create openfaas-aws-secret-key --from-file<span class="o">=</span>openfaas_aws_secret_key.txt
+</span><span class='line'>Creating secret: openfaas-aws-secret-key
+</span><span class='line'>Created: <span class="m">201</span> Created
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that the secrets are securely stored in our cluster, we can delete the temporary files:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>rm -f ./openfaas_aws_*_key.txt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Login to OpenFaaS</h2>
+
+<p>Login to OpenFaasS using faas-cli:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli login <span class="se">\</span>
+</span><span class='line'>--gateway https://openfaas.domain.com <span class="se">\</span>
+</span><span class='line'>--username <span class="k">${</span><span class="nv">OPENFAAS_USER</span><span class="k">}</span> <span class="se">\</span>
+</span><span class='line'>--password <span class="k">${</span><span class="nv">OPENFAAS_PASSWORD</span><span class="k">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Export the OPENFAAS_URL:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">OPENFAAS_URL</span><span class="o">=</span>https://openfaas.domain.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>One Stack File for All 3 Functions:</h2>
+
+<p>We will create our first function to generate the yaml definition, then we will rename our generated filename to <code>stack.yml</code> then the next 2 functions, we will use the append flag to append the functions yaml to our <code>stack.yml</code> file, so that we can simply use <code>faas-cli up</code></p>
+
+<h2>Create the Lookup Function:</h2>
+
+<p>Create a Python3 Function, and prefix it with your dockerhub user:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli new <span class="se">\</span>
+</span><span class='line'>--lang python3 fn-dynamodb-lookup <span class="se">\</span>
+</span><span class='line'>--prefix<span class="o">=</span>ruanbekker <span class="se">\</span>
+</span><span class='line'>--gateway https://openfaas.domain.com
+</span><span class='line'>
+</span><span class='line'>Function created in folder: fn-foo
+</span><span class='line'>Stack file written: fn-dynamodb-lookup.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As we will be using one stack file, rename the generated stack file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mv fn-dynamodb-lookup.yml stack.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Open the stack file and set the environment variables:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat stack.yml
+</span><span class='line'>provider:
+</span><span class='line'>  name: openfaas
+</span><span class='line'>  gateway: https://openfaas.domain.com
+</span><span class='line'>functions:
+</span><span class='line'>  fn-dynamodb-lookup:
+</span><span class='line'>    lang: python3
+</span><span class='line'>    handler: ./fn-dynamodb-lookup
+</span><span class='line'>    image: ruanbekker/fn-dynamodb-lookup:latest
+</span><span class='line'>    environment:
+</span><span class='line'>      dynamodb_region: eu-west-1
+</span><span class='line'>      dynamodb_table: lookup_table
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The python code for our function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat fn-dynamodb-lookup/handler.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">hashlib</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">calc_sha</span><span class="p">(</span><span class="n">id_number</span><span class="p">,</span> <span class="n">lastname</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">string</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s">&quot;id&quot;</span><span class="p">:</span> <span class="n">id_number</span><span class="p">,</span> <span class="s">&quot;lastname&quot;</span><span class="p">:</span> <span class="n">lastname</span><span class="p">},</span> <span class="n">sort_keys</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">hash_value</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">(</span><span class="n">string</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&quot;utf-8&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">hash_value</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">event</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">hash_value</span> <span class="o">=</span> <span class="n">calc_sha</span><span class="p">(</span><span class="n">event</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">],</span> <span class="n">event</span><span class="p">[</span><span class="s">&#39;lastname&#39;</span><span class="p">])</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">hash_value</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Write Function:</h2>
+
+<p>Create a Python3 Function, and prefix it with your dockerhub user, and use the append flag to update our stack file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli new <span class="se">\</span>
+</span><span class='line'>--lang python3 fn-dynamodb-write <span class="se">\</span>
+</span><span class='line'>--prefix<span class="o">=</span>ruanbekker <span class="se">\</span>
+</span><span class='line'>--gateway https://openfaas.domain.com
+</span><span class='line'>--append stack.yml
+</span><span class='line'>
+</span><span class='line'>Function created in folder: fn-dynamodb-write
+</span><span class='line'>Stack file updated: stack.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Open the stack file and set the environment variables and include the secrets that was created:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat stack.yml
+</span><span class='line'>provider:
+</span><span class='line'>  name: openfaas
+</span><span class='line'>  gateway: https://openfaas.domain.com
+</span><span class='line'>functions:
+</span><span class='line'>  fn-dynamodb-lookup:
+</span><span class='line'>  <span class="c"># ...</span>
+</span><span class='line'>  fn-dynamodb-write:
+</span><span class='line'>    lang: python3
+</span><span class='line'>    handler: ./fn-dynamodb-write
+</span><span class='line'>    image: ruanbekker/fn-dynamodb-write:latest
+</span><span class='line'>    environment:
+</span><span class='line'>      dynamodb_region: eu-west-1
+</span><span class='line'>      dynamodb_table: lookup_table
+</span><span class='line'>    secrets:
+</span><span class='line'>      - openfaas-aws-access-key
+</span><span class='line'>      - openfaas-aws-secret-key
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our function relies on a external dependency which we need to install to interact with aws:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat fn-dynamodb-write/requirements.txt
+</span><span class='line'>boto3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our python code for our function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat fn-dynamodb-write/handler.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">os</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">hashlib</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">datetime</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">aws_key</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;/var/openfaas/secrets/openfaas-aws-access-key&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span class='line'><span class="n">aws_secret</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;/var/openfaas/secrets/openfaas-aws-secret-key&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span class='line'><span class="n">dynamodb_region</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;dynamodb_region&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">dynamodb_table</span>  <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;dynamodb_table&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="n">dynamodb_region</span><span class="p">)</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">,</span> <span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_key</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret</span><span class="p">)</span>
+</span><span class='line'><span class="n">table</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="n">dynamodb_table</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">calc_sha</span><span class="p">(</span><span class="n">id_number</span><span class="p">,</span> <span class="n">lastname</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">string</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s">&quot;id&quot;</span><span class="p">:</span> <span class="n">id_number</span><span class="p">,</span> <span class="s">&quot;lastname&quot;</span><span class="p">:</span> <span class="n">lastname</span><span class="p">},</span> <span class="n">sort_keys</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">hash_value</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">(</span><span class="n">string</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&quot;utf-8&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">hash_value</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">create_timestamp</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;%Y-%m-</span><span class="si">%d</span><span class="s">T%H:%M&quot;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">response</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">event</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">unique_id</span> <span class="o">=</span> <span class="n">calc_sha</span><span class="p">(</span><span class="n">event</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">],</span> <span class="n">event</span><span class="p">[</span><span class="s">&#39;lastname&#39;</span><span class="p">])</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">put_item</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">Item</span><span class="o">=</span><span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;hash_value&#39;</span><span class="p">:</span> <span class="n">unique_id</span><span class="p">,</span>
+</span><span class='line'>            <span class="s">&#39;timestamp&#39;</span><span class="p">:</span> <span class="n">create_timestamp</span><span class="p">(),</span>
+</span><span class='line'>            <span class="s">&#39;payload&#39;</span><span class="p">:</span> <span class="n">event</span><span class="p">[</span><span class="s">&#39;payload&#39;</span><span class="p">]</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'>    <span class="k">return</span> <span class="n">response</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create the Get Function:</h2>
+
+<p>Create a Python3 Function, and prefix it with your dockerhub user, and use the append flag to specify the stack file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli new <span class="se">\</span>
+</span><span class='line'>--lang python3 fn-dynamodb-get <span class="se">\</span>
+</span><span class='line'>--prefix<span class="o">=</span>ruanbekker <span class="se">\</span>
+</span><span class='line'>--gateway https://openfaas.domain.com
+</span><span class='line'>--append stack.yml
+</span><span class='line'>
+</span><span class='line'>Function created in folder: fn-dynamodb-get
+</span><span class='line'>Stack file updated: stack.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Open the stack file and set the environment variables and include the secrets that was created:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat stack.yml
+</span><span class='line'>provider:
+</span><span class='line'>  name: openfaas
+</span><span class='line'>  gateway: https://openfaas.domain.com
+</span><span class='line'>functions:
+</span><span class='line'>  fn-dynamodb-lookup:
+</span><span class='line'>  <span class="c"># .. </span>
+</span><span class='line'>  fn-dynamodb-write:
+</span><span class='line'>  <span class="c"># ..</span>
+</span><span class='line'>  fn-dynamodb-get:
+</span><span class='line'>    lang: python3
+</span><span class='line'>    handler: ./fn-dynamodb-get
+</span><span class='line'>    image: ruanbekker/fn-dynamodb-get:latest
+</span><span class='line'>    environment:
+</span><span class='line'>      dynamodb_region: eu-west-1
+</span><span class='line'>      dynamodb_table: lookup_table
+</span><span class='line'>    secrets:
+</span><span class='line'>      - openfaas-aws-access-key
+</span><span class='line'>      - openfaas-aws-secret-key
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Include the external dependency for aws:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat fn-dynamodb-get/requirements.txt
+</span><span class='line'>boto3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our python code for our function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat fn-dynamodb-get/handler.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">os</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">aws_key</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;/var/openfaas/secrets/openfaas-aws-access-key&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span class='line'><span class="n">aws_secret</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;/var/openfaas/secrets/openfaas-aws-secret-key&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span class='line'><span class="n">dynamodb_region</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;dynamodb_region&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">dynamodb_table</span>  <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;dynamodb_table&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="n">dynamodb_region</span><span class="p">)</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">,</span> <span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_key</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret</span><span class="p">)</span>
+</span><span class='line'><span class="n">table</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="n">dynamodb_table</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">event</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">get_item</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">Key</span><span class="o">=</span><span class="p">{</span>
+</span><span class='line'>            <span class="s">&#39;hash_value&#39;</span><span class="p">:</span> <span class="n">event</span><span class="p">[</span><span class="s">&#39;hash_value&#39;</span><span class="p">]</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">if</span> <span class="s">&#39;Item&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">response</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">item_data</span> <span class="o">=</span> <span class="s">&#39;Item not found&#39;</span>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">item_data</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Item&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">return</span> <span class="n">item_data</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Build, Push and Deploy:</h2>
+
+<p>It&rsquo;s time to deploy our functions and since we have all our stack info in one file, we can use <code>faas-cli up</code> which will build, push and deploy our functions.</p>
+
+<p>By default it expects the filename to be <code>stack.yml</code> therefore we don&rsquo;t need to specify the filename, but if you had a different filename, you can overwrite the default behaviour with <code>-f</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>faas-cli up
+</span><span class='line'>
+</span><span class='line'>Deploying: fn-dynamodb-lookup.
+</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
+</span><span class='line'>URL: https://openfaas.domain.com/function/fn-dynamodb-lookup
+</span><span class='line'>
+</span><span class='line'>Deploying: fn-dynamodb-write.
+</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
+</span><span class='line'>URL: https://openfaas.domain.com/function/fn-dynamodb-write
+</span><span class='line'>
+</span><span class='line'>Deploying: fn-dynamodb-get.
+</span><span class='line'>Deployed. <span class="m">202</span> Accepted.
+</span><span class='line'>URL: https://openfaas.domain.com/function/fn-dynamodb-get
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Time for our Functions to interact with DynamoDB:</h2>
+
+<p>Write an Item to DynamoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST https://openfaas.domain.com/function/fn-dynamodb-write -d <span class="s1">&#39;{&quot;id&quot;: 8700000000001, &quot;lastname&quot;: &quot;smith&quot;, &quot;payload&quot;: {&quot;name&quot;: &quot;james&quot;, &quot;role&quot;: &quot;reader&quot;}}&#39;</span>
+</span><span class='line'><span class="o">{</span><span class="s1">&#39;ResponseMetadata&#39;</span>: <span class="o">{</span><span class="s1">&#39;RequestId&#39;</span>: <span class="s1">&#39;CNHEFHMSL4KGRDE0HRVQ69D5H7VV4KQNSO5AEMVJF66Q9ASUAAJG&#39;</span>, <span class="s1">&#39;HTTPStatusCode&#39;</span>: 200, <span class="s1">&#39;HTTPHeaders&#39;</span>: <span class="o">{</span><span class="s1">&#39;server&#39;</span>: <span class="s1">&#39;Server&#39;</span>, <span class="s1">&#39;date&#39;</span>: <span class="s1">&#39;Sat, 06 Jul 2019 20:47:00 GMT&#39;</span>, <span class="s1">&#39;content-type&#39;</span>: <span class="s1">&#39;application/x-amz-json-1.0&#39;</span>, <span class="s1">&#39;content-length&#39;</span>: <span class="s1">&#39;2&#39;</span>, <span class="s1">&#39;connection&#39;</span>: <span class="s1">&#39;keep-alive&#39;</span>, <span class="s1">&#39;x-amzn-requestid&#39;</span>: <span class="s1">&#39;CNHEFHMSL4KGRDE0HRVQ69D5H7VV4KQNSO5AEMVJF66Q9ASUAAJG&#39;</span>, <span class="s1">&#39;x-amz-crc32&#39;</span>: <span class="s1">&#39;2745614147&#39;</span><span class="o">}</span>, <span class="s1">&#39;RetryAttempts&#39;</span>: 0<span class="o">}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Write another Item to DynamoDB:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST https://openfaas.doamin.com/function/fn-dynamodb-write -d <span class="s1">&#39;{&quot;id&quot;: 8700000000002, &quot;lastname&quot;: &quot;adams&quot;, &quot;payload&quot;: {&quot;name&quot;: &quot;samantha&quot;, &quot;role&quot;: &quot;admin&quot;}}&#39;</span>
+</span><span class='line'><span class="o">{</span><span class="s1">&#39;ResponseMetadata&#39;</span>: <span class="o">{</span><span class="s1">&#39;RequestId&#39;</span>: <span class="s1">&#39;KRQL838BVGC9LIUSCOUB7MOEQ7VV4KQNSO5AEMVJF66Q9ASUAAJG&#39;</span>, <span class="s1">&#39;HTTPStatusCode&#39;</span>: 200, <span class="s1">&#39;HTTPHeaders&#39;</span>: <span class="o">{</span><span class="s1">&#39;server&#39;</span>: <span class="s1">&#39;Server&#39;</span>, <span class="s1">&#39;date&#39;</span>: <span class="s1">&#39;Sat, 06 Jul 2019 20:48:09 GMT&#39;</span>, <span class="s1">&#39;content-type&#39;</span>: <span class="s1">&#39;application/x-amz-json-1.0&#39;</span>, <span class="s1">&#39;content-length&#39;</span>: <span class="s1">&#39;2&#39;</span>, <span class="s1">&#39;connection&#39;</span>: <span class="s1">&#39;keep-alive&#39;</span>, <span class="s1">&#39;x-amzn-requestid&#39;</span>: <span class="s1">&#39;KRQL838BVGC9LIUSCOUB7MOEQ7VV4KQNSO5AEMVJF66Q9ASUAAJG&#39;</span>, <span class="s1">&#39;x-amz-crc32&#39;</span>: <span class="s1">&#39;2745614147&#39;</span><span class="o">}</span>, <span class="s1">&#39;RetryAttempts&#39;</span>: 0<span class="o">}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now recalculate the hash by passing the ID Number and Lastname to get the hash value for the primary key:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST https://openfaas.domain.com/function/fn-dynamodb-lookup -d <span class="s1">&#39;{&quot;id&quot;: 8700000000002, &quot;lastname&quot;: &quot;adams&quot;}&#39;</span>
+</span><span class='line'>bd0a248aff2b50b288ba504bd7142ef11b164901
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we have the hash value, do a GetItem by using the hash value in the request body:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST https://openfaas.domain.com/function/fn-dynamodb-get -d <span class="s1">&#39;{&quot;hash_value&quot;: &quot;bd0a248aff2b50b288ba504bd7142ef11b164901&quot;}&#39;</span>
+</span><span class='line'><span class="o">{</span><span class="s1">&#39;payload&#39;</span>: <span class="o">{</span><span class="s1">&#39;name&#39;</span>: <span class="s1">&#39;samantha&#39;</span>, <span class="s1">&#39;role&#39;</span>: <span class="s1">&#39;admin&#39;</span><span class="o">}</span>, <span class="s1">&#39;hash_value&#39;</span>: <span class="s1">&#39;bd0a248aff2b50b288ba504bd7142ef11b164901&#39;</span>, <span class="s1">&#39;timestamp&#39;</span>: <span class="s1">&#39;2019-07-06T20:48&#39;</span><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note that the lookup function calculates a hash based on the input that you provide it, for example calculating a hash with userdata that does not exist in our table:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST https://openfaas.domain.com/function/fn-dynamodb-lookup -d <span class="s1">&#39;{&quot;id&quot;: 8700000000003, &quot;lastname&quot;: &quot;williams&quot;}&#39;</span>
+</span><span class='line'>c68dc272873140f4ae93bb3a3317772a6bdd9aa1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Using that hash value in our request body to read from dynamodb, will show us that the item has not been found:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -XPOST https://openfaas.domain.com/function/fn-dynamodb-get -d <span class="s1">&#39;{&quot;hash_value&quot;: &quot;c68dc272873140f4ae93bb3a3317772a6bdd9aa1&quot;}&#39;</span>
+</span><span class='line'>Item not found
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You might want to change this behavior but this is just for the demonstration of this post.</p>
+
+<p>When you head over to DynamoDB&rsquo;s console you will see this in your table:</p>
+
+<p><img width="873" alt="image" src="https://user-images.githubusercontent.com/567298/60761025-9e8e7c80-a040-11e9-83a3-ad5b474a28ff.png"></p>
+
+<h2>Thanks</h2>
+
+<p>This was a basic example using OpenFaaS with Amazon DynamoDB with Python and secrets managed with OpenFaas. I really like the way OpenFaaS let&rsquo;s you work with secrets, it works great and don&rsquo;t need an additional resource to manage your sensitive data.</p>
+
+<p>Although this was basic usage with OpenFaaS and DynamoDB, the sky is the limit what you can do with it.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://aws.amazon.com/blogs/database/choosing-the-right-dynamodb-partition-key/">DynamoDB: Choosing the right Partition Key</a></li>
+<li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-uniform-load.html">Designing Partition Keys to Distribute Your Workload Evenly</a></li>
+<li><a href="https://docs.openfaas.com/contributing/get-started/">OpenFaaS: Getting Started</a></li>
+<li><a href="https://docs.openfaas.com/reference/secrets/">OpenFaaS: Secrets</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2440,252 +3379,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Install Pushgateway to Expose Metrics to Prometheus</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-05-17T07:04:03-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>17</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>7:04 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="" /></p>
-
-<p>In most cases when we want to scrape a node for metrics, we will install node-exporter on a host and configure prometheus to scrape the configured node to consume metric data. But in certain cases we want to push custom metrics to prometheus. In such cases, we can make use of pushgateway.</p>
-
-<p>Pushgateway allows you to push custom metrics to push gateway&rsquo;s endpoint, then we configure prometheus to scrape push gateway to consume the exposed metrics into prometheus.</p>
-
-<p><a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a></p>
-
-<h2>Pre-Requirements</h2>
-
-<p>If you have not set up <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Prometheus</a>, head over to <strong><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">this blogpost</a></strong> to set up prometheus on Linux.</p>
-
-<h2>What we will do?</h2>
-
-<p>In this tutorial, we will setup pushgateway on linux and after pushgateway has been setup, we will push some custom metrics to pushgateway and configure prometheus to scrape metrics from pushgateway.</p>
-
-<h2>Install Pushgateway</h2>
-
-<p>Get the latest version of <a href="https://prometheus.io/download/">pushgateway</a> from prometheus.io, then download and extract:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/prometheus/pushgateway/releases/download/v0.8.0/pushgateway-0.8.0.linux-amd64.tar.gz
-</span><span class='line'>$ tar -xvf pushgateway-0.8.0.linux-amd64.tar.gz</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the <code>pushgateway</code> user:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ useradd --no-create-home --shell /bin/false pushgateway</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Move the binary in place and update the permissions to the user that we created:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cp pushgateway-0.8.0.linux-amd64/pushgateway /usr/local/bin/pushgateway
-</span><span class='line'>$ chown pushgateway:pushgateway /usr/local/bin/pushgateway</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the systemd unit file:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat &gt; /etc/systemd/system/pushgateway.service &lt;&lt; EOF
-</span><span class='line'>[Unit]
-</span><span class='line'>Description=Pushgateway
-</span><span class='line'>Wants=network-online.target
-</span><span class='line'>After=network-online.target
-</span><span class='line'>
-</span><span class='line'>[Service]
-</span><span class='line'>User=pushgateway
-</span><span class='line'>Group=pushgateway
-</span><span class='line'>Type=simple
-</span><span class='line'>ExecStart=/usr/local/bin/pushgateway \
-</span><span class='line'>    --web.listen-address=":9091" \
-</span><span class='line'>    --web.telemetry-path="/metrics" \
-</span><span class='line'>    --persistence.file="/tmp/metric.store" \
-</span><span class='line'>    --persistence.interval=5m \
-</span><span class='line'>    --log.level="info" \
-</span><span class='line'>    --log.format="logger:stdout?json=true"
-</span><span class='line'>
-</span><span class='line'>[Install]
-</span><span class='line'>WantedBy=multi-user.target
-</span><span class='line'>EOF</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Reload systemd and restart the pushgateway service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl daemon-reload
-</span><span class='line'>$ systemctl restart pushgateway</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure that pushgateway has been started:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl status pushgateway
-</span><span class='line'>  pushgateway.service - Pushgateway
-</span><span class='line'>   Loaded: loaded (/etc/systemd/system/pushgateway.service; disabled; vendor preset: enabled)
-</span><span class='line'>   Active: active (running) since Tue 2019-05-07 09:05:57 UTC; 2min 33s ago
-</span><span class='line'> Main PID: 6974 (pushgateway)
-</span><span class='line'>    Tasks: 6 (limit: 4704)
-</span><span class='line'>   CGroup: /system.slice/pushgateway.service
-</span><span class='line'>           └─6974 /usr/local/bin/pushgateway --web.listen-address=:9091 --web.telemetry-path=/metrics --persistence.file=/tmp/metric.store --persistence.interval=5m --log.level=info --log.format=logger:st
-</span><span class='line'>
-</span><span class='line'>May 07 09:05:57 ip-172-31-41-126 systemd[1]: Started Pushgateway.</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Configure Prometheus</h2>
-
-<p>Now we want to configure prometheus to scrape pushgateway for metrics, then the scraped metrics will be injected into prometheus&rsquo;s time series database:</p>
-
-<p>At the moment, I have prometheus, node-exporter and pushgateway on the same node so I will provide my complete prometheus configuration, If you are just looking for the pushgateway config, it will be the last line:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/prometheus/prometheus.yml
-</span><span class='line'>global:
-</span><span class='line'>  scrape_interval: 15s
-</span><span class='line'>
-</span><span class='line'>scrape_configs:
-</span><span class='line'>  - job_name: 'prometheus'
-</span><span class='line'>    scrape_interval: 5s
-</span><span class='line'>    static_configs:
-</span><span class='line'>      - targets: ['localhost:9090']
-</span><span class='line'>
-</span><span class='line'>  - job_name: 'node_exporter'
-</span><span class='line'>    scrape_interval: 5s
-</span><span class='line'>    static_configs:
-</span><span class='line'>      - targets: ['localhost:9100']
-</span><span class='line'>
-</span><span class='line'>  - job_name: 'pushgateway'
-</span><span class='line'>    honor_labels: true
-</span><span class='line'>    static_configs:
-</span><span class='line'>      - targets: ['localhost:9091']</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Restart prometheus:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart prometheus</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Push metrics to pushgateway</h2>
-
-<p>First we will look at a bash example to push metrics to pushgateway:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo "cpu_utilization 20.25" | curl --data-binary @- http://localhost:9091/metrics/job/my_custom_metrics/instance/10.20.0.1:9000/provider/hetzner</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Have a look at pushgateway&rsquo;s metrics endpoint:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -L http://localhost:9091/metrics/
-</span><span class='line'># TYPE cpu_utilization untyped
-</span><span class='line'>cpu_utlization{instance="10.20.0.1:9000",job="my_custom_metrics",provider="hetzner"} 20.25</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s look at a python example on how we can push metrics to pushgateway:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">job_name</span><span class="o">=</span><span class="s">&#39;my_custom_metrics&#39;</span>
-</span><span class='line'><span class="n">instance_name</span><span class="o">=</span><span class="s">&#39;10.20.0.1:9000&#39;</span>
-</span><span class='line'><span class="n">provider</span><span class="o">=</span><span class="s">&#39;hetzner&#39;</span>
-</span><span class='line'><span class="n">payload_key</span><span class="o">=</span><span class="s">&#39;cpu_utilization&#39;</span>
-</span><span class='line'><span class="n">payload_value</span><span class="o">=</span><span class="s">&#39;21.90&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s">&#39;http://localhost:9091/metrics/job/{j}/instance/{i}/team/{t}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">j</span><span class="o">=</span><span class="n">job_name</span><span class="p">,</span> <span class="n">i</span><span class="o">=</span><span class="n">instance_name</span><span class="p">,</span> <span class="n">t</span><span class="o">=</span><span class="n">team_name</span><span class="p">),</span> <span class="n">data</span><span class="o">=</span><span class="s">&#39;{k} {v}</span><span class="se">\n</span><span class="s">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">k</span><span class="o">=</span><span class="n">payload_key</span><span class="p">,</span> <span class="n">v</span><span class="o">=</span><span class="n">payload_value</span><span class="p">))</span>
-</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>With this method, you can push any custom metrics (bash, lambda function, etc) to pushgateway and allow prometheus to consume that data into it&rsquo;s time series database.</p>
-
-<h2>Resources:</h2>
-
-<p>See <a href="https://blog.ruanbekker.com/blog/categories/prometheus/">#prometheus</a> for more posts on Prometheus</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/8">&larr; Older</a>
@@ -2736,6 +3429,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/11/11/deploy-loki-on-multipass/">Deploy Loki on Multipass</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/11/06/how-to-setup-alerting-with-loki/">How to Setup Alerting With Loki</a>
       </li>
     
@@ -2749,10 +3446,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy/">Running Loki Behind Nginx Reverse Proxy</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/10/26/upload-public-ssh-keys-using-ansible/">Upload Public SSH Keys Using Ansible</a>
       </li>
     
   </ul>

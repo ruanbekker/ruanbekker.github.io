@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Nginx Caching + Ghost == Great Performance. In this post we will build a nginx reverse proxy with caching enabled for our static content such as &hellip;">
+  <meta name="description" content="I am no DBA, but I got curious when I noticed sluggish write performance on a mysql database, and I remembered somewhere that you should always use &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,405 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/06/13/improve-mysql-write-performance-using-batch-writes/">Improve MySQL Write Performance Using Batch Writes</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-06-13T19:31:32+02:00'><span class='date'><span class='date-month'>Jun</span> <span class='date-day'>13</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>7:31 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://img.sysadmins.co.za/wngib2.png" alt="mysql-python-performance" /></p>
+
+<p>I am no DBA, but I got curious when I noticed sluggish write performance on a mysql database, and I remembered somewhere that you should always use batch writes over sequential writes. So I decided to test it out, using a python script and a mysql server.</p>
+
+<h2>What will we be doing</h2>
+
+<p>I wrote a python script that writes 100,000 records to a database and keeps time of how long the writes took, 2 examples which I will compare:</p>
+
+<ul>
+<li>One script writing each record to the database</li>
+<li>One script writing all the records as batch</li>
+</ul>
+
+
+<h2>Sequential Writes</h2>
+
+<p>It took 48 seconds to write 100,000 records into a database using sequential writes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="k">for</span> <span class="n">user</span> <span class="ow">in</span> <span class="n">userids</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">userid</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;_&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">job</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">age</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">24</span><span class="p">,</span><span class="mi">49</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">credit_card_num</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;ccnum&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">status</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">([</span><span class="s">&quot;active&quot;</span><span class="p">,</span> <span class="s">&quot;inactive&quot;</span><span class="p">,</span> <span class="s">&quot;disabled&quot;</span><span class="p">])</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+</span><span class='line'>        <span class="sd">&quot;&quot;&quot;INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)&quot;&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="p">(</span><span class="n">userid</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">job</span><span class="p">,</span> <span class="n">age</span><span class="p">,</span> <span class="n">credit_card_num</span><span class="p">,</span> <span class="n">status</span><span class="p">)</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Running that shows us this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python3</span> <span class="n">mysql_seq_writes</span><span class="o">.</span><span class="n">py</span>
+</span><span class='line'><span class="n">start</span>
+</span><span class='line'><span class="n">writing</span> <span class="n">customers</span> <span class="n">to</span> <span class="n">database</span>
+</span><span class='line'><span class="n">finish</span>
+</span><span class='line'><span class="n">inserted</span> <span class="mi">100000</span> <span class="n">records</span> <span class="ow">in</span> <span class="mi">48</span><span class="n">s</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Batch Writes</h2>
+
+<p>It took 3 seconds to write to write 100,000 records using batch writes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">...</span>
+</span><span class='line'><span class="k">for</span> <span class="n">user</span> <span class="ow">in</span> <span class="n">userids</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">userid</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;_&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">job</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">age</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">24</span><span class="p">,</span><span class="mi">49</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">credit_card_num</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;ccnum&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">status</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">([</span><span class="s">&quot;active&quot;</span><span class="p">,</span> <span class="s">&quot;inactive&quot;</span><span class="p">,</span> <span class="s">&quot;disabled&quot;</span><span class="p">])</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">bunch_users</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">userid</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">job</span><span class="p">,</span> <span class="n">age</span><span class="p">,</span> <span class="n">credit_card_num</span><span class="p">,</span> <span class="n">status</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span>
+</span><span class='line'>    <span class="sd">&quot;&quot;&quot;INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)&quot;&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">bunch_users</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="o">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Running that shows us this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python3</span> <span class="n">mysql_batch_writes</span><span class="o">.</span><span class="n">py</span>
+</span><span class='line'><span class="n">start</span>
+</span><span class='line'><span class="n">writing</span> <span class="n">customers</span> <span class="n">to</span> <span class="n">database</span>
+</span><span class='line'><span class="n">finish</span>
+</span><span class='line'><span class="n">inserted</span> <span class="mi">100000</span> <span class="n">records</span> <span class="ow">in</span> <span class="mi">3</span><span class="n">s</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Looking at the Scripts</h2>
+
+<p>The script used for sequential writes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">datetime</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">MySQLdb</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span> <span class="k">as</span> <span class="n">dt</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">host</span><span class="o">=</span><span class="s">&quot;172.18.0.1&quot;</span>
+</span><span class='line'><span class="n">user</span><span class="o">=</span><span class="s">&quot;root&quot;</span>
+</span><span class='line'><span class="n">password</span><span class="o">=</span><span class="s">&quot;password&quot;</span>
+</span><span class='line'><span class="n">dbname</span><span class="o">=</span><span class="s">&quot;shopdb&quot;</span>
+</span><span class='line'><span class="n">records</span><span class="o">=</span><span class="mi">100000</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">db</span> <span class="o">=</span> <span class="n">MySQLdb</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">,</span> <span class="n">dbname</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;ruan&#39;</span><span class="p">,</span> <span class="s">&#39;donovan&#39;</span><span class="p">,</span> <span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;warren&#39;</span><span class="p">,</span> <span class="s">&#39;angie&#39;</span><span class="p">,</span> <span class="s">&#39;nicole&#39;</span><span class="p">,</span> <span class="s">&#39;jenny&#39;</span><span class="p">,</span> <span class="s">&#39;penny&#39;</span><span class="p">,</span> <span class="s">&#39;amber&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">job</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;doctor&#39;</span><span class="p">,</span> <span class="s">&#39;scientist&#39;</span><span class="p">,</span> <span class="s">&#39;teacher&#39;</span><span class="p">,</span> <span class="s">&#39;police officer&#39;</span><span class="p">,</span> <span class="s">&#39;waiter&#39;</span><span class="p">,</span> <span class="s">&#39;banker&#39;</span><span class="p">,</span> <span class="s">&#39;it&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">cur</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'><span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&quot;DROP TABLE IF EXISTS customers&quot;</span><span class="p">)</span>
+</span><span class='line'><span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&quot;CREATE TABLE customers(userid VARCHAR(50), name VARCHAR(50), surname VARCHAR(50), job VARCHAR(50), age INT(2), credit_card_num VARCHAR(50), status VARCHAR(10))&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">bunch_users</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'><span class="n">userids</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;start&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">gen_id</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">9999</span><span class="p">))</span><span class="o">.</span><span class="n">zfill</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">gen_user</span><span class="p">(</span><span class="n">username</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">ccnum</span> <span class="o">=</span> <span class="s">&#39;{0}-{1}-{2}-{3}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">gen_id</span><span class="p">(),</span> <span class="n">gen_id</span><span class="p">(),</span> <span class="n">gen_id</span><span class="p">(),</span> <span class="n">gen_id</span><span class="p">())</span>
+</span><span class='line'>    <span class="n">userid</span> <span class="o">=</span> <span class="n">username</span> <span class="o">+</span> <span class="s">&#39;_&#39;</span> <span class="o">+</span> <span class="n">ccnum</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;-&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">ccnum</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;-&#39;</span><span class="p">)[</span><span class="mi">2</span><span class="p">]</span>
+</span><span class='line'>    <span class="k">return</span> <span class="p">{</span><span class="s">&quot;uid&quot;</span><span class="p">:</span> <span class="n">userid</span><span class="p">,</span> <span class="s">&quot;ccnum&quot;</span><span class="p">:</span> <span class="n">ccnum</span><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">records</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">userids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gen_user</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">)))</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;writing customers to database&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">timestart</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%s</span><span class="s">&quot;</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">user</span> <span class="ow">in</span> <span class="n">userids</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">userid</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;_&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">job</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">age</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">24</span><span class="p">,</span><span class="mi">49</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">credit_card_num</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;ccnum&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">status</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">([</span><span class="s">&quot;active&quot;</span><span class="p">,</span> <span class="s">&quot;inactive&quot;</span><span class="p">,</span> <span class="s">&quot;disabled&quot;</span><span class="p">])</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="c">#bunch_users.append((userid, name, job, age, credit_card_num, status))</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+</span><span class='line'>        <span class="sd">&quot;&quot;&quot;INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)&quot;&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>        <span class="p">(</span><span class="n">userid</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">job</span><span class="p">,</span> <span class="n">age</span><span class="p">,</span> <span class="n">credit_card_num</span><span class="p">,</span> <span class="n">status</span><span class="p">)</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">db</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</span><span class='line'><span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'><span class="n">timefinish</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%s</span><span class="s">&quot;</span><span class="p">))</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;finish&quot;</span><span class="p">)</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;inserted {} records in {}s&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">timefinish</span><span class="o">-</span><span class="n">timestart</span><span class="p">))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The script used for the batch writes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">datetime</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">random</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">MySQLdb</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span> <span class="k">as</span> <span class="n">dt</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">host</span><span class="o">=</span><span class="s">&quot;172.18.0.1&quot;</span>
+</span><span class='line'><span class="n">user</span><span class="o">=</span><span class="s">&quot;root&quot;</span>
+</span><span class='line'><span class="n">password</span><span class="o">=</span><span class="s">&quot;password&quot;</span>
+</span><span class='line'><span class="n">dbname</span><span class="o">=</span><span class="s">&quot;shopdb&quot;</span>
+</span><span class='line'><span class="n">records</span><span class="o">=</span><span class="mi">100000</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">db</span> <span class="o">=</span> <span class="n">MySQLdb</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">,</span> <span class="n">dbname</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;ruan&#39;</span><span class="p">,</span> <span class="s">&#39;donovan&#39;</span><span class="p">,</span> <span class="s">&#39;james&#39;</span><span class="p">,</span> <span class="s">&#39;warren&#39;</span><span class="p">,</span> <span class="s">&#39;angie&#39;</span><span class="p">,</span> <span class="s">&#39;nicole&#39;</span><span class="p">,</span> <span class="s">&#39;jenny&#39;</span><span class="p">,</span> <span class="s">&#39;penny&#39;</span><span class="p">,</span> <span class="s">&#39;amber&#39;</span><span class="p">]</span>
+</span><span class='line'><span class="n">job</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;doctor&#39;</span><span class="p">,</span> <span class="s">&#39;scientist&#39;</span><span class="p">,</span> <span class="s">&#39;teacher&#39;</span><span class="p">,</span> <span class="s">&#39;police officer&#39;</span><span class="p">,</span> <span class="s">&#39;waiter&#39;</span><span class="p">,</span> <span class="s">&#39;banker&#39;</span><span class="p">,</span> <span class="s">&#39;it&#39;</span><span class="p">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">cur</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+</span><span class='line'><span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&quot;DROP TABLE IF EXISTS customers&quot;</span><span class="p">)</span>
+</span><span class='line'><span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s">&quot;CREATE TABLE customers(userid VARCHAR(50), name VARCHAR(50), surname VARCHAR(50), job VARCHAR(50), age INT(2), credit_card_num VARCHAR(50), status VARCHAR(10))&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">bunch_users</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'><span class="n">userids</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;start&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">gen_id</span><span class="p">():</span>
+</span><span class='line'>    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">9999</span><span class="p">))</span><span class="o">.</span><span class="n">zfill</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">gen_user</span><span class="p">(</span><span class="n">username</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">ccnum</span> <span class="o">=</span> <span class="s">&#39;{0}-{1}-{2}-{3}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">gen_id</span><span class="p">(),</span> <span class="n">gen_id</span><span class="p">(),</span> <span class="n">gen_id</span><span class="p">(),</span> <span class="n">gen_id</span><span class="p">())</span>
+</span><span class='line'>    <span class="n">userid</span> <span class="o">=</span> <span class="n">username</span> <span class="o">+</span> <span class="s">&#39;_&#39;</span> <span class="o">+</span> <span class="n">ccnum</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;-&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">ccnum</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;-&#39;</span><span class="p">)[</span><span class="mi">2</span><span class="p">]</span>
+</span><span class='line'>    <span class="k">return</span> <span class="p">{</span><span class="s">&quot;uid&quot;</span><span class="p">:</span> <span class="n">userid</span><span class="p">,</span> <span class="s">&quot;ccnum&quot;</span><span class="p">:</span> <span class="n">ccnum</span><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">records</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">userids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gen_user</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">names</span><span class="p">)))</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">for</span> <span class="n">user</span> <span class="ow">in</span> <span class="n">userids</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">userid</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;uid&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;_&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">job</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">age</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">24</span><span class="p">,</span><span class="mi">49</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">credit_card_num</span> <span class="o">=</span> <span class="n">user</span><span class="p">[</span><span class="s">&quot;ccnum&quot;</span><span class="p">]</span>
+</span><span class='line'>    <span class="n">status</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">([</span><span class="s">&quot;active&quot;</span><span class="p">,</span> <span class="s">&quot;inactive&quot;</span><span class="p">,</span> <span class="s">&quot;disabled&quot;</span><span class="p">])</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">bunch_users</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">userid</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">job</span><span class="p">,</span> <span class="n">age</span><span class="p">,</span> <span class="n">credit_card_num</span><span class="p">,</span> <span class="n">status</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">timestart</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%s</span><span class="s">&quot;</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;writing customers to database&quot;</span><span class="p">)</span>
+</span><span class='line'><span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span>
+</span><span class='line'>    <span class="sd">&quot;&quot;&quot;INSERT INTO customers(userid, name, job, age, credit_card_num, status) VALUES(%s, %s, %s, %s, %s, %s)&quot;&quot;&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">bunch_users</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">db</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</span><span class='line'><span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span class='line'><span class="n">timefinish</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%s</span><span class="s">&quot;</span><span class="p">))</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;finish&quot;</span><span class="p">)</span>
+</span><span class='line'><span class="k">print</span><span class="p">(</span><span class="s">&quot;inserted {} records in {}s&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">timefinish</span><span class="o">-</span><span class="n">timestart</span><span class="p">))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, so this was kind of interesting to see to never do sequential writes but write them in bulk when you have large amount of writes.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2701,453 +3100,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/04/26/graphing-covid-19-stats-with-grafana-and-elasticsearch-using-python/">Graphing Covid-19 Stats With Grafana and Elasticsearch Using Python</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-04-26T02:24:27+02:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>26</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>2:24 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/80421197-62345180-88dc-11ea-9e0a-557199aaf613.png" alt="coronavirus-covid19-grafana-metrics" /></p>
-
-<p>I stumbled upon a <a href="https://github.com/pomber/covid19/">github repository</a> that stores time-series data in json format of corona virus / covid19 statistics, which get updated daily.</p>
-
-<p>I was curious to see data about my country and want to see how metrics will look like after our lockdown started, so I decided to consume that data with <strong>Python</strong> and the requests library, then ingest data about covid19 into <strong>Elasticsearch</strong> and the visualize the data with <strong>Grafana</strong>.</p>
-
-<h2>Sample of the Data</h2>
-
-<p>Let&rsquo;s have a peek at the data to determine how we will use it to write to Elasticsearch. Let&rsquo;s consume the data with python:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; import requests
-</span><span class='line'>&gt;&gt;&gt; import json
-</span><span class='line'>&gt;&gt;&gt; response = requests.get('https://pomber.github.io/covid19/timeseries.json').json()</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now let&rsquo;s determine the data type:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; type(response)
-</span><span class='line'>&lt;type 'dict'&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now as it&rsquo;s a dictionary, let&rsquo;s look at they keys:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; response.keys()
-</span><span class='line'>[u'Canada', u'Sao Tome and Principe', u'Lithuania', u'Cambodia', u'Ethiopia',....</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So let&rsquo;s take a look how the data looks like if we do a lookup for Canada:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; type(response['Canada'])
-</span><span class='line'>&lt;type 'list'&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As we can see it&rsquo;s a list, we can count how many items is in our list:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; len(response['Canada'])
-</span><span class='line'>94</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now let&rsquo;s peek at the data by accessing our first index of our list:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; response['Canada'][0]
-</span><span class='line'>{u'date': u'2020-1-22', u'confirmed': 0, u'recovered': 0, u'deaths': 0}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So our data will look like this:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{
-</span><span class='line'>  [
-</span><span class='line'>    'Country Name': [
-</span><span class='line'>      {
-</span><span class='line'>        'date': '&lt;string&gt;', 
-</span><span class='line'>        'confirmed': '&lt;int&gt;', 
-</span><span class='line'>        'recovered': '&lt;int&gt;', 
-</span><span class='line'>        'deaths': '&lt;int&gt;'
-</span><span class='line'>      },
-</span><span class='line'>      {
-</span><span class='line'>        'date': '&lt;string&gt;',
-</span><span class='line'>        'confirmed': '&lt;int&gt;',
-</span><span class='line'>        'recovered': '&lt;int&gt;',
-</span><span class='line'>        'deaths': '&lt;int&gt;'
-</span><span class='line'>      },
-</span><span class='line'>    ],
-</span><span class='line'>    'Country Name': [
-</span><span class='line'>      ...
-</span><span class='line'>    ]
-</span><span class='line'>  ]
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Some issues we need to fix</h2>
-
-<p>As you can see the date is displayed as <code>2020-1-22</code> instead of <code>2020-01-22</code>, I want to make it consistent as I will be ingesting the data with a <code>@timestamp</code> key which we will use the date from the returned data. So first we will need to convert that before we ingest the data.</p>
-
-<p>The other thing I was thinking of is that, if for some reason we need to ingest this data again, we dont want to sit with duplicates (same document with different _id&rsquo;s), so for that I decided to generate a hash value that consist of the date and the country, so if the script run to ingest the data, it will use the same id for the specific document, which would just overwrite it, therefore we won&rsquo;t sit with duplicates.</p>
-
-<p>So the idea is to ingest a document to elasticsearch like this:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>doc = {
-</span><span class='line'>    "_id": "sha_hash_value",
-</span><span class='line'>    "day": "2020-01-22",
-</span><span class='line'>    "timestamp": "@2020-01-22 00:00:00",
-</span><span class='line'>    "country": "CountryName",
-</span><span class='line'>    "confirmed": 0,
-</span><span class='line'>    "recovered": 0,
-</span><span class='line'>    "deaths": 0
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>How we will ingest the data</h2>
-
-<p>The first run will load all the data and ingest all the data up to the current day to elasticsearch. Once that is done, we will add code to our script to only ingest the most recent day&rsquo;s data into elasticsearch, which we will control with a cronjob.</p>
-
-<p>Create a index with a mapping to let Elasticsearch know <code>timestamp</code> will be a date field:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -XPUT -H 'Content-Type: application/json' \
-</span><span class='line'>  -u username:pass 'https://es.domain.com/coronastats' -d \
-</span><span class='line'>  '{"mappings": {"foo1": {"properties": {"timestamp" : {"type" : "date","format" : "yyyy-MM-dd HH:mm:ss"}}}}}'</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once our index is created, create the python script that will load the data, loop through each country&rsquo;s daily data and ingest it into elasticsearch:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="c">#!/usr/bin/python</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">datetime</span> <span class="kn">as</span> <span class="nn">dt</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">hashlib</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">url</span> <span class="o">=</span> <span class="s">&#39;https://pomber.github.io/covid19/timeseries.json&#39;</span>
-</span><span class='line'><span class="n">elasticsearch_url</span> <span class="o">=</span> <span class="s">&quot;https://es.domain.com&quot;</span>
-</span><span class='line'><span class="n">elasticsearch_username</span> <span class="o">=</span> <span class="s">&quot;&quot;</span>
-</span><span class='line'><span class="n">elasticsearch_password</span> <span class="o">=</span> <span class="s">&quot;&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">api_response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">convert_datestamp</span><span class="p">(</span><span class="n">day</span><span class="p">):</span>
-</span><span class='line'>    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">strptime</span><span class="p">(</span><span class="n">day</span><span class="p">,</span> <span class="s">&#39;%Y-%m-</span><span class="si">%d</span><span class="s">&#39;</span><span class="p">))</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">hash_function</span><span class="p">(</span><span class="n">country</span><span class="p">,</span> <span class="n">date</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">string_to_hash</span> <span class="o">=</span> <span class="n">country</span> <span class="o">+</span> <span class="n">date</span>
-</span><span class='line'>    <span class="n">hash_obj</span>  <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">(</span><span class="n">string_to_hash</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
-</span><span class='line'>    <span class="n">hash_value</span> <span class="o">=</span> <span class="n">hash_obj</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">hash_value</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">map_es_doc</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">country</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">doc</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;day&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">],</span>
-</span><span class='line'>        <span class="s">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">convert_datestamp</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">]),</span>
-</span><span class='line'>        <span class="s">&quot;country&quot;</span><span class="p">:</span> <span class="n">country</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;confirmed&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;confirmed&#39;</span><span class="p">],</span>
-</span><span class='line'>        <span class="s">&quot;recovered&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;recovered&#39;</span><span class="p">],</span>
-</span><span class='line'>        <span class="s">&quot;deaths&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;deaths&#39;</span><span class="p">]</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">doc</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">ingest</span><span class="p">(</span><span class="n">doc_id</span><span class="p">,</span> <span class="n">payload</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
-</span><span class='line'>        <span class="n">elasticsearch_url</span> <span class="o">+</span> <span class="s">&#39;/coronastats/coronastats/&#39;</span> <span class="o">+</span> <span class="n">doc_id</span><span class="p">,</span>
-</span><span class='line'>        <span class="n">auth</span><span class="o">=</span><span class="p">(</span><span class="n">elasticsearch_username</span><span class="p">,</span> <span class="n">elasticsearch_password</span><span class="p">),</span>
-</span><span class='line'>        <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;application/json&#39;</span><span class="p">},</span>
-</span><span class='line'>        <span class="n">json</span><span class="o">=</span><span class="n">payload</span>
-</span><span class='line'>    <span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">for</span> <span class="n">country</span> <span class="ow">in</span> <span class="n">api_response</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">try</span><span class="p">:</span>
-</span><span class='line'>        <span class="k">for</span> <span class="n">each_payload</span> <span class="ow">in</span> <span class="n">api_response</span><span class="p">[</span><span class="n">country</span><span class="p">]:</span>
-</span><span class='line'>            <span class="n">doc_id</span> <span class="o">=</span> <span class="n">hash_function</span><span class="p">(</span><span class="n">country</span><span class="p">,</span> <span class="n">each_payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">])</span>
-</span><span class='line'>            <span class="n">doc</span> <span class="o">=</span> <span class="n">map_es_doc</span><span class="p">(</span><span class="n">each_payload</span><span class="p">,</span> <span class="n">country</span><span class="p">)</span>
-</span><span class='line'>            <span class="n">response</span> <span class="o">=</span> <span class="n">ingest</span><span class="p">(</span><span class="n">doc_id</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span>
-</span><span class='line'>            <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Run the script to ingest all the data into elasticsearch. Now we will create the script that will run daily to only ingest the previous day&rsquo;s data, so that we only ingest the latest data and not all the data from scratch again.</p>
-
-<p>I will create this file in <code>/opt/scripts/corona_covid19_ingest.py</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="c">#!/usr/bin/python</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">datetime</span> <span class="kn">as</span> <span class="nn">dt</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">hashlib</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">url</span> <span class="o">=</span> <span class="s">&#39;https://pomber.github.io/covid19/timeseries.json&#39;</span>
-</span><span class='line'><span class="n">elasticsearch_url</span> <span class="o">=</span> <span class="s">&quot;https://es.domain.com&quot;</span>
-</span><span class='line'><span class="n">elasticsearch_username</span> <span class="o">=</span> <span class="s">&quot;&quot;</span>
-</span><span class='line'><span class="n">elasticsearch_password</span> <span class="o">=</span> <span class="s">&quot;&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">api_response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">yesterdays_date</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span> <span class="o">-</span> <span class="n">dt</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">convert_datestamp</span><span class="p">(</span><span class="n">day</span><span class="p">):</span>
-</span><span class='line'>    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">strptime</span><span class="p">(</span><span class="n">day</span><span class="p">,</span> <span class="s">&#39;%Y-%m-</span><span class="si">%d</span><span class="s">&#39;</span><span class="p">))</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">hash_function</span><span class="p">(</span><span class="n">country</span><span class="p">,</span> <span class="n">date</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">string_to_hash</span> <span class="o">=</span> <span class="n">country</span> <span class="o">+</span> <span class="n">date</span>
-</span><span class='line'>    <span class="n">hash_obj</span>  <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">(</span><span class="n">string_to_hash</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
-</span><span class='line'>    <span class="n">hash_value</span> <span class="o">=</span> <span class="n">hash_obj</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">hash_value</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">map_es_doc</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">country</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">doc</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;day&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">],</span>
-</span><span class='line'>        <span class="s">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">convert_datestamp</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">]),</span>
-</span><span class='line'>        <span class="s">&quot;country&quot;</span><span class="p">:</span> <span class="n">country</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;confirmed&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;confirmed&#39;</span><span class="p">],</span>
-</span><span class='line'>        <span class="s">&quot;recovered&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;recovered&#39;</span><span class="p">],</span>
-</span><span class='line'>        <span class="s">&quot;deaths&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">[</span><span class="s">&#39;deaths&#39;</span><span class="p">]</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">doc</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">ingest</span><span class="p">(</span><span class="n">doc_id</span><span class="p">,</span> <span class="n">payload</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
-</span><span class='line'>        <span class="n">elasticsearch_url</span> <span class="o">+</span> <span class="s">&#39;/coronastats/coronastats/&#39;</span> <span class="o">+</span> <span class="n">doc_id</span><span class="p">,</span>
-</span><span class='line'>        <span class="n">auth</span><span class="o">=</span><span class="p">(</span><span class="n">elasticsearch_username</span><span class="p">,</span> <span class="n">elasticsearch_password</span><span class="p">),</span>
-</span><span class='line'>        <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s">&#39;content-type&#39;</span><span class="p">:</span> <span class="s">&#39;application/json&#39;</span><span class="p">},</span>
-</span><span class='line'>        <span class="n">json</span><span class="o">=</span><span class="n">payload</span>
-</span><span class='line'>    <span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">for</span> <span class="n">country</span> <span class="ow">in</span> <span class="n">api_response</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">try</span><span class="p">:</span>
-</span><span class='line'>        <span class="k">for</span> <span class="n">each_payload</span> <span class="ow">in</span> <span class="n">api_response</span><span class="p">[</span><span class="n">country</span><span class="p">]:</span>
-</span><span class='line'>            <span class="k">if</span> <span class="n">convert_datestamp</span><span class="p">(</span><span class="n">each_payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="nb">str</span><span class="p">(</span><span class="n">yesterdays_date</span><span class="p">):</span>
-</span><span class='line'>                <span class="k">print</span><span class="p">(</span><span class="s">&quot;ingesting latest data for {country}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">country</span><span class="o">=</span><span class="n">country</span><span class="p">))</span>
-</span><span class='line'>                <span class="n">doc_id</span> <span class="o">=</span> <span class="n">hash_function</span><span class="p">(</span><span class="n">country</span><span class="p">,</span> <span class="n">each_payload</span><span class="p">[</span><span class="s">&#39;date&#39;</span><span class="p">])</span>
-</span><span class='line'>                <span class="n">doc</span> <span class="o">=</span> <span class="n">map_es_doc</span><span class="p">(</span><span class="n">each_payload</span><span class="p">,</span> <span class="n">country</span><span class="p">)</span>
-</span><span class='line'>                <span class="n">response</span> <span class="o">=</span> <span class="n">ingest</span><span class="p">(</span><span class="n">doc_id</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span>
-</span><span class='line'>                <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The only difference with this script is that it checks if the date is equals to yesterday&rsquo;s date, and if so the document will be prepared and ingested into elasticsearch. We will create a cronjob that runs this script every morning at 08:45.</p>
-
-<p>First make the file executable:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">chmod</span> <span class="o">+</span><span class="n">x</span> <span class="o">/</span><span class="n">opt</span><span class="o">/</span><span class="n">scripts</span><span class="o">/</span><span class="n">corona_covid19_ingest</span><span class="o">.</span><span class="n">py</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Run <code>crontab -e</code> and add the following</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="mi">45</span> <span class="mi">8</span> <span class="o">*</span> <span class="o">*</span> <span class="o">*</span> <span class="o">/</span><span class="n">opt</span><span class="o">/</span><span class="n">scripts</span><span class="o">/</span><span class="n">corona_covid19_ingest</span><span class="o">.</span><span class="n">py</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Visualize the Data with Grafana</h2>
-
-<p>We will create this dashboard:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/80418135-35ca0680-88d7-11ea-83f6-3432a903333d.png" alt="corona-covid-19-dashboard" /></p>
-
-<p>We need a elasticsearch datasource that points to the index that we ingest our data into. Head over to datasources, add a elasticsearch datasource and set the index to <code>coronastats</code> and add the timefield as <code>timestamp</code>.</p>
-
-<p>We want to make the dashboard dynamic to have a <strong>&ldquo;country&rdquo;</strong> dropdown selector, for that go to the dashboard settings, select variable and add a country variable:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/80419463-7cb8fb80-88d9-11ea-959f-8f37ae3f6dc7.png" alt="covid19-dashboard-variables" /></p>
-
-<p>First panel: &ldquo;Reported Cases per Day&rdquo;:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/80419572-af62f400-88d9-11ea-802e-7eeacb61ee19.png" alt="covid19-reported-cases" /></p>
-
-<p>Second panel: &ldquo;Confirmed Cases&rdquo;:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/80419675-db7e7500-88d9-11ea-98a5-3aae4d9a6c87.png" alt="covid19-confirmed-cases" /></p>
-
-<p>Third panel: &ldquo;Recovered Cases&rdquo;:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/80419750-fa7d0700-88d9-11ea-82a3-f26ff8c807ef.png" alt="covid19-recovered-cases" /></p>
-
-<p>Now, if we select Italy, Spain and France as an example, we will see something like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/80419966-56479000-88da-11ea-8f30-39ac3da27007.png" alt="covid19-country-stats" /></p>
-
-<h2>Thank You</h2>
-
-<p>Although its pretty cool visualizing data, the issue that we are in at the moment with coronavirus / covid19 is really scary and we should all do our part to try and stay home, sanitize and try not to spread the virus. Together we can all do great things by reducing the spread of this virus.</p>
-
-<p>Stay safe everyone.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/4">&larr; Older</a>
@@ -3198,6 +3150,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2020/11/20/encrypt-and-decrypt-files-with-ccrypt/">Encrypt and Decrypt Files With Ccrypt</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2020/11/11/deploy-loki-on-multipass/">Deploy Loki on Multipass</a>
       </li>
     
@@ -3211,10 +3167,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/11/02/running-ssh-commands-on-aws-ec2-instances-with-python/">Running SSH Commands on AWS EC2 Instances With Python</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy/">Running Loki Behind Nginx Reverse Proxy</a>
       </li>
     
   </ul>

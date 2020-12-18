@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Linux | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/linux/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-11-20T06:31:59+00:00</updated>
+  <updated>2020-12-18T13:59:12+00:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,159 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Harden Your SSH Security on Linux Servers]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/12/18/harden-your-ssh-security-on-linux-servers/"/>
+    <updated>2020-12-18T13:32:18+00:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/12/18/harden-your-ssh-security-on-linux-servers</id>
+    <content type="html"><![CDATA[<p>In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules.</p>
+
+<p>This will be the list of things that we will do:</p>
+
+<pre><code>  - Change the SSH Port
+  - Don't allow root to SSH
+  - Disable password based authentication
+  - Enable key based authentication and only for a singular user
+  - Allow our user to sudo
+  - Use iptables to block sources trying to DDoS your server
+</code></pre>
+
+<h2>Packages</h2>
+
+<p>First let&rsquo;s install the packages that we need, I&rsquo;m using Debian so I will be using <code>apt</code>:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+$ apt install sudo -y
+</code></pre>
+
+<h2>Dedicated User</h2>
+
+<p>Let&rsquo;s create our user james:</p>
+
+<pre><code>$ useradd -m -s /bin/bash james
+</code></pre>
+
+<p>Allow our user to sudo without a password, by running <code>visudo</code> then append the following line:</p>
+
+<pre><code>james ALL=(ALL:ALL) NOPASSWD: ALL
+</code></pre>
+
+<h2>SSH Authorized Keys</h2>
+
+<p>If you don&rsquo;t already have a private SSH key, generate one on your client side:</p>
+
+<pre><code>$ ssh-keygen -f ~/.ssh/james -t rsa -C "james" -q -N ""
+</code></pre>
+
+<p>Then copy the public key:</p>
+
+<pre><code>$ cat ~/.ssh/james.pub | pbcopy
+</code></pre>
+
+<p>On your server create the SSH directories:</p>
+
+<pre><code>$ mkdir /home/james/.ssh
+</code></pre>
+
+<p>Now paste your public key into <code>/home/james/.ssh/authorized_keys</code></p>
+
+<p>Then change the ownership:</p>
+
+<pre><code>$ chmod 700 /home/james/.ssh
+$ chmod 644 /home/james/.ssh/authorized_keys
+$ chown -R james:james /home/james
+</code></pre>
+
+<h2>SSH Config</h2>
+
+<p>Backup your SSH config:</p>
+
+<pre><code>$ cp /etc/ssh/sshd_config /etc/ssh_sshd_config.bak
+</code></pre>
+
+<p>We will be using the SSH port <code>2914</code>, replace your SSH config with the following and make your adjustments where you need to:</p>
+
+<pre><code># /etc/ssh/sshd_config
+Port 2914
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+LoginGraceTime 1m
+PermitRootLogin no
+MaxAuthTries 3
+MaxSessions 5
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+AuthorizedKeysFile      /home/james/.ssh/authorized_keys
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM yes
+AllowUsers james
+DenyUsers root
+X11Forwarding yes
+PrintMotd no
+UseDNS no
+PidFile /var/run/sshd.pid
+AcceptEnv LANG LC_*
+Subsystem       sftp    /usr/lib/openssh/sftp-server
+</code></pre>
+
+<p>Then save the file and restart SSH:</p>
+
+<pre><code>$ systemctl restart sshd
+</code></pre>
+
+<p>While you are still connected to the shell session, open up a new terminal and try to connect with your new user and private SSH key to ensure that you can connect to your server.</p>
+
+<h2>Iptables</h2>
+
+<p>We want to drop incoming connections which make more than 10 connection attempts to SSH within 60 seconds.</p>
+
+<p>The tokens get refilled into buckets at 3 per minute and maximum of 3 tokens that can be filled into the bucket.</p>
+
+<p>Let&rsquo;s create our script:</p>
+
+<pre><code>$ mkdir -p /opt/scripts
+$ touch /opt/scripts/fw.sh
+</code></pre>
+
+<p>In our script we will place the following content:</p>
+
+<pre><code>#!/usr/bin/env bash
+INTERFACE=eth0 # check ifconfig to determine the correct interface
+SSH_PORT=2914
+CONNECTION_ATTEMPTS=10
+CONNECTION_TIME=60
+#WHITELIST_IP=x.x.x.x/32 # replace ip and uncomment if you want to whitelist a ip
+#iptables -I INPUT -s ${WHITELIST_IP} -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -j ACCEPT # uncomment if you want to use whitelisting
+iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --set
+iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --update --seconds ${CONNECTION_TIME} --hitcount ${CONNECTION_ATTEMPTS} -j DROP
+iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state NEW -m limit --limit 3/min --limit-burst 3 -j ACCEPT
+iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -o ${INTERFACE} -p tcp --sport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
+</code></pre>
+
+<p>Now we want to execute this script whenever the server boots, open up <code>/etc/rc.local</code> and append the following line, so that the file looks more or less like:</p>
+
+<pre><code>#!/bin/bash
+/opt/scripts/fw.sh
+exit 0
+</code></pre>
+
+<p>Ensure both files are executable:</p>
+
+<pre><code>$ chmod +x /opt/scripts/fw.sh
+$ chmod +x /etc/rc.local
+</code></pre>
+
+<p>When you are sure everything is in place, reboot:</p>
+
+<pre><code>$ reboot
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Set a Static IP in Ubuntu 18]]></title>
@@ -383,127 +536,6 @@ TCP window size: 43.8 KByte (default)
 <li><a href="https://www.linode.com/docs/networking/diagnostics/diagnosing-network-issues-with-mtr/">Linode: Diagnose Network Issues with MTR</a></li>
 </ul>
 
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Port Status Checker Script in C Language]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/02/08/port-status-checker-script-in-c-language/"/>
-    <updated>2019-02-08T08:56:11-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/02/08/port-status-checker-script-in-c-language</id>
-    <content type="html"><![CDATA[<p>This is a simple script in the C Programming Language to test the port status of a remote address.</p>
-
-<h2>Requirements:</h2>
-
-<p>You will need the gcc package to compile the program:</p>
-
-<p>For RHEL based distro&rsquo;s:</p>
-
-<pre><code class="bash">$ yum install gcc -y
-</code></pre>
-
-<p>For Debian based distro&rsquo;s:</p>
-
-<pre><code class="bash">$ apt install gcc -y
-</code></pre>
-
-<h2>Check TCP Port Status in C Language:</h2>
-
-<p>Our file: <code>test.c</code></p>
-
-<pre><code class="c">#include &lt;stdio.h&gt;
-#include &lt;stdlib.h&gt;
-#include &lt;unistd.h&gt;
-#include &lt;string.h&gt;
-#include &lt;sys/types.h&gt;
-#include &lt;sys/socket.h&gt;
-#include &lt;netinet/in.h&gt;
-#include &lt;netdb.h&gt;
-
-
-int main(int argc, char *argv[]) {
-
-    int portno     = 443;
-    char *hostname = "google.com";
-
-    int sockfd;
-    struct sockaddr_in serv_addr;
-    struct hostent *server;
-
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd &lt; 0) {
-        error("Error opening socket\n");
-    }
-
-    server = gethostbyname(hostname);
-
-    if (server == NULL) {
-        fprintf(stderr,"ERROR, no such host\n");
-        exit(0);
-    }
-
-    bzero((char *) &amp;serv_addr, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    bcopy((char *)server-&gt;h_addr,
-         (char *)&amp;serv_addr.sin_addr.s_addr,
-         server-&gt;h_length);
-
-    serv_addr.sin_port = htons(portno);
-    if (connect(sockfd,(struct sockaddr *) &amp;serv_addr, sizeof(serv_addr)) &lt; 0) {
-        printf("Port is Closed\n");
-    } else {
-        printf("Port is Open\n");
-    }
-
-    close(sockfd);
-    return 0;
-}
-</code></pre>
-
-<h2>Compile:</h2>
-
-<p>Compile using gcc:</p>
-
-<pre><code>$ gcc -o test test.c
-</code></pre>
-
-<h2>Execute:</h2>
-
-<p>Execute the script:</p>
-
-<pre><code class="bash">$ ./test
-Port is Open
-</code></pre>
 
 <h2>Thank You</h2>
 

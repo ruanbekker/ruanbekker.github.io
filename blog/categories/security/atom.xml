@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Security | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/security/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-11-20T06:31:59+00:00</updated>
+  <updated>2020-12-18T13:59:12+00:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,159 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Harden Your SSH Security on Linux Servers]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/12/18/harden-your-ssh-security-on-linux-servers/"/>
+    <updated>2020-12-18T13:32:18+00:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/12/18/harden-your-ssh-security-on-linux-servers</id>
+    <content type="html"><![CDATA[<p>In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules.</p>
+
+<p>This will be the list of things that we will do:</p>
+
+<pre><code>  - Change the SSH Port
+  - Don't allow root to SSH
+  - Disable password based authentication
+  - Enable key based authentication and only for a singular user
+  - Allow our user to sudo
+  - Use iptables to block sources trying to DDoS your server
+</code></pre>
+
+<h2>Packages</h2>
+
+<p>First let&rsquo;s install the packages that we need, I&rsquo;m using Debian so I will be using <code>apt</code>:</p>
+
+<pre><code>$ apt update &amp;&amp; apt upgrade -y
+$ apt install sudo -y
+</code></pre>
+
+<h2>Dedicated User</h2>
+
+<p>Let&rsquo;s create our user james:</p>
+
+<pre><code>$ useradd -m -s /bin/bash james
+</code></pre>
+
+<p>Allow our user to sudo without a password, by running <code>visudo</code> then append the following line:</p>
+
+<pre><code>james ALL=(ALL:ALL) NOPASSWD: ALL
+</code></pre>
+
+<h2>SSH Authorized Keys</h2>
+
+<p>If you don&rsquo;t already have a private SSH key, generate one on your client side:</p>
+
+<pre><code>$ ssh-keygen -f ~/.ssh/james -t rsa -C "james" -q -N ""
+</code></pre>
+
+<p>Then copy the public key:</p>
+
+<pre><code>$ cat ~/.ssh/james.pub | pbcopy
+</code></pre>
+
+<p>On your server create the SSH directories:</p>
+
+<pre><code>$ mkdir /home/james/.ssh
+</code></pre>
+
+<p>Now paste your public key into <code>/home/james/.ssh/authorized_keys</code></p>
+
+<p>Then change the ownership:</p>
+
+<pre><code>$ chmod 700 /home/james/.ssh
+$ chmod 644 /home/james/.ssh/authorized_keys
+$ chown -R james:james /home/james
+</code></pre>
+
+<h2>SSH Config</h2>
+
+<p>Backup your SSH config:</p>
+
+<pre><code>$ cp /etc/ssh/sshd_config /etc/ssh_sshd_config.bak
+</code></pre>
+
+<p>We will be using the SSH port <code>2914</code>, replace your SSH config with the following and make your adjustments where you need to:</p>
+
+<pre><code># /etc/ssh/sshd_config
+Port 2914
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+LoginGraceTime 1m
+PermitRootLogin no
+MaxAuthTries 3
+MaxSessions 5
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+AuthorizedKeysFile      /home/james/.ssh/authorized_keys
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM yes
+AllowUsers james
+DenyUsers root
+X11Forwarding yes
+PrintMotd no
+UseDNS no
+PidFile /var/run/sshd.pid
+AcceptEnv LANG LC_*
+Subsystem       sftp    /usr/lib/openssh/sftp-server
+</code></pre>
+
+<p>Then save the file and restart SSH:</p>
+
+<pre><code>$ systemctl restart sshd
+</code></pre>
+
+<p>While you are still connected to the shell session, open up a new terminal and try to connect with your new user and private SSH key to ensure that you can connect to your server.</p>
+
+<h2>Iptables</h2>
+
+<p>We want to drop incoming connections which make more than 10 connection attempts to SSH within 60 seconds.</p>
+
+<p>The tokens get refilled into buckets at 3 per minute and maximum of 3 tokens that can be filled into the bucket.</p>
+
+<p>Let&rsquo;s create our script:</p>
+
+<pre><code>$ mkdir -p /opt/scripts
+$ touch /opt/scripts/fw.sh
+</code></pre>
+
+<p>In our script we will place the following content:</p>
+
+<pre><code>#!/usr/bin/env bash
+INTERFACE=eth0 # check ifconfig to determine the correct interface
+SSH_PORT=2914
+CONNECTION_ATTEMPTS=10
+CONNECTION_TIME=60
+#WHITELIST_IP=x.x.x.x/32 # replace ip and uncomment if you want to whitelist a ip
+#iptables -I INPUT -s ${WHITELIST_IP} -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -j ACCEPT # uncomment if you want to use whitelisting
+iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --set
+iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --update --seconds ${CONNECTION_TIME} --hitcount ${CONNECTION_ATTEMPTS} -j DROP
+iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state NEW -m limit --limit 3/min --limit-burst 3 -j ACCEPT
+iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
+iptables -A OUTPUT -o ${INTERFACE} -p tcp --sport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
+</code></pre>
+
+<p>Now we want to execute this script whenever the server boots, open up <code>/etc/rc.local</code> and append the following line, so that the file looks more or less like:</p>
+
+<pre><code>#!/bin/bash
+/opt/scripts/fw.sh
+exit 0
+</code></pre>
+
+<p>Ensure both files are executable:</p>
+
+<pre><code>$ chmod +x /opt/scripts/fw.sh
+$ chmod +x /etc/rc.local
+</code></pre>
+
+<p>When you are sure everything is in place, reboot:</p>
+
+<pre><code>$ reboot
+</code></pre>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Encrypt and Decrypt Files With Ccrypt]]></title>
@@ -723,100 +876,6 @@ botocore.exceptions.ClientError: An error occurred (AccessDeniedException) when 
 
 <script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Capturing 54 Million Passwords With a Docker SSH Honeypot]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2018/10/11/capturing-54-million-passwords-with-a-docker-ssh-honeypot/"/>
-    <updated>2018-10-11T16:38:52-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2018/10/11/capturing-54-million-passwords-with-a-docker-ssh-honeypot</id>
-    <content type="html"><![CDATA[<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1539291851/ssh-docker-honeypot_eyhzc7.png" alt="" /></p>
-
-<p>The last couple of days I picked up on my ELK Stack a couple thousands of SSH Brute Force Attacks, so I decided I will just revisit my SSH Server configuration, and change my SSH Port to something else for the interim. The dashboard that showed me the results at that point in time:</p>
-
-<p><img src="https://res.cloudinary.com/rbekker/image/upload/v1539292443/kibana-failed-ssh-auth_udkxkl.png" alt="" /></p>
-
-<p>Then I decided I actually would like to setup a SSH Honeypot to listen on Port 22 and change my SSH Server to listen on 222 and capture their IP Addresses, Usernames and Passwords that they are trying to use and dump it all in a file so that I can build up my own password dictionary :D</p>
-
-<h2>SSH Configuration:</h2>
-
-<p>Changing the SSH Port:</p>
-
-<pre><code class="bash">$ sudo vim /etc/ssh/sshd_config
-</code></pre>
-
-<p>Change the port to 222:</p>
-
-<pre><code class="bash">Port 222
-</code></pre>
-
-<p>Restart the SSH Server:</p>
-
-<pre><code class="bash">$ sudo /etc/init.d/ssh restart
-</code></pre>
-
-<p>Verify that the SSH Server is running on the new port:</p>
-
-<pre><code class="bash">$ sudo netstat -tulpn | grep sshd
-tcp        0      0 0.0.0.0:222            0.0.0.0:*               LISTEN      28838/sshd
-</code></pre>
-
-<h2>Docker SSH Honeypot:</h2>
-
-<p>Thanks to <a href="https://github.com/random-robbie/docker-ssh-honey">random-robbie</a>, as he had everything I was looking for on Github.</p>
-
-<p>Setup the SSH Honeypot:</p>
-
-<pre><code class="bash">$ git clone https://github.com/random-robbie/docker-ssh-honey
-$ cd docker-ssh-honey/
-$ docker build . -t local:ssh-honepot
-$ docker run -itd --name ssh-honeypot -p 22:22 local:ssh-honepot
-</code></pre>
-
-<p>Once people attempt to ssh, you will get the output to stdout:</p>
-
-<pre><code class="bash">$ docker logs -f $(docker ps -f name=ssh-honeypot -q) | grep -v 'Error exchanging' | head -10
-[Tue Jul 31 01:13:41 2018] ssh-honeypot 0.0.8 by Daniel Roberson started on port 22. PID 5
-[Tue Jul 31 01:19:49 2018] 1xx.1xx.1xx.1x gambaa gambaa
-[Tue Jul 31 01:23:26 2018] 1xx.9x.1xx.1xx root toor
-[Tue Jul 31 01:25:57 2018] 1xx.2xx.1xx.1xx root Passw0rd1234
-[Tue Jul 31 01:26:00 2018] 1xx.2xx.1xx.1xx root Qwer1234
-[Tue Jul 31 01:26:00 2018] 1xx.2xx.1xx.1xx root Abcd1234
-[Tue Jul 31 01:26:08 2018] 1xx.2xx.1xx.1xx root ubuntu
-[Tue Jul 31 01:26:09 2018] 1xx.2xx.1xx.1xx root PassWord
-[Tue Jul 31 01:26:10 2018] 1xx.2xx.1xx.1xx root password321
-[Tue Jul 31 01:26:15 2018] 1xx.2xx.1xx.1xx root zxcvbnm
-</code></pre>
-
-<h2>Saving results to disk:</h2>
-
-<p>Redirecting the output to a log file, running in the foreground as a screen session:</p>
-
-<pre><code class="bash">$ screen -S honeypot
-$ docker logs -f f6cb | grep -v 'Error exchanging' | awk '{print $6, $7, $8}' &gt;&gt; /var/log/ssh-honeypot.log
-</code></pre>
-
-<p>Detach from your screen session:</p>
-
-<pre><code class="bash">Ctrl + a; d
-</code></pre>
-
-<p>Checking out the logs</p>
-
-<pre><code class="bash">$ head -3 /var/log/ssh-honeypot.log
-2.7.2x.1x root jiefan
-4x.7.2x.1x root HowAreYou
-4x.7.2x.1x root Sqladmin
-</code></pre>
-
-<p>Leaving this running for a couple of months, and I have a massive password database:</p>
-
-<pre><code class="bash">$ wc -l /var/log/honeypot/ssh.log
-54184260 /var/log/honeypot/ssh.log
-</code></pre>
-
-<p>That is correct, 54 million password attempts. 5372 Unique IPs, 4082 Unique Usernames, 88829 Unique Passwords.</p>
 ]]></content>
   </entry>
   

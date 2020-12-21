@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2020-11-20T06:31:59+00:00</updated>
+  <updated>2020-12-21T08:55:54+00:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,221 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Harden Your SSH Security on Linux Servers]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2020/12/18/harden-your-ssh-security-on-linux-servers/"/>
+    <updated>2020-12-18T13:32:18+00:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2020/12/18/harden-your-ssh-security-on-linux-servers</id>
+    <content type="html"><![CDATA[<p>In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules.</p>
+
+<p>This will be the list of things that we will do:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>  - Change the SSH Port
+</span><span class='line'>  - Don't allow root to SSH
+</span><span class='line'>  - Disable password based authentication
+</span><span class='line'>  - Enable key based authentication and only for a singular user
+</span><span class='line'>  - Allow our user to sudo
+</span><span class='line'>  - Use iptables to block sources trying to DDoS your server</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Packages</h2>
+
+<p>First let&rsquo;s install the packages that we need, I&rsquo;m using Debian so I will be using <code>apt</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt upgrade -y
+</span><span class='line'>$ apt install sudo -y</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Dedicated User</h2>
+
+<p>Let&rsquo;s create our user james:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ useradd -m -s /bin/bash james</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Allow our user to sudo without a password, by running <code>visudo</code> then append the following line:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>james ALL=(ALL:ALL) NOPASSWD: ALL</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>SSH Authorized Keys</h2>
+
+<p>If you don&rsquo;t already have a private SSH key, generate one on your client side:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh-keygen -f ~/.ssh/james -t rsa -C "james" -q -N ""</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then copy the public key:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ~/.ssh/james.pub | pbcopy</span></code></pre></td></tr></table></div></figure>
+
+
+<p>On your server create the SSH directories:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /home/james/.ssh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now paste your public key into <code>/home/james/.ssh/authorized_keys</code></p>
+
+<p>Then change the ownership:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod 700 /home/james/.ssh
+</span><span class='line'>$ chmod 644 /home/james/.ssh/authorized_keys
+</span><span class='line'>$ chown -R james:james /home/james</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>SSH Config</h2>
+
+<p>Backup your SSH config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cp /etc/ssh/sshd_config /etc/ssh_sshd_config.bak</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We will be using the SSH port <code>2914</code>, replace your SSH config with the following and make your adjustments where you need to:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'># /etc/ssh/sshd_config
+</span><span class='line'>Port 2914
+</span><span class='line'>HostKey /etc/ssh/ssh_host_rsa_key
+</span><span class='line'>HostKey /etc/ssh/ssh_host_ecdsa_key
+</span><span class='line'>HostKey /etc/ssh/ssh_host_ed25519_key
+</span><span class='line'>LoginGraceTime 1m
+</span><span class='line'>PermitRootLogin no
+</span><span class='line'>MaxAuthTries 3
+</span><span class='line'>MaxSessions 5
+</span><span class='line'>AuthenticationMethods publickey
+</span><span class='line'>PubkeyAuthentication yes
+</span><span class='line'>AuthorizedKeysFile      /home/james/.ssh/authorized_keys
+</span><span class='line'>PasswordAuthentication no
+</span><span class='line'>PermitEmptyPasswords no
+</span><span class='line'>ChallengeResponseAuthentication no
+</span><span class='line'>UsePAM yes
+</span><span class='line'>AllowUsers james
+</span><span class='line'>DenyUsers root
+</span><span class='line'>X11Forwarding yes
+</span><span class='line'>PrintMotd no
+</span><span class='line'>UseDNS no
+</span><span class='line'>PidFile /var/run/sshd.pid
+</span><span class='line'>AcceptEnv LANG LC_*
+</span><span class='line'>Subsystem       sftp    /usr/lib/openssh/sftp-server</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then save the file and restart SSH:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart sshd</span></code></pre></td></tr></table></div></figure>
+
+
+<p>While you are still connected to the shell session, open up a new terminal and try to connect with your new user and private SSH key to ensure that you can connect to your server.</p>
+
+<h2>Iptables</h2>
+
+<p>We want to drop incoming connections which make more than 10 connection attempts to SSH within 60 seconds.</p>
+
+<p>The tokens get refilled into buckets at 3 per minute and maximum of 3 tokens that can be filled into the bucket.</p>
+
+<p>Let&rsquo;s create our script:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /opt/scripts
+</span><span class='line'>$ touch /opt/scripts/fw.sh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In our script we will place the following content:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>#!/usr/bin/env bash
+</span><span class='line'>INTERFACE=eth0 # check ifconfig to determine the correct interface
+</span><span class='line'>SSH_PORT=2914
+</span><span class='line'>CONNECTION_ATTEMPTS=10
+</span><span class='line'>CONNECTION_TIME=60
+</span><span class='line'>#WHITELIST_IP=x.x.x.x/32 # replace ip and uncomment if you want to whitelist a ip
+</span><span class='line'>#iptables -I INPUT -s ${WHITELIST_IP} -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -j ACCEPT # uncomment if you want to use whitelisting
+</span><span class='line'>iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --set
+</span><span class='line'>iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --update --seconds ${CONNECTION_TIME} --hitcount ${CONNECTION_ATTEMPTS} -j DROP
+</span><span class='line'>iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state NEW -m limit --limit 3/min --limit-burst 3 -j ACCEPT
+</span><span class='line'>iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
+</span><span class='line'>iptables -A OUTPUT -o ${INTERFACE} -p tcp --sport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we want to execute this script whenever the server boots, open up <code>/etc/rc.local</code> and append the following line, so that the file looks more or less like:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
+</span><span class='line'>/opt/scripts/fw.sh
+</span><span class='line'>exit 0</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure both files are executable:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x /opt/scripts/fw.sh
+</span><span class='line'>$ chmod +x /etc/rc.local</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you are sure everything is in place, reboot:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ reboot</span></code></pre></td></tr></table></div></figure>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Encrypt and Decrypt Files With Ccrypt]]></title>
@@ -4684,55 +4899,6 @@
 <span class='line-number'>2</span>
 </pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh -p 2202 pi@localhost
 </span><span class='line'>pi@rpi-02:~ $</span></code></pre></td></tr></table></div></figure>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Get the Top 10 Items on Hackernews in Python]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/06/13/get-the-top-10-items-on-hackernews-in-python/"/>
-    <updated>2020-06-13T19:53:20+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/06/13/get-the-top-10-items-on-hackernews-in-python</id>
-    <content type="html"><![CDATA[<p>This is a quick post on how to use python to get the 10 latest items from hacker<a href="news:">news:</a></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>import requests
-</span><span class='line'>import json
-</span><span class='line'>
-</span><span class='line'>def get_top_ten():
-</span><span class='line'>    ids = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty').json()[0:10]
-</span><span class='line'>    for id in ids:
-</span><span class='line'>        postresponse = requests.get('https://hacker-news.firebaseio.com/v0/item/{postid}.json?print=pretty'.format(postid=id)).json()
-</span><span class='line'>        formatted = {"title": postresponse["title"], "type": postresponse["type"], "url": postresponse["url"], "by": postresponse["by"]}
-</span><span class='line'>        print(json.dumps(formatted, indent=2))</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When running it:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; get_top_ten()
-</span><span class='line'>..
-</span><span class='line'>{
-</span><span class='line'>  "title": "Play Counter-Strike 1.6 in your browser",
-</span><span class='line'>  "type": "story",
-</span><span class='line'>  "url": "http://cs-online.club",
-</span><span class='line'>  "by": "m0ck"
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
 
 ]]></content>
   </entry>

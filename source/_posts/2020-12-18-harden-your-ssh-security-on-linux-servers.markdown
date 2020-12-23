@@ -21,7 +21,7 @@ This will be the list of things that we will do:
 
 ## Packages
 
-First let's install the packages that we need, I'm using Debian so I will be using `apt`:
+First let's install the packages that we need, I'm using Debian so I will be using the `apt` package manager:
 
 ```
 $ apt update && apt upgrade -y

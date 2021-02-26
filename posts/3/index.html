@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial we will setup a Hugo Blog with the Kiera theme on Linux and will be using Ubuntu for this demonstration, but since Hugo runs on Go &hellip;">
+  <meta name="description" content="Logging with Loki is AMAZING! In the past couple of months i&rsquo;ve been working a lot with logging, but more specifically logging with loki. As &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,435 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/08/13/getting-started-on-logging-with-loki-using-docker/">Getting Started on Logging With Loki Using Docker</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-08-13T13:39:28+00:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>13</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>1:39 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>Logging with Loki is AMAZING!</p>
+
+<p>In the past couple of months i&rsquo;ve been working a lot with logging, but more specifically logging with loki. As most of my metrics reside in prometheus, I use grafana quite extensively and logging was always the one that stood out a bit as I pushed my logs to elasticsearch and consumed them from grafana. Which worked pretty well, but the maintenance and resource costs was a bit too much for what I was looking for.</p>
+
+<p>And then grafana released Loki, which is like prometheus, but for logs. And that was just super, exactly what I was looking for. For my use case, I was looking for something that can be consumed by grafana as a presentation layer, central based so I can push all sorts of logs, and want a easy way to grep for logs and a bonus would be to have a cli tool.</p>
+
+<p>And Loki checked all those boxes!</p>
+
+<div class="tenor-gif-embed" data-postid="7644619" data-share-method="host" data-width="100%" data-aspect-ratio="1.1971153846153846"><a href="https://tenor.com/view/oh-yeah-gif-7644619">Oh Yeah Parks And Recreation GIF</a> from <a href="https://tenor.com/search/ohyeah-gifs">Ohyeah GIFs</a></div>
+
+
+<script type="text/javascript" async src="https://tenor.com/embed.js"></script>
+
+
+<h2>What can you expect from this blog</h2>
+
+<p>In this post will be a getting started guide to Loki, we will provision Loki, Grafana and Nginx using Docker to get our environment up and running, so that we can push our nginx container logs to the loki datasource, and access the logs via grafana.</p>
+
+<p>We will then generate some logs so that we can show a couple of query examples using the log query language (LogQL) and use the LogCLI to access our logs via cli.</p>
+
+<p>In a <a href="">future post</a>, I will demonstrate how to setup Loki for a non-docker deployment.</p>
+
+<h2>Some useful information about Loki</h2>
+
+<p>Let&rsquo;s first talk about Loki compared with Elasticsearch, as they are not the same:</p>
+
+<ol>
+<li>Loki does not index the text of the logs, instead grouping entries into streams and index those with labels</li>
+<li>Things like full text search engines tokenizes your text into k/v pairs and gets written to an inverted index, which over time in my opinion gets complex to maintain, expensive to scale, storage retention, etc.</li>
+<li>Loki is advertised as easy to scale, affordable to operate as it uses DynamoDB for Indexing and S3 for Storage</li>
+<li>When using Loki, you may need to forget what you know and look to see how the problem can be solved differently with parallelization. Loki’s superpower is breaking up queries into small pieces and dispatching them in parallel so that you can query huge amounts of log data in small amounts of time.</li>
+</ol>
+
+
+<p>If we look at the <strong>Loki Log Model</strong>, we can see that the timestamp and the labels are indexed and the content of the logs are not indexed:</p>
+
+<p><img src="https://img.sysadmins.co.za/cpr6n7.png" alt="loki" /></p>
+
+<p>A <strong>log stream</strong> is a stream of log entries with the same exact label set:</p>
+
+<p><img src="https://img.sysadmins.co.za/el6djk.png" alt="loki" /></p>
+
+<p>For the <strong>storage</strong> side, inside each chunk, log entries are sorted by timestamp. Loki only indexes minimum and maximum timestamps of a chunk. Storage options support local storage, AWS S3, Google Cloud Storage and Azure</p>
+
+<p><img src="https://img.sysadmins.co.za/959pjw.png" alt="loki" /></p>
+
+<p>For <strong>chunks and querying</strong>, chunks are filled per stream and they are flushed of a few criterias such as age and size:</p>
+
+<p><img src="https://img.sysadmins.co.za/ekm8cy.png" alt="loki" /></p>
+
+<p>And one of the most important parts are the <strong>labels</strong>, labels define the stream and therefore its very important.</p>
+
+<p>High cardinality is bad for labels, as something like a IP address can reduce your performance a lot, as it will create a stream for every unique IP label.</p>
+
+<p>Static defined labels such as environment, hostnames are good, you can read more up about it <a href="https://grafana.com/blog/2020/04/21/how-labels-in-loki-can-make-log-queries-faster-and-easier/">here</a></p>
+
+<p>Here is a info graphic on how one log line can be split up into 36 streams:</p>
+
+<p><img src="https://img.sysadmins.co.za/g119oq.png" alt="" /></p>
+
+<p>So with that being said, <strong>good labels</strong> will be considered as cluster, job, namespace, environment, etc where as <strong>bad labels</strong> will be things such as userid, ip address, url path, etc</p>
+
+<h2>Selecting logstreams with Loki</h2>
+
+<p>Selecting logstreams, is done by using <strong>label matchers</strong> and <strong>filter expressions</strong>, such as this example:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs", environment="development"} |= "POST" |~ "196.35.64.+"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Label Matchers and Filter Expressions support:</p>
+
+<ul>
+<li><code>=</code> Contains string</li>
+<li><code>!=</code> Does not contain string</li>
+<li><code>=~</code> Matches regular expression</li>
+<li><code>!~</code> Does not match regular expression</li>
+</ul>
+
+
+<h2>Supported Clients</h2>
+
+<p>At the moment of writing, loki supports the following log clients:</p>
+
+<ul>
+<li>Promtail (tails logs and ships to Loki)</li>
+<li>Docker Driver</li>
+<li>Fluentd</li>
+<li>Fluent Bit</li>
+<li>Logstash</li>
+</ul>
+
+
+<p>We will be going into more detail on using promtail in a <a href="">future post</a>, but you can read more up about it <a href="https://github.com/grafana/loki/tree/master/cmd">here</a></p>
+
+<h2>Loki in Action</h2>
+
+<p>Time to get to the fun part, clone my <a href="https://github.com/ruanbekker/loki-docker-nginx-example">github repo</a>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/ruanbekker/loki-docker-nginx-example
+</span><span class='line'>$ cd loki-docker-nginx-example</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can inspect the docker-compose.yml:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat docker-compose.yml
+</span><span class='line'>version: "3.4"
+</span><span class='line'>
+</span><span class='line'>services:
+</span><span class='line'>  my-nginx-service:
+</span><span class='line'>    image: nginx
+</span><span class='line'>    container_name: my-nginx-service
+</span><span class='line'>    ports:
+</span><span class='line'>      - 8000:80
+</span><span class='line'>    environment:
+</span><span class='line'>      - FOO=bar
+</span><span class='line'>    logging:
+</span><span class='line'>      driver: loki
+</span><span class='line'>      options:
+</span><span class='line'>        loki-url: http://localhost:3100/loki/api/v1/push
+</span><span class='line'>        loki-external-labels: job=dockerlogs,owner=ruan,environment=development
+</span><span class='line'>
+</span><span class='line'>  grafana:
+</span><span class='line'>    image: grafana/grafana:7.1.1
+</span><span class='line'>    volumes:
+</span><span class='line'>    - ./config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+</span><span class='line'>    ports:
+</span><span class='line'>    - "3000:3000"
+</span><span class='line'>
+</span><span class='line'>  loki:
+</span><span class='line'>   image: grafana/loki:v1.3.0
+</span><span class='line'>   volumes:
+</span><span class='line'>     - ./config/loki.yaml:/etc/config/loki.yaml
+</span><span class='line'>   entrypoint:
+</span><span class='line'>     - /usr/bin/loki
+</span><span class='line'>     - -config.file=/etc/config/loki.yaml
+</span><span class='line'>   ports:
+</span><span class='line'>     - "3100:3100"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see loki will be the datasource where we will be pushing our logs to from our nginx container and we are defining our logging section where it should find loki and we are also setting labels to that log stream using <code>loki-external-labels</code>. Then we are using grafana to auto configure the loki datasource from the <code>./config/datasource.yml</code> section so that we can visualize our logs.</p>
+
+<p>If you don&rsquo;t want to define the logging section per container, you can always set the defaults using the <code>/etc/docker/daemon.json</code> by following <a href="https://grafana.com/docs/loki/latest/clients/docker-driver/configuration/#change-the-default-logging-driver">this guide</a></p>
+
+<p>Let&rsquo;s boot up our stack:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After everything is up, you should be able to access nginx by visiting: <code>http://nginx.localdns.xyz:8000/</code>, after you received a response, visit Grafana on <code>http://grafana.localdns.xyz:3000</code> using the username and password: <code>admin/admin</code>.</p>
+
+<p>If you head over to datasources, you should see the loki datasource which was provisioned for you:</p>
+
+<p><img src="https://img.sysadmins.co.za/tyn0ny.png" alt="loki-grafana" /></p>
+
+<p>When you head to the left on explore and you select the loki datasource on <code>http://grafana.localdns.xyz:3000/explore</code> you should see the following:</p>
+
+<p><img src="https://img.sysadmins.co.za/5kp07m.png" alt="loki-grafana" /></p>
+
+<p>You will see that grafana discovers logstreams with the label <code>job</code> as you can see that our <code>job="dockerlogs"</code> can be seen there. We can either click on it, select the log labels from the left and browse the label we want to select or manually enter the query.</p>
+
+<p>I will be using the query manually:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs"}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So now we will get all the logs that has that label associated and as you can see, we see our request that we made:</p>
+
+<p><img src="https://img.sysadmins.co.za/gra0oe.png" alt="nginx-grafana-loki" /></p>
+
+<p>We can see one error due to the favicon.ico that it could not find, but let&rsquo;s first inspect our first log line:</p>
+
+<p><img src="https://img.sysadmins.co.za/6dbuqn.png" alt="loki" /></p>
+
+<p>Here we can see the labels assigned to that log event, which we can include in our query, like if we had multiple services and different environments, we can use a query like the following to only see logs for a specific service and environment:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs", environment="development", compose_service="my-nginx-service"}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the example above we used the selectors to select the logs we want to see, now we can use our filter expressions, to &ldquo;grep&rdquo; our logs.</p>
+
+<p>Let&rsquo;s say we want to focus only on one service, and we want to filter for any logs with GET requests, so first we select to service then apply the filter expression:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET"</span></code></pre></td></tr></table></div></figure>
+
+
+<p><img src="https://img.sysadmins.co.za/vv609g.png" alt="loki-logs" /></p>
+
+<p>As you can see we can see the ones we were looking for, we can also chain them, so we want to se GET&rsquo;s and errors:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And lets say for some reason we only want to see the logs that comes from a 192.168.32 subnet:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32."</span></code></pre></td></tr></table></div></figure>
+
+
+<p>But we dont want to see requests from &ldquo;nginx.localdns.xyz&rdquo;:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32." != "nginx.localdns.xyz"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Make two extra get requests to &ldquo;foo.localdns.xyz:8000&rdquo; and &ldquo;bar.localdns.xyz:8000&rdquo; and then we change the query to say that we only want to see errors and hostnames coming from the 2 requests that we made:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "error" |~ "(foo|bar).localdns.xyz"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we expand one of the log lines, we can do a ad-hoc analysis to see the percentage of logs by source for example:</p>
+
+<p><img src="https://img.sysadmins.co.za/9ctz6d.png" alt="loki-logs" /></p>
+
+<h2>LogCLI</h2>
+
+<p>If you prefer the cli to query logs, logcli is the command line client for loki, allows you to query logs from your terminal and has clients for linux, mac and windows.</p>
+
+<p>Check the releases for the latest version:</p>
+
+<ul>
+<li><a href="https://github.com/grafana/loki/releases">https://github.com/grafana/loki/releases</a></li>
+</ul>
+
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/grafana/loki/releases/download/v1.5.0/logcli-darwin-amd64.zip
+</span><span class='line'>$ unzip logcli-darwin-amd64.zip
+</span><span class='line'>$ mv logcli-darwin-amd64 /usr/local/bin/logcli</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set your environment details, in our case we dont have a username and password for loki:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ #export LOKI_USERNAME=${MYUSER}
+</span><span class='line'>$ #export LOKI_PASSWORD=${MYPASS}
+</span><span class='line'>$ export LOKI_ADDR=http://localhost:3001</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can view all our labels, let’s view all the job labels:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli labels job
+</span><span class='line'>http://localhost:3001/loki/api/v1/label/job/values
+</span><span class='line'>dockerlogs</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let’s look at family apps nginx logs:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query '{job="dockerlogs"}'
+</span><span class='line'>http://localhost:3001/loki/api/v1/query_range?direction=BACKWARD&end=1587727924005496000&limit=30&query=%7Bjob%3D%22dockerlogs%22%2C&start=1587724324005496000
+</span><span class='line'>Common labels: {environment="development", owner="ruan", compose_service="my-nginx-service", job="dockerlogs", host="docker-desktop", compose_project="loki-nginx-docker"}
+</span><span class='line'>2020-08-13 17:08:40 192.168.32.1 - - [13/Aug/2020:15:08:40 +0000] "GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:79.0) Gecko/20100101 Firefox/79.0" "-"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also pipe that output to grep, awk, etc:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query '{job="dockerlogs"}' | grep GREP | awk -F 'X' '{print  $1}'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Supported arguments:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query --help
+</span><span class='line'>usage: logcli query [&lt;flags&gt;] &lt;query&gt;
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>Run a LogQL query.
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>Flags:
+</span><span class='line'>      --help             Show context-sensitive help (also try --help-long and --help-man).
+</span><span class='line'>      --version          Show application version.
+</span><span class='line'>  -q, --quiet            suppress everything but log lines
+</span><span class='line'>      --stats            show query statistics
+</span><span class='line'>  -o, --output=default   specify output mode [default, raw, jsonl]
+</span><span class='line'>  -z, --timezone=Local   Specify the timezone to use when formatting output timestamps [Local, UTC]
+</span><span class='line'>      --addr="http://localhost:3100"
+</span><span class='line'>                         Server address. Can also be set using LOKI_ADDR env var.
+</span><span class='line'>      --username=""      Username for HTTP basic auth. Can also be set using LOKI_USERNAME env var.
+</span><span class='line'>      --password=""      Password for HTTP basic auth. Can also be set using LOKI_PASSWORD env var.
+</span><span class='line'>      --ca-cert=""       Path to the server Certificate Authority. Can also be set using LOKI_CA_CERT_PATH env var.
+</span><span class='line'>      --tls-skip-verify  Server certificate TLS skip verify.
+</span><span class='line'>      --cert=""          Path to the client certificate. Can also be set using LOKI_CLIENT_CERT_PATH env var.
+</span><span class='line'>      --key=""           Path to the client certificate key. Can also be set using LOKI_CLIENT_KEY_PATH env var.
+</span><span class='line'>      --org-id=ORG-ID    org ID header to be substituted for auth
+</span><span class='line'>      --limit=30         Limit on number of entries to print.
+</span><span class='line'>      --since=1h         Lookback window.
+</span><span class='line'>      --from=FROM        Start looking for logs at this absolute time (inclusive)
+</span><span class='line'>      --to=TO            Stop looking for logs at this absolute time (exclusive)
+</span><span class='line'>      --step=STEP        Query resolution step width
+</span><span class='line'>      --forward          Scan forwards through logs.
+</span><span class='line'>      --no-labels        Do not print any labels
+</span><span class='line'>      --exclude-label=EXCLUDE-LABEL ...
+</span><span class='line'>                         Exclude labels given the provided key during output.
+</span><span class='line'>      --include-label=INCLUDE-LABEL ...
+</span><span class='line'>                         Include labels given the provided key during output.
+</span><span class='line'>      --labels-length=0  Set a fixed padding to labels
+</span><span class='line'>  -t, --tail             Tail the logs
+</span><span class='line'>      --delay-for=0      Delay in tailing by number of seconds to accumulate logs for re-ordering
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>Args:
+</span><span class='line'>  &lt;query&gt;  eg '{foo="bar",baz=~".*blip"} |~ ".*error.*"'</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank you</h2>
+
+<p>I hope this was useful</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2707,203 +3136,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/05/08/server-backups-to-google-drive-using-the-drive-cli-tool/">Server Backups to Google Drive Using the Drive CLI Tool</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-05-08T18:43:35+02:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>8</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>6:43 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>This tutorial will demonstrate how I ship my backups to Google Drive using the <a href="https://github.com/odeke-em/drive/releases/">drive</a> cli utility.</p>
-
-<p>What I really like about the drive cli tool, is that it&rsquo;s super easy to setup and you can easily script your backups to ship it to google drive.</p>
-
-<h2>What we will be doing</h2>
-
-<p>We will setup the drive cli tool, authorize it with your google account, then show how to upload your files to google drive from your terminal and then create a script to automatically upload your data to google drive and then include it in a cronjob.</p>
-
-<h2>Setup Drive CLI Tool</h2>
-
-<p>Head over to the <a href="https://github.com/odeke-em/drive/releases/">drive releases</a> page and get the latest version, at the moment of writing 0.3.9 is the latest. Then we will move it to our path and make it executable:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/odeke-em/drive/releases/download/v0.3.9/drive_linux
-</span><span class='line'>$ mv drive_linux /usr/bin/gdrive
-</span><span class='line'>$ chmod +x /usr/bin/gdrive</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You should be getting a output when running version as an argument:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ gdrive version
-</span><span class='line'>drive version: 0.3.9</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Credentials</h2>
-
-<p>Move to your home directory and initialize, this will ask you to access the google accounts web page, where you will be authorizing this application to use your google drive account. Upon succesful authorization, you will get a authorization code that we will need to paste in our terminal.</p>
-
-<p>This will then write the credentials file to ~/.gd/credentials.json`. <strong>Always</strong> remember to keep this file safe.</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ gdrive init
-</span><span class='line'>Visit this URL to get an authorization code
-</span><span class='line'>https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=x&redirect_uri=x&response_type=code&scope=x&state=x
-</span><span class='line'>Paste the authorization code: &lt; paste authorization code here &gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will now see that the credentials for your application has been saved as seen below:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ~/.gd/credentials.json
-</span><span class='line'>{"client_id":"&lt;redacted&gt;","client_secret":"&lt;redacted&gt;","refresh_token":"&lt;redacted&gt;"}</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Backup to Google Drive</h2>
-
-<p>On Google Drive, I have a backup folder named <code>Backups</code> and in my local path <code>/opt/backups/</code>, which has the files that I want to backup to google drive:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ls /opt/backups/
-</span><span class='line'>app.backup-2020-05-05.tar.gz  
-</span><span class='line'>app.backup-2020-05-06.tar.gz</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now let&rsquo;s backup the files to Google Drive, it works as follows <code>gdrive push -destination (path on google drive) (path on local drive)</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ gdrive push -destination Backups/demo/app1 /opt/backups/*
-</span><span class='line'>Resolving...
-</span><span class='line'>+ /Backups/demo/app1/app.backup-2020-05-05.tar.gz
-</span><span class='line'>+ /Backups/demo/app1/app.backup-2020-05-06.tar.gz
-</span><span class='line'>Addition count 2 src: 26.32MB
-</span><span class='line'>Proceed with the changes? [Y/n]:Y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see it checks what is on Google Drive and what is on the Local Drive, then determines what needs to be uploaded, and asks you if you want to continue.</p>
-
-<p>If we run that command again, you will see that it does not upload it again, as the content is already on Google Drive:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ gdrive push -destination Backups/demo/app1 /opt/backups/*
-</span><span class='line'>Resolving...
-</span><span class='line'>Everything is up-to-date.</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To test it out, let&rsquo;s create a new file and verify if it only uploads the new file:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ touch file.txt
-</span><span class='line'>$ gdrive push -destination Backups/demo/app1 /opt/backups/*
-</span><span class='line'>Resolving...
-</span><span class='line'>+ /Backups/demo/app1/file.txt
-</span><span class='line'>Addition count 1
-</span><span class='line'>Proceed with the changes? [Y/n]:y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That is all cool and all, but if we want to script this, we don&rsquo;t want to be prompted to continue, we can do this by adding a argument <code>-quiet</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ gdrive push -quiet -destination Backups/demo/app1 /opt/*</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Scripting our Backup Task</h2>
-
-<p>Let&rsquo;s create a script that makes a local archive, then uploads it to Google Drive, I will create the file: <code>/opt/scripts/backup.sh</code> with the following content:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
-</span><span class='line'>
-</span><span class='line'># make a local archive
-</span><span class='line'>tar -zcvf /opt/backups/app1.backup-$(date +%F).tar.gz \
-</span><span class='line'>  /home/me/data/dir1 \
-</span><span class='line'>  /home/me/data/dir2 \
-</span><span class='line'>  /home/me/data/dir3 \
-</span><span class='line'>  /home/me/data/dir4 
-</span><span class='line'>
-</span><span class='line'># backup to gdrive
-</span><span class='line'>sleep 1
-</span><span class='line'>gdrive push -quiet -destination Backups/Servers/sysadmins.co.za /opt/backups/sysadmins-blog/*
-</span><span class='line'>
-</span><span class='line'># delete archives older than 14 days from disk
-</span><span class='line'>sleep 1
-</span><span class='line'>find /opt/backups/ -type f -name "*.tar.gz" -mtime +14 -exec rm {} \;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Make the file executable:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x /opt/scripts/backup.sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then, we want to add it as a cronjob so that it runs every night at 23:10 in my case:</p>
-
-<p>Open crotab: <code>crontab -e</code> and add the following entry:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>10 23 * * * /opt/scripts/backup.sh</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Backups are important, especially when you rely on them, and it was never made. Plan ahead to not be in that situation.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/4">&larr; Older</a>
@@ -2954,6 +3186,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/02/26/ship-your-docker-logs-to-loki-using-fluentbit/">Ship Your Docker Logs to Loki Using Fluentbit</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/01/31/installing-arduino-and-setup-the-nodemcu-esp32/">Installing Arduino and Setup the NodeMCU ESP32</a>
       </li>
     
@@ -2967,10 +3203,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2020/12/18/harden-your-ssh-security-on-linux-servers/">Harden Your SSH Security on Linux Servers</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2020/11/20/encrypt-and-decrypt-files-with-ccrypt/">Encrypt and Decrypt Files With Ccrypt</a>
       </li>
     
   </ul>

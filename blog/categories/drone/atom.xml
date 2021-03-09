@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Drone | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/drone/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-02-26T18:36:28-05:00</updated>
+  <updated>2021-03-09T01:21:41-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,213 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[CICD With DroneCI and Gitea Using Docker Compose]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose/"/>
+    <updated>2021-03-09T01:10:10-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose</id>
+    <content type="html"><![CDATA[<p>In this post we wil set up a drone-ci and gitea stack using docker-compose and then running a test pipeline.</p>
+
+<p>I have posted a few times about this topic, but this post will be used when I create other examples and wanting to use this post for the ones not having the stack booted yet.</p>
+
+<h2>The Source Code</h2>
+
+<p>All the code will be in my <a href="https://github.com/ruanbekker/drone-gitea-on-docker">github repository</a>.</p>
+
+<p>For our <code>docker-compose.yml</code>:</p>
+
+<pre><code>version: '3.6'
+
+services:
+  gitea:
+    container_name: gitea
+    image: gitea/gitea:${GITEA_VERSION:-1.10.6}
+    restart: unless-stopped
+    environment:
+      # https://docs.gitea.io/en-us/install-with-docker/#environments-variables
+      - APP_NAME="Gitea"
+      - USER_UID=1000
+      - USER_GID=1000
+      - RUN_MODE=prod
+      - DOMAIN=${IP_ADDRESS}
+      - SSH_DOMAIN=${IP_ADDRESS}
+      - HTTP_PORT=3000
+      - ROOT_URL=http://${IP_ADDRESS}:3000
+      - SSH_PORT=222
+      - SSH_LISTEN_PORT=22
+      - DB_TYPE=sqlite3
+    ports:
+      - "3000:3000"
+      - "222:22"
+    networks:
+      - cicd_net
+    volumes:
+      - ./gitea:/data
+
+  drone:
+    container_name: drone
+    image: drone/drone:${DRONE_VERSION:-1.6.4}
+    restart: unless-stopped
+    depends_on:
+      - gitea
+    environment:
+      # https://docs.drone.io/server/provider/gitea/
+      - DRONE_DATABASE_DRIVER=sqlite3
+      - DRONE_DATABASE_DATASOURCE=/data/database.sqlite
+      - DRONE_GITEA_SERVER=http://${IP_ADDRESS}:3000/
+      - DRONE_GIT_ALWAYS_AUTH=false
+      - DRONE_RPC_SECRET=${DRONE_RPC_SECRET}
+      - DRONE_SERVER_PROTO=http
+      - DRONE_SERVER_HOST=${IP_ADDRESS}:3001
+      - DRONE_TLS_AUTOCERT=false
+      - DRONE_USER_CREATE=${DRONE_USER_CREATE}
+      - DRONE_GITEA_CLIENT_ID=${DRONE_GITEA_CLIENT_ID}
+      - DRONE_GITEA_CLIENT_SECRET=${DRONE_GITEA_CLIENT_SECRET}
+    ports:
+      - "3001:80"
+      - "9001:9000"
+    networks:
+      - cicd_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./drone:/data
+
+  drone-runner:
+    container_name: drone-runner
+    image: drone/drone-runner-docker:${DRONE_RUNNER_VERSION:-1}
+    restart: unless-stopped
+    depends_on:
+      - drone
+    environment:
+      # https://docs.drone.io/runner/docker/installation/linux/
+      # https://docs.drone.io/server/metrics/
+      - DRONE_RPC_PROTO=http
+      - DRONE_RPC_HOST=drone
+      - DRONE_RPC_SECRET=${DRONE_RPC_SECRET}
+      - DRONE_RUNNER_NAME="${HOSTNAME}-runner"
+      - DRONE_RUNNER_CAPACITY=2
+      - DRONE_RUNNER_NETWORKS=cicd_net
+      - DRONE_DEBUG=false
+      - DRONE_TRACE=false
+    ports:
+      - "3002:3000"
+    networks:
+      - cicd_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  cicd_net:
+    name: cicd_net
+</code></pre>
+
+<p>Our <code>boot.sh</code> which we will use to override environment variables:</p>
+
+<pre><code>#!/usr/bin/env bash
+
+export HOSTNAME=$(hostname)
+export DRONE_VERSION=1.10.1
+export DRONE_RUNNER_VERSION=1.6.3
+export GITEA_VERSION=1.13
+export IP_ADDRESS=192.168.0.6
+export MINIO_ACCESS_KEY="EXAMPLEKEY"
+export MINIO_SECRET_KEY="EXAMPLESECRET"
+export GITEA_ADMIN_USER="example"
+export DRONE_RPC_SECRET="$(echo ${HOSTNAME} | openssl dgst -md5 -hex)"
+export DRONE_USER_CREATE="username:${GITEA_ADMIN_USER},machine:false,admin:true,token:${DRONE_RPC_SECRET}"
+export DRONE_GITEA_CLIENT_ID=""
+export DRONE_GITEA_CLIENT_SECRET=""
+docker-compose up -d
+
+echo ""
+echo "Gitea: http://${IP_ADDRESS}:3000/"
+echo "Drone: http://${IP_ADDRESS}:3001/"
+</code></pre>
+
+<h2>Deploy the Stack</h2>
+
+<p>Set the following in your <code>boot.sh</code>:</p>
+
+<pre><code>IP_ADDRESS=192.168.0.6       -&gt; either reachable dns or ip address which will be your clone address and ui addresses.
+GITEA_ADMIN_USER="giteauser" -&gt; will be the user you register with in drone
+</code></pre>
+
+<p>Now boot the stack:</p>
+
+<pre><code>$ bash boot.sh
+</code></pre>
+
+<p><em>Note</em>: Theres a <a href="https://github.com/go-gitea/gitea/issues/7702">current issue</a> where webhooks get fired twice, if you see that just restart gitea with <code>docker restart gitea</code>.</p>
+
+<ul>
+<li><p>Head over to: <code>http://${IP_ADDRESS}:3000/user/settings/applications</code> and create a new OAuth2 Application and set the Redirect URI to <code>http://${IP_ADDRESS}:3001/login</code></p></li>
+<li><p>Capture the client id and client secret and populate them in the <code>boot.sh</code> in <code>DRONE_GITEA_CLIENT_ID</code> and <code>DRONE_GITEA_CLIENT_SECRET</code> and run <code>bash boot.sh</code> again. This will give drone the correct credentials in order to authenticate with gitea.</p></li>
+<li><p>Now when you head over to <code>http://${IP_ADDRESS}:3001/</code> you will be asked to authorize the application and you should be able to access drone.</p></li>
+</ul>
+
+
+<h2>Drone CLI</h2>
+
+<p>Install Drone CLI:
+- <a href="https://docs.drone.io/cli/install/">https://docs.drone.io/cli/install/</a></p>
+
+<pre><code>$ curl -L https://github.com/drone/drone-cli/releases/latest/download/drone_darwin_amd64.tar.gz | tar zx
+$ sudo mv drone /usr/local/bin/drone
+$ chmod +x /usr/local/bin/drone
+</code></pre>
+
+<p>Get your Drone Token:
+- <a href="http://$">http://$</a>{IP_ADDRESS}:3001/account</p>
+
+<pre><code>$ export DRONE_SERVER=http://${IP_ADDRESS}:3001
+$ export DRONE_TOKEN=one-from-the-account-page
+drone info
+</code></pre>
+
+<h2>Build your first pipeline</h2>
+
+<p>Create a test repo in gitea:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296470-0ad23800-7ffb-11eb-8428-af49d0ebd62d.png" alt="image" /></p>
+
+<p>Commit a <code>.drone.yml</code> file for drone:</p>
+
+<pre><code>kind: pipeline
+type: docker
+name: hello-world
+
+trigger:
+  branch:
+    - master
+  event:
+    - push
+
+steps:
+  - name: say-hello
+    image: busybox
+    commands:
+      - echo hello-world
+</code></pre>
+
+<p>Head over to drone and sync your repositories:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296425-00b03980-7ffb-11eb-9216-76725a62c09e.png" alt="image" /></p>
+
+<p>Activate your repository:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296623-3523f580-7ffb-11eb-805f-db5db4dab0cb.png" alt="image" /></p>
+
+<p>Push a commit to master and see your pipeline running:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296747-584ea500-7ffb-11eb-9909-259641a663aa.png" alt="image" /></p>
+
+<h2>More Examples</h2>
+
+<p>For more examples view my example section on the github repository:
+- <a href="https://github.com/ruanbekker/drone-gitea-on-docker#more-examples">https://github.com/ruanbekker/drone-gitea-on-docker#more-examples</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Run Localstack as a Service Container for AWS Mock Services on Drone CI]]></title>
@@ -569,256 +776,6 @@ echo "done reading"
 <li><a href="https://github.com/ruanbekker/demo-drone-mongodb-tests">Github Repository</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using Drone CI to Build a Jekyll Site and Deploy to Docker Swarm]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm/"/>
-    <updated>2019-04-23T17:57:02-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/04/23/using-drone-ci-to-build-a-jekyll-site-and-deploy-to-docker-swarm</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/56618556-3de7ca00-6623-11e9-995f-c22792f0ab21.png" alt="image" /></p>
-
-<p>CICD Pipelines! &lt;3</p>
-
-<p>In this post I will show you how to setup a cicd pipeline using drone to build a jekyll site and deploy to docker swarm.</p>
-
-<h2>Environment Overview</h2>
-
-<p><strong>Jekyll&rsquo;s Codebase</strong>: Our code will be hosted on Github (I will demonstrate how to set it up from scratch)</p>
-
-<p><strong>Secret Store</strong>: Our secrets such as ssh key, swarm host address etc will be stored in drones secrets manager</p>
-
-<p><strong>Docker Swarm</strong>: Docker Swarm has Traefik as a HTTP Loadbalancer</p>
-
-<p><strong>Drone Server and Agent</strong>: If you dont have drone, you can setup <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-drone-cicd-environment-on-docker-with-letsencrypt/">drone server and agent on docker</a> or have a look at <a href="https://cloud.drone.io">cloud.drone.io</a></p>
-
-<p><strong>Workflow:</strong></p>
-
-<pre><code>* Whenever a push to master is receive on github, the pipeline will be triggered
-* The content from our github repository will be cloned to the agent on a container
-* Jekyll will build and the output will be transferred to docker swarm using rsync
-* The docker-compose.yml will be transferred to the docker swarm host using scp
-* A docker stack deploy is ran via ssh
-</code></pre>
-
-<h2>Install Jekyll Locally</h2>
-
-<p>Install Jekyll locally, as we will use it to create the initial site. I am using a mac, so I will be using <code>brew</code>. For other operating systems, have a look at <a href="https://jekyllrb.com/docs/installation/">this post</a>.</p>
-
-<p>I will be demonstrating with a weightloss blog as an example.</p>
-
-<p>Install jekyll:</p>
-
-<pre><code>$ brew install jekyll
-</code></pre>
-
-<p>Go ahead and create a new site which will host the data for your jekyll site:</p>
-
-<pre><code>$ jekyll new blog-weightloss
-</code></pre>
-
-<h2>Create a Github Repository</h2>
-
-<p>First we need to create an empty github repository, in my example it was <code>github.com/ruanbekker/blog-weightloss.git</code>. Once you create the repo change into the directory created by the <code>jekyll new</code> command:</p>
-
-<pre><code>$ cd blog-weightloss
-</code></pre>
-
-<p>Now initialize git, set the remote, add the jekyll data and push to github:</p>
-
-<pre><code>$ git init
-$ git remote add origin git@github.com:ruanbekker/blog-weightloss.git # &lt;== change to your repository
-$ git add .
-$ git commit -m "first commit"
-$ git push origin master
-</code></pre>
-
-<p>You should see your data on your github repository.</p>
-
-<h2>Create Secrets on Drone</h2>
-
-<p>Logon to the Drone UI, sync repositories, activate the new repository and head over to settings where you will find the secrets section.</p>
-
-<p>Add the following secrets:</p>
-
-<pre><code>Secret Name: swarm_host
-Secret Value: ip address of your swarm
-
-Secret Name: swarm_key
-Secret Value: contents of your private ssh key
-
-Secret Name: swarm_user
-Secret Value: the user that is allowed to ssh
-</code></pre>
-
-<p>You should see the following:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56619871-5c4fc480-6627-11e9-8820-c9d4ddff698c.png" alt="image" /></p>
-
-<h2>Add the Drone Config</h2>
-
-<p>Drone looks from a <code>.drone.yml</code> file in the root directory for instructions on how to do its tasks. Lets go ahead and declare our pipeline:</p>
-
-<pre><code>$ vim .drone.yml
-</code></pre>
-
-<p>And populate the drone config:</p>
-
-<pre><code>pipeline:
-  jekyll-build:
-    image: jekyll/jekyll:latest
-    commands:
-      - touch Gemfile.lock
-      - chmod a+w Gemfile.lock
-      - chown -R jekyll:jekyll /drone
-      - gem update --system
-      - gem install bundler
-      - bundle install
-      - bundle exec jekyll build
-
-  transfer-build:
-    image: drillster/drone-rsync
-    hosts:
-      from_secret: swarm_host
-    key:
-      from_secret: swarm_key
-    user:
-      from_secret: swarm_user
-    source: ./*
-    target: ~/my-weightloss-blog.com
-    recursive: true
-    delete: true
-    when:
-      branch: [master]
-      event: [push]
-
-  transfer-compose:
-    image: appleboy/drone-scp
-    host:
-      from_secret: swarm_host
-    username:
-      from_secret: swarm_user
-    key:
-      from_secret: swarm_key
-    target: /root/my-weightloss-blog.com
-    source:
-      - docker-compose.yml
-    when:
-      branch: [master]
-      event: [push]
-
-  deploy-jekyll-to-swarm:
-    image: appleboy/drone-ssh
-    host:
-      from_secret: swarm_host
-    username:
-      from_secret: swarm_user
-    key:
-      from_secret: swarm_key
-    port: 22
-    script:
-      - docker stack deploy --prune -c /root/my-weightloss-blog.com/docker-compose.yml apps
-    when:
-      branch: [master]
-      event: [push]
-</code></pre>
-
-<h2>Notifications?</h2>
-
-<p>If you want to be notified about your builds, you can add a slack notification step as the last step.</p>
-
-<p>To do that, create a new webhook integration, you can <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/">follow this post for a step by step guide</a>. After you have the webhook, go to secrets and create a <code>slack_webhook</code> secret.</p>
-
-<p>Then apply the notification step as shown below:</p>
-
-<pre><code>  notify-via-slack:
-    image: plugins/slack
-    webhook:
-      from_secret: slack_webhook
-    channel: system_events
-    template: &gt;
-      
-        [DRONE CI]: ** : /
-        ( -  | )
-
-      
-        [DRONE CI]: ** : /
-        ( -  | )
-      
-</code></pre>
-
-<p>Based on the status, you should get a notification similar like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56622206-6e356580-662f-11e9-8d93-286c9c126d24.png" alt="image" /></p>
-
-<h2>Add the Docker Compose</h2>
-
-<p>Next we need to declare our docker compose file which is needed to deploy our jekyll service to the swarm:</p>
-
-<pre><code>$ vim docker-compose.yml
-</code></pre>
-
-<p>And populate this info (just change the values for your own environment/settings):</p>
-
-<pre><code class="yaml">version: '3.5'
-
-services:
-  myweightlossblog:
-    image: ruanbekker/jekyll:contrast
-    command: jekyll serve --watch --force_polling --verbose
-    networks:
-      - appnet
-    volumes:
-      - /root/my-weightloss-blog.com:/srv/jekyll
-    deploy:
-      mode: replicated
-      replicas: 1
-      labels:
-        - "traefik.backend.loadbalancer.sticky=false"
-        - "traefik.backend.loadbalancer.swarm=true"
-        - "traefik.backend=myweightlossblog"
-        - "traefik.docker.network=appnet"
-        - "traefik.entrypoints=https"
-        - "traefik.frontend.passHostHeader=true"
-        - "traefik.frontend.rule=Host:www.my-weightloss-blog.com,my-weightloss-blog.com"
-        - "traefik.port=4000"
-      update_config:
-        parallelism: 2
-        delay: 10s
-      restart_policy:
-        condition: on-failure
-      placement:
-        constraints:
-          - node.role == manager
-networks:
-  appnet:
-    external: true
-</code></pre>
-
-<h2>Push to Github</h2>
-
-<p>Now we need to push our <code>.drone.yml</code> and <code>docker-compose.yml</code> to github. Since the repository is activated on drone, any push to master will trigger the pipeline, so after this push we should go to drone to look at our pipeline running.</p>
-
-<p>Add the untracked files and push to github:</p>
-
-<pre><code>$ git add .drone.yml
-$ git add docker-compose.yml
-$ git commit -m "add drone and docker config"
-$ git push origin master
-</code></pre>
-
-<p>As you head over to your drone ui, you should see your pipeline output which will look more or less like this (just look how pretty it is! :D )</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56620236-91a8e200-6628-11e9-9278-38e3305fdcd7.png" alt="image" /></p>
-
-<h2>Test Jekyll</h2>
-
-<p>If your deployment has completed you should be able to access your application on the configured domain. A screenshot of my response when accessing Jekyll:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/56620280-af764700-6628-11e9-9d4f-c2592e6cf561.png" alt="image" /></p>
-
-<p>Absolutely Amazingness! I really love drone!</p>
 ]]></content>
   </entry>
   

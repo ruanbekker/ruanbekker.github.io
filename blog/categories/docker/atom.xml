@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-02-26T18:36:28-05:00</updated>
+  <updated>2021-03-09T01:21:41-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,213 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[CICD With DroneCI and Gitea Using Docker Compose]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose/"/>
+    <updated>2021-03-09T01:10:10-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose</id>
+    <content type="html"><![CDATA[<p>In this post we wil set up a drone-ci and gitea stack using docker-compose and then running a test pipeline.</p>
+
+<p>I have posted a few times about this topic, but this post will be used when I create other examples and wanting to use this post for the ones not having the stack booted yet.</p>
+
+<h2>The Source Code</h2>
+
+<p>All the code will be in my <a href="https://github.com/ruanbekker/drone-gitea-on-docker">github repository</a>.</p>
+
+<p>For our <code>docker-compose.yml</code>:</p>
+
+<pre><code>version: '3.6'
+
+services:
+  gitea:
+    container_name: gitea
+    image: gitea/gitea:${GITEA_VERSION:-1.10.6}
+    restart: unless-stopped
+    environment:
+      # https://docs.gitea.io/en-us/install-with-docker/#environments-variables
+      - APP_NAME="Gitea"
+      - USER_UID=1000
+      - USER_GID=1000
+      - RUN_MODE=prod
+      - DOMAIN=${IP_ADDRESS}
+      - SSH_DOMAIN=${IP_ADDRESS}
+      - HTTP_PORT=3000
+      - ROOT_URL=http://${IP_ADDRESS}:3000
+      - SSH_PORT=222
+      - SSH_LISTEN_PORT=22
+      - DB_TYPE=sqlite3
+    ports:
+      - "3000:3000"
+      - "222:22"
+    networks:
+      - cicd_net
+    volumes:
+      - ./gitea:/data
+
+  drone:
+    container_name: drone
+    image: drone/drone:${DRONE_VERSION:-1.6.4}
+    restart: unless-stopped
+    depends_on:
+      - gitea
+    environment:
+      # https://docs.drone.io/server/provider/gitea/
+      - DRONE_DATABASE_DRIVER=sqlite3
+      - DRONE_DATABASE_DATASOURCE=/data/database.sqlite
+      - DRONE_GITEA_SERVER=http://${IP_ADDRESS}:3000/
+      - DRONE_GIT_ALWAYS_AUTH=false
+      - DRONE_RPC_SECRET=${DRONE_RPC_SECRET}
+      - DRONE_SERVER_PROTO=http
+      - DRONE_SERVER_HOST=${IP_ADDRESS}:3001
+      - DRONE_TLS_AUTOCERT=false
+      - DRONE_USER_CREATE=${DRONE_USER_CREATE}
+      - DRONE_GITEA_CLIENT_ID=${DRONE_GITEA_CLIENT_ID}
+      - DRONE_GITEA_CLIENT_SECRET=${DRONE_GITEA_CLIENT_SECRET}
+    ports:
+      - "3001:80"
+      - "9001:9000"
+    networks:
+      - cicd_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./drone:/data
+
+  drone-runner:
+    container_name: drone-runner
+    image: drone/drone-runner-docker:${DRONE_RUNNER_VERSION:-1}
+    restart: unless-stopped
+    depends_on:
+      - drone
+    environment:
+      # https://docs.drone.io/runner/docker/installation/linux/
+      # https://docs.drone.io/server/metrics/
+      - DRONE_RPC_PROTO=http
+      - DRONE_RPC_HOST=drone
+      - DRONE_RPC_SECRET=${DRONE_RPC_SECRET}
+      - DRONE_RUNNER_NAME="${HOSTNAME}-runner"
+      - DRONE_RUNNER_CAPACITY=2
+      - DRONE_RUNNER_NETWORKS=cicd_net
+      - DRONE_DEBUG=false
+      - DRONE_TRACE=false
+    ports:
+      - "3002:3000"
+    networks:
+      - cicd_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  cicd_net:
+    name: cicd_net
+</code></pre>
+
+<p>Our <code>boot.sh</code> which we will use to override environment variables:</p>
+
+<pre><code>#!/usr/bin/env bash
+
+export HOSTNAME=$(hostname)
+export DRONE_VERSION=1.10.1
+export DRONE_RUNNER_VERSION=1.6.3
+export GITEA_VERSION=1.13
+export IP_ADDRESS=192.168.0.6
+export MINIO_ACCESS_KEY="EXAMPLEKEY"
+export MINIO_SECRET_KEY="EXAMPLESECRET"
+export GITEA_ADMIN_USER="example"
+export DRONE_RPC_SECRET="$(echo ${HOSTNAME} | openssl dgst -md5 -hex)"
+export DRONE_USER_CREATE="username:${GITEA_ADMIN_USER},machine:false,admin:true,token:${DRONE_RPC_SECRET}"
+export DRONE_GITEA_CLIENT_ID=""
+export DRONE_GITEA_CLIENT_SECRET=""
+docker-compose up -d
+
+echo ""
+echo "Gitea: http://${IP_ADDRESS}:3000/"
+echo "Drone: http://${IP_ADDRESS}:3001/"
+</code></pre>
+
+<h2>Deploy the Stack</h2>
+
+<p>Set the following in your <code>boot.sh</code>:</p>
+
+<pre><code>IP_ADDRESS=192.168.0.6       -&gt; either reachable dns or ip address which will be your clone address and ui addresses.
+GITEA_ADMIN_USER="giteauser" -&gt; will be the user you register with in drone
+</code></pre>
+
+<p>Now boot the stack:</p>
+
+<pre><code>$ bash boot.sh
+</code></pre>
+
+<p><em>Note</em>: Theres a <a href="https://github.com/go-gitea/gitea/issues/7702">current issue</a> where webhooks get fired twice, if you see that just restart gitea with <code>docker restart gitea</code>.</p>
+
+<ul>
+<li><p>Head over to: <code>http://${IP_ADDRESS}:3000/user/settings/applications</code> and create a new OAuth2 Application and set the Redirect URI to <code>http://${IP_ADDRESS}:3001/login</code></p></li>
+<li><p>Capture the client id and client secret and populate them in the <code>boot.sh</code> in <code>DRONE_GITEA_CLIENT_ID</code> and <code>DRONE_GITEA_CLIENT_SECRET</code> and run <code>bash boot.sh</code> again. This will give drone the correct credentials in order to authenticate with gitea.</p></li>
+<li><p>Now when you head over to <code>http://${IP_ADDRESS}:3001/</code> you will be asked to authorize the application and you should be able to access drone.</p></li>
+</ul>
+
+
+<h2>Drone CLI</h2>
+
+<p>Install Drone CLI:
+- <a href="https://docs.drone.io/cli/install/">https://docs.drone.io/cli/install/</a></p>
+
+<pre><code>$ curl -L https://github.com/drone/drone-cli/releases/latest/download/drone_darwin_amd64.tar.gz | tar zx
+$ sudo mv drone /usr/local/bin/drone
+$ chmod +x /usr/local/bin/drone
+</code></pre>
+
+<p>Get your Drone Token:
+- <a href="http://$">http://$</a>{IP_ADDRESS}:3001/account</p>
+
+<pre><code>$ export DRONE_SERVER=http://${IP_ADDRESS}:3001
+$ export DRONE_TOKEN=one-from-the-account-page
+drone info
+</code></pre>
+
+<h2>Build your first pipeline</h2>
+
+<p>Create a test repo in gitea:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296470-0ad23800-7ffb-11eb-8428-af49d0ebd62d.png" alt="image" /></p>
+
+<p>Commit a <code>.drone.yml</code> file for drone:</p>
+
+<pre><code>kind: pipeline
+type: docker
+name: hello-world
+
+trigger:
+  branch:
+    - master
+  event:
+    - push
+
+steps:
+  - name: say-hello
+    image: busybox
+    commands:
+      - echo hello-world
+</code></pre>
+
+<p>Head over to drone and sync your repositories:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296425-00b03980-7ffb-11eb-9216-76725a62c09e.png" alt="image" /></p>
+
+<p>Activate your repository:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296623-3523f580-7ffb-11eb-805f-db5db4dab0cb.png" alt="image" /></p>
+
+<p>Push a commit to master and see your pipeline running:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296747-584ea500-7ffb-11eb-9909-259641a663aa.png" alt="image" /></p>
+
+<h2>More Examples</h2>
+
+<p>For more examples view my example section on the github repository:
+- <a href="https://github.com/ruanbekker/drone-gitea-on-docker#more-examples">https://github.com/ruanbekker/drone-gitea-on-docker#more-examples</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Ship Your Docker Logs to Loki Using Fluentbit]]></title>
@@ -732,216 +939,6 @@ there are 20 items of green available
 <h2>Thanks</h2>
 
 <p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Setup Alerting With Loki]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/11/06/how-to-setup-alerting-with-loki/"/>
-    <updated>2020-11-06T15:13:53+00:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/11/06/how-to-setup-alerting-with-loki</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/98380823-bd948880-2051-11eb-8ab4-c8d5f5d3e612.png" alt="image" /></p>
-
-<p>Recently Grafana Labs announced <strong><a href="https://grafana.com/blog/2020/10/28/loki-2.0-released-transform-logs-as-youre-querying-them-and-set-up-alerts-within-loki/">Loki v2</a></strong> and its awesome! Definitely check out their blog post on more details.</p>
-
-<p>Loki has a index option called <strong>boltdb-shipper</strong>, which allows you to run Loki with only a object store and you <strong>no longer need a dedicated index store</strong> such as DynamoDB. You can extract labels from log lines at query time, which is CRAZY! And I really like how they&rsquo;ve implemented it, you can parse, filter and format like mad. I really like that.</p>
-
-<p>And then generating alerts from any query, which we will go into today. Definitely check out <a href="https://grafana.com/blog/2020/10/28/loki-2.0-released-transform-logs-as-youre-querying-them-and-set-up-alerts-within-loki/">this blogpost</a> and <a href="https://grafana.com/blog/2020/11/04/video-top-three-features-of-the-new-loki-2.0/">this video</a> for more details on the features of Loki v2.</p>
-
-<h2>What will we be doing today</h2>
-
-<p>In this tutorial we will setup a alert using the Loki local ruler to alert us when we have <strong>high number of log events coming in</strong>. For example, let&rsquo;s say someone has debug logging enabled in their application and we want to send a alert to slack when it breaches the threshold.</p>
-
-<p>I will simulate this with a <code>http-client</code> container which runs <code>curl</code> in a while loop to fire a bunch of http requests against the nginx container which logs to Loki, so we can see how the alerting works, and in this scenario we will alert to Slack.</p>
-
-<p>And after that we will stop our http-client container to see how the alarm resolves when the log rate comes down again.</p>
-
-<p>All the components are available in the <code>docker-compose.yml</code> on my <a href="https://github.com/ruanbekker/loki-alerts-docker">github repository</a></p>
-
-<h2>Components</h2>
-
-<p>Let&rsquo;s break it down and start with the loki config:</p>
-
-<pre><code>...
-ruler:
-  storage:
-    type: local
-    local:
-      directory: /etc/loki/rules
-  rule_path: /tmp/loki/rules-temp
-  alertmanager_url: http://alertmanager:9093
-  ring:
-    kvstore:
-      store: inmemory
-  enable_api: true
-  enable_alertmanager_v2: true
-</code></pre>
-
-<p>In the section of the loki config, I will be making use of the local ruler and map my alert rules under <code>/etc/loki/rules/</code> and we are also defining our alertmanager instance where these alerts should be shipped to.</p>
-
-<p>In my rule definition <code>/etc/loki/rules/demo/rules.yml</code>:</p>
-
-<pre><code>groups:
-  - name: rate-alerting
-    rules:
-      - alert: HighLogRate
-        expr: |
-          sum by (compose_service)
-            (rate({job="dockerlogs"}[1m]))
-            &gt; 60
-        for: 1m
-        labels:
-            severity: warning
-            team: devops
-            category: logs
-        annotations:
-            title: "High LogRate Alert"
-            description: "something is logging a lot"
-            impact: "impact"
-            action: "action"
-            dashboard: "https://grafana.com/service-dashboard"
-            runbook: "https://wiki.com"
-            logurl: "https://grafana.com/log-explorer"
-</code></pre>
-
-<p>In my expression, I am using LogQL to return per second rate of all my docker logs within the last minute per compose service for my dockerlogs job and we are specifying that it should alert when the threshold is above 60.</p>
-
-<p>As you can see I have a couple of <strong>labels and annotations</strong>, which becomes <strong>very useful</strong> when you have dashboard links, runbooks etc and you would like to map that to your alert. I am doing the mapping in my <code>alertmanager.yml</code> config:</p>
-
-<pre><code>route:
-...
-  receiver: 'default-catchall-slack'
-  routes:
-  - match:
-      severity: warning
-    receiver: warning-devops-slack
-    routes:
-    - match_re:
-        team: .*(devops).*
-      receiver: warning-devops-slack
-
-receivers:
-...
-- name: 'warning-devops-slack'
-  slack_configs:
-    - send_resolved: true
-      channel: '__SLACK_CHANNEL__'
-      title: ':fire::white_check_mark: []  '
-      text: &gt;-
-        
-          *Description:* 
-          *Severity:* ``
-          *Graph:* &lt;|:chart_with_upwards_trend:&gt;&lt;|:chart_with_upwards_trend:&gt; *Dashboard:* &lt;|:bar_chart:&gt; *Runbook:* &lt;|:spiral_note_pad:&gt;
-          *Details:*
-           - *:* ``
-          
-           - *Impact*: 
-           - *Receiver*: warning--slack
-        
-</code></pre>
-
-<p>As you can see, when my alert matches nothing it will go to my catchall receiver, but when my label contains <code>devops</code> and the route the alert to my <code>warning-devops-slack</code> receiver, and then we will be parsing our labels and annotations to include the values in our alarm on slack.</p>
-
-<h2>Demo</h2>
-
-<p>Enough with the background details, and it&rsquo;s time to get into the action.</p>
-
-<p>All the code for this demonstration will be available in my github repository: <strong><a href="https://github.com/ruanbekker/loki-alerts-docker">github.com/ruanbekker/loki-alerts-docker</a></strong></p>
-
-<p>The docker-compose will have a container of <strong>grafana</strong>, <strong>alertmanager</strong>, <strong>loki</strong>, <strong>nginx</strong> and a <strong>http-client</strong>.</p>
-
-<p>The http-client is curl in a while loop that will just make a bunch of http requests against the nginx container, which will be logging to loki.</p>
-
-<h2>Get the source</h2>
-
-<p>Get the code from my github repository:</p>
-
-<pre><code>$ git clone https://github.com/ruanbekker/loki-alerts-docker
-$ cd loki-alerts-docker
-</code></pre>
-
-<p>You will need to replace the slack webhook url and the slack channel where you want your alerts to be sent to. This will take the environment variables and replace the values in <code>config/alertmanager.yml</code> (always check out the script first, before executing it)</p>
-
-<pre><code>$ SLACK_WEBHOOK_URL="https://hooks.slack.com/services/xx/xx/xx" SLACK_CHANNEL="#notifications" ./parse_configs.sh
-</code></pre>
-
-<p>You can double check by running <code>cat config/alertmanager.yml</code>, once you are done, boot the stack:</p>
-
-<pre><code>$ docker-compose up -d
-</code></pre>
-
-<p>Open up grafana:</p>
-
-<pre><code>$ open http://grafana.localdns.xyz:3000
-</code></pre>
-
-<p>Use the initial user and password combination <code>admin/admin</code> and then reset your password:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98379039-7efdce80-204f-11eb-9c8a-3ed12a63cb14.png" alt="image" /></p>
-
-<p>Browse for your labels on the log explorer section, in my example it will be <code>{job="dockerlogs"}</code>:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98379172-ace31300-204f-11eb-8e6c-3cf073afe771.png" alt="image" /></p>
-
-<p>When we select our job=&ldquo;dockerlogs&rdquo; label, we will see our logs:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98379288-c71cf100-204f-11eb-911c-043a983bae6d.png" alt="image" /></p>
-
-<p>As I explained earlier the query that we will be running in our ruler, can be checked what the rate currently is:</p>
-
-<pre><code>sum by (compose_project, compose_service) (rate({job="dockerlogs"}[1m]))
-</code></pre>
-
-<p>Which will look like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98379765-54604580-2050-11eb-9c90-5e0adf2bb586.png" alt="image" /></p>
-
-<p>In the configured expression in our ruler config, we have set to alarm once the value goes above 60, we can validate this by running:</p>
-
-<pre><code>sum by (compose_project, compose_service) (rate({job="dockerlogs"}[1m])) &gt; 60
-</code></pre>
-
-<p>And we can verify that this is the case, and by now it should be alarming:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98379900-84a7e400-2050-11eb-87d0-ae52617d195e.png" alt="image" /></p>
-
-<p>Head over to alertmanager:</p>
-
-<pre><code>$ open http://alertmanager.localdns.xyz:9093
-</code></pre>
-
-<p>We can see alertmanager is showing the alarm:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98380013-af923800-2050-11eb-8585-f7489bf722cb.png" alt="image" /></p>
-
-<p>When we head over to slack, we can see our notification:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98380158-de101300-2050-11eb-8d73-20828124fab5.png" alt="image" /></p>
-
-<p>So let&rsquo;s stop our http client:</p>
-
-<pre><code>$ docker-compose stop http-client
-Stopping http-client ... done
-</code></pre>
-
-<p>Then we can see the logging stopped:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98380907-e0bf3800-2051-11eb-99c3-b3b9ac22bba5.png" alt="image" /></p>
-
-<p>And in slack, we should see that the alarm recovered and we should see the notification:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98381360-722eaa00-2052-11eb-8bb4-07cdc8ffa7ee.png" alt="image" /></p>
-
-<p>Then you can terminate your stack:</p>
-
-<pre><code>$ docker-compose down
-</code></pre>
-
-<p>Pretty epic stuff right? I really love how cost effective Loki is as logging use to be so expensive to run and especially maintain, Grafana Labs are really doing some epic work and my hat goes off to them.</p>
-
-<h2>Thanks</h2>
-
-<p>I hope you found this useful, feel free to reach out to me on Twitter <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> or visit me on my website <strong><a href="https://ruan.dev">ruan.dev</a></strong></p>
 ]]></content>
   </entry>
   

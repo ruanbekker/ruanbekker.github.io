@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Devops | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/devops/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-02-26T18:36:28-05:00</updated>
+  <updated>2021-03-09T01:21:41-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,213 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[CICD With DroneCI and Gitea Using Docker Compose]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose/"/>
+    <updated>2021-03-09T01:10:10-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose</id>
+    <content type="html"><![CDATA[<p>In this post we wil set up a drone-ci and gitea stack using docker-compose and then running a test pipeline.</p>
+
+<p>I have posted a few times about this topic, but this post will be used when I create other examples and wanting to use this post for the ones not having the stack booted yet.</p>
+
+<h2>The Source Code</h2>
+
+<p>All the code will be in my <a href="https://github.com/ruanbekker/drone-gitea-on-docker">github repository</a>.</p>
+
+<p>For our <code>docker-compose.yml</code>:</p>
+
+<pre><code>version: '3.6'
+
+services:
+  gitea:
+    container_name: gitea
+    image: gitea/gitea:${GITEA_VERSION:-1.10.6}
+    restart: unless-stopped
+    environment:
+      # https://docs.gitea.io/en-us/install-with-docker/#environments-variables
+      - APP_NAME="Gitea"
+      - USER_UID=1000
+      - USER_GID=1000
+      - RUN_MODE=prod
+      - DOMAIN=${IP_ADDRESS}
+      - SSH_DOMAIN=${IP_ADDRESS}
+      - HTTP_PORT=3000
+      - ROOT_URL=http://${IP_ADDRESS}:3000
+      - SSH_PORT=222
+      - SSH_LISTEN_PORT=22
+      - DB_TYPE=sqlite3
+    ports:
+      - "3000:3000"
+      - "222:22"
+    networks:
+      - cicd_net
+    volumes:
+      - ./gitea:/data
+
+  drone:
+    container_name: drone
+    image: drone/drone:${DRONE_VERSION:-1.6.4}
+    restart: unless-stopped
+    depends_on:
+      - gitea
+    environment:
+      # https://docs.drone.io/server/provider/gitea/
+      - DRONE_DATABASE_DRIVER=sqlite3
+      - DRONE_DATABASE_DATASOURCE=/data/database.sqlite
+      - DRONE_GITEA_SERVER=http://${IP_ADDRESS}:3000/
+      - DRONE_GIT_ALWAYS_AUTH=false
+      - DRONE_RPC_SECRET=${DRONE_RPC_SECRET}
+      - DRONE_SERVER_PROTO=http
+      - DRONE_SERVER_HOST=${IP_ADDRESS}:3001
+      - DRONE_TLS_AUTOCERT=false
+      - DRONE_USER_CREATE=${DRONE_USER_CREATE}
+      - DRONE_GITEA_CLIENT_ID=${DRONE_GITEA_CLIENT_ID}
+      - DRONE_GITEA_CLIENT_SECRET=${DRONE_GITEA_CLIENT_SECRET}
+    ports:
+      - "3001:80"
+      - "9001:9000"
+    networks:
+      - cicd_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./drone:/data
+
+  drone-runner:
+    container_name: drone-runner
+    image: drone/drone-runner-docker:${DRONE_RUNNER_VERSION:-1}
+    restart: unless-stopped
+    depends_on:
+      - drone
+    environment:
+      # https://docs.drone.io/runner/docker/installation/linux/
+      # https://docs.drone.io/server/metrics/
+      - DRONE_RPC_PROTO=http
+      - DRONE_RPC_HOST=drone
+      - DRONE_RPC_SECRET=${DRONE_RPC_SECRET}
+      - DRONE_RUNNER_NAME="${HOSTNAME}-runner"
+      - DRONE_RUNNER_CAPACITY=2
+      - DRONE_RUNNER_NETWORKS=cicd_net
+      - DRONE_DEBUG=false
+      - DRONE_TRACE=false
+    ports:
+      - "3002:3000"
+    networks:
+      - cicd_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  cicd_net:
+    name: cicd_net
+</code></pre>
+
+<p>Our <code>boot.sh</code> which we will use to override environment variables:</p>
+
+<pre><code>#!/usr/bin/env bash
+
+export HOSTNAME=$(hostname)
+export DRONE_VERSION=1.10.1
+export DRONE_RUNNER_VERSION=1.6.3
+export GITEA_VERSION=1.13
+export IP_ADDRESS=192.168.0.6
+export MINIO_ACCESS_KEY="EXAMPLEKEY"
+export MINIO_SECRET_KEY="EXAMPLESECRET"
+export GITEA_ADMIN_USER="example"
+export DRONE_RPC_SECRET="$(echo ${HOSTNAME} | openssl dgst -md5 -hex)"
+export DRONE_USER_CREATE="username:${GITEA_ADMIN_USER},machine:false,admin:true,token:${DRONE_RPC_SECRET}"
+export DRONE_GITEA_CLIENT_ID=""
+export DRONE_GITEA_CLIENT_SECRET=""
+docker-compose up -d
+
+echo ""
+echo "Gitea: http://${IP_ADDRESS}:3000/"
+echo "Drone: http://${IP_ADDRESS}:3001/"
+</code></pre>
+
+<h2>Deploy the Stack</h2>
+
+<p>Set the following in your <code>boot.sh</code>:</p>
+
+<pre><code>IP_ADDRESS=192.168.0.6       -&gt; either reachable dns or ip address which will be your clone address and ui addresses.
+GITEA_ADMIN_USER="giteauser" -&gt; will be the user you register with in drone
+</code></pre>
+
+<p>Now boot the stack:</p>
+
+<pre><code>$ bash boot.sh
+</code></pre>
+
+<p><em>Note</em>: Theres a <a href="https://github.com/go-gitea/gitea/issues/7702">current issue</a> where webhooks get fired twice, if you see that just restart gitea with <code>docker restart gitea</code>.</p>
+
+<ul>
+<li><p>Head over to: <code>http://${IP_ADDRESS}:3000/user/settings/applications</code> and create a new OAuth2 Application and set the Redirect URI to <code>http://${IP_ADDRESS}:3001/login</code></p></li>
+<li><p>Capture the client id and client secret and populate them in the <code>boot.sh</code> in <code>DRONE_GITEA_CLIENT_ID</code> and <code>DRONE_GITEA_CLIENT_SECRET</code> and run <code>bash boot.sh</code> again. This will give drone the correct credentials in order to authenticate with gitea.</p></li>
+<li><p>Now when you head over to <code>http://${IP_ADDRESS}:3001/</code> you will be asked to authorize the application and you should be able to access drone.</p></li>
+</ul>
+
+
+<h2>Drone CLI</h2>
+
+<p>Install Drone CLI:
+- <a href="https://docs.drone.io/cli/install/">https://docs.drone.io/cli/install/</a></p>
+
+<pre><code>$ curl -L https://github.com/drone/drone-cli/releases/latest/download/drone_darwin_amd64.tar.gz | tar zx
+$ sudo mv drone /usr/local/bin/drone
+$ chmod +x /usr/local/bin/drone
+</code></pre>
+
+<p>Get your Drone Token:
+- <a href="http://$">http://$</a>{IP_ADDRESS}:3001/account</p>
+
+<pre><code>$ export DRONE_SERVER=http://${IP_ADDRESS}:3001
+$ export DRONE_TOKEN=one-from-the-account-page
+drone info
+</code></pre>
+
+<h2>Build your first pipeline</h2>
+
+<p>Create a test repo in gitea:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296470-0ad23800-7ffb-11eb-8428-af49d0ebd62d.png" alt="image" /></p>
+
+<p>Commit a <code>.drone.yml</code> file for drone:</p>
+
+<pre><code>kind: pipeline
+type: docker
+name: hello-world
+
+trigger:
+  branch:
+    - master
+  event:
+    - push
+
+steps:
+  - name: say-hello
+    image: busybox
+    commands:
+      - echo hello-world
+</code></pre>
+
+<p>Head over to drone and sync your repositories:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296425-00b03980-7ffb-11eb-9216-76725a62c09e.png" alt="image" /></p>
+
+<p>Activate your repository:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296623-3523f580-7ffb-11eb-805f-db5db4dab0cb.png" alt="image" /></p>
+
+<p>Push a commit to master and see your pipeline running:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/110296747-584ea500-7ffb-11eb-9909-259641a663aa.png" alt="image" /></p>
+
+<h2>More Examples</h2>
+
+<p>For more examples view my example section on the github repository:
+- <a href="https://github.com/ruanbekker/drone-gitea-on-docker#more-examples">https://github.com/ruanbekker/drone-gitea-on-docker#more-examples</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Upload Public SSH Keys Using Ansible]]></title>
@@ -400,137 +607,6 @@ ruan
 <li><a href="https://github.com/ruanbekker/terraformfiles/tree/master/variable-via-cli">https://github.com/ruanbekker/terraformfiles/tree/master/variable-via-cli</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run Localstack as a Service Container for AWS Mock Services on Drone CI]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci/"/>
-    <updated>2020-02-04T23:43:30+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/02/04/run-localstack-as-a-service-container-for-aws-mock-services-on-drone-ci</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will setup a basic pipeline in drone to make use of service containers, we will provision localstack so that we can provision AWS mock services.</p>
-
-<p>We will create a kinesis stream on localstack, when the service is up, we will create a stream, put 100 records in the stream, read them from the stream and delete the kinesis stream.</p>
-
-<h2>Gitea and Drone Stack</h2>
-
-<p>If you don’t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
-
-<h2>Create the Drone Config</h2>
-
-<p>In gitea, I have created a new git repository and created my drone config as <code>.drone.yml</code> with this pipeline config:</p>
-
-<pre><code>---
-kind: pipeline
-type: docker
-name: localstack
-
-platform:
-  os: linux
-  arch: amd64
-
-steps:
-  - name: wait-for-localstack
-    image: busybox
-    commands:
-      - sleep 10
-
-  - name: list-kinesis-streams
-    image: ruanbekker/awscli
-    environment:
-      AWS_ACCESS_KEY_ID: 123
-      AWS_SECRET_ACCESS_KEY: xyz
-      AWS_DEFAULT_REGION: eu-west-1
-    commands:
-      - aws --endpoint-url=http://localstack:4568 kinesis list-streams
-
-  - name: create-kinesis-streams
-    image: ruanbekker/awscli
-    environment:
-      AWS_ACCESS_KEY_ID: 123
-      AWS_SECRET_ACCESS_KEY: xyz
-      AWS_DEFAULT_REGION: eu-west-1
-    commands:
-      - aws --endpoint-url=http://localstack:4568 kinesis create-stream --stream-name mystream --shard-count 1
-
-  - name: describe-kinesis-streams
-    image: ruanbekker/awscli
-    environment:
-      AWS_ACCESS_KEY_ID: 123
-      AWS_SECRET_ACCESS_KEY: xyz
-      AWS_DEFAULT_REGION: eu-west-1
-    commands:
-      - aws --endpoint-url=http://localstack:4568 kinesis describe-stream --stream-name mystream
-
-  - name: put-record-into-kinesis
-    image: ruanbekker/awscli
-    environment:
-      AWS_ACCESS_KEY_ID: 123
-      AWS_SECRET_ACCESS_KEY: xyz
-      AWS_DEFAULT_REGION: eu-west-1
-    commands:
-      - for record in $$(seq 1 100); do aws --endpoint-url=http://localstack:4568 kinesis put-record --stream-name mystream --partition-key 123 --data testdata_$$record ; done
-
-  - name: get-record-from-kinesis
-    image: ruanbekker/awscli
-    environment:
-      AWS_ACCESS_KEY_ID: 123
-      AWS_SECRET_ACCESS_KEY: xyz
-      AWS_DEFAULT_REGION: eu-west-1
-    commands:
-      - SHARD_ITERATOR=$$(aws --endpoint-url=http://localstack:4568 kinesis get-shard-iterator --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON --stream-name mystream --query 'ShardIterator' --output text)
-      - for each in $$(aws --endpoint-url=http://localstack:4568 kinesis get-records --shard-iterator $$SHARD_ITERATOR | jq -cr '.Records[].Data'); do echo $each | base64 -d ; echo "" ; done
-
-  - name: delete-kinesis-stream
-    image: ruanbekker/awscli
-    environment:
-      AWS_ACCESS_KEY_ID: 123
-      AWS_SECRET_ACCESS_KEY: xyz
-      AWS_DEFAULT_REGION: eu-west-1
-    commands:
-      - aws --endpoint-url=http://localstack:4568 kinesis delete-stream --stream-name mystream
-
-services:
-  - name: localstack
-    image: localstack/localstack
-    privileged: true
-    environment:
-      DOCKER_HOST: unix:///var/run/docker.sock
-    volumes:
-      - name: docker-socket
-        path: /var/run/docker.sock
-      - name: localstack-vol
-        path: /tmp/localstack
-    ports:
-      - 8080
-
-volumes:
-- name: localstack-vol
-  temp: {}
-- name: docker-socket
-  host:
-    path: /var/run/docker.sock
-</code></pre>
-
-<p>To explain what we are doing, we are bringing up localstack as a service container, then using the aws cli tools we point to the localstack kinesis endpoint, creating a kinesis stream, put 100 records to the stream, then we read from the stream and delete thereafter.</p>
-
-<h2>Trigger the Pipeline</h2>
-
-<p>Then I head to drone activate my new git repository and select the repository as &ldquo;Trusted&rdquo;. I commited a dummy file to trigger the pipeline and it should look like this:</p>
-
-<p><img width="893" alt="image" src="https://user-images.githubusercontent.com/567298/73788817-63a32180-47a6-11ea-96c7-6abba7af2b27.png"></p>
-
-<p>List Streams:</p>
-
-<p><img width="974" alt="image" src="https://user-images.githubusercontent.com/567298/73788860-73bb0100-47a6-11ea-9c80-f2b8bfc18d53.png"></p>
-
-<p>Put Records:</p>
-
-<p><img width="896" alt="image" src="https://user-images.githubusercontent.com/567298/73788895-87666780-47a6-11ea-8d90-2c454ec9174a.png"></p>
-
-<p>Delete Stream:</p>
-
-<p><img width="924" alt="image" src="https://user-images.githubusercontent.com/567298/73788988-aebd3480-47a6-11ea-85d9-9ed7424c648b.png"></p>
 ]]></content>
   </entry>
   

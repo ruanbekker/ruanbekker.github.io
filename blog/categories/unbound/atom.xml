@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Unbound | Ruan Bekker's Blog]]></title>
+  <link href="https://blog.ruanbekker.com/blog/categories/unbound/atom.xml" rel="self"/>
+  <link href="https://blog.ruanbekker.com/"/>
+  <updated>2021-03-10T01:19:14-05:00</updated>
+  <id>https://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Wireguard VPN With Unbound ADS Blocking DNS]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/"/>
+    <updated>2021-03-10T00:59:51-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a Wireguard VPN with Unbound DNS Server with some additional configuration to block ads for any clients using the DNS Server while connected to the VPN.</p>
+
+<p>A massive thank you to <a href="https://github.com/complexorganizations/wireguard-manager/blob/main/wireguard-server.sh">complexorganizations</a> for providing the source where this tuturial is based off.</p>
+
+<h2>Install Packages</h2>
+
+<p>I will be using Debian Buster for this installation:</p>
+
+<pre><code>$ apt update
+$ apt upgrade -y
+$ apt update &amp;&amp; apt install iptables curl coreutils bc jq sed e2fsprogs -y
+$ apt install linux-headers-"$(uname -r)" -y
+</code></pre>
+
+<p>I want to disable IPv6, in my case I had to apply a couple of kernel parameter tweaks:</p>
+
+<pre><code>$ echo net.ipv6.conf.all.disable_ipv6 = 1 &gt; /etc/sysctl.d/70-disable-ipv6.conf
+$ echo "net.ipv6.conf.$(ip -4 route ls | grep default | grep -Po '(?&lt;=dev )(\S+)' | head -1).disable_ipv6 = 1" &gt;&gt; /etc/sysctl.d/70-disable-ipv6.conf
+$ echo 'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/60-enable-ip-forwarding.conf
+$ sysctl -p -f /etc/sysctl.d/70-disable-ipv6.conf
+$ sysctl -p -f /etc/sysctl.d/60-enable-ip-forwarding.conf
+</code></pre>
+
+<h2>Environment Variables</h2>
+
+<p>A couple of environment variables that we will reference during our installation, tweak where your setup differs:</p>
+
+<pre><code>$ export NPROC=$(nproc)
+$ export SERVER_HOST=$(curl -s -4 ifconfig.co)
+$ export SERVER_PORT="51820"
+$ export MTU_CHOICE="1280"
+$ export NAT_CHOICE="25"
+$ export IPV4_SUBNET="10.7.0.0/24"
+$ export PRIVATE_SUBNET_V4=${IPV4_SUBNET}
+$ export GATEWAY_ADDRESS_V4="${PRIVATE_SUBNET_V4::-4}1"
+$ export PRIVATE_SUBNET_MASK_V4=$(echo "$PRIVATE_SUBNET_V4" | cut -d "/" -f 2)
+$ export CLIENT_DNS="$GATEWAY_ADDRESS_V4"
+$ export CLIENT_ALLOWED_IP="0.0.0.0/0"
+</code></pre>
+
+<h2>Unbound Installation</h2>
+
+<p>Download the unbound <code>root.hints</code> file from internic:</p>
+
+<pre><code>$ curl https://www.internic.net/domain/named.cache --create-dirs -o /etc/unbound/root.hints
+</code></pre>
+
+<p>Generate the <code>/etc/unbound/unbound.conf</code> config:</p>
+
+<pre><code>$ echo "include: \"/etc/unbound/unbound.conf.d/*.conf\"
+server:
+    num-threads: $NPROC
+    verbosity: 1
+    root-hints: /etc/unbound/root.hints
+    # auto-trust-anchor-file: /var/lib/unbound/root.key
+    interface: 0.0.0.0
+    interface: ::0
+    max-udp-size: 3072
+    access-control: 0.0.0.0/0                 refuse
+    access-control: $PRIVATE_SUBNET_V4               allow
+    access-control: 127.0.0.1                 allow
+    private-address: $PRIVATE_SUBNET_V4
+    hide-identity: yes
+    hide-version: yes
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-referral-path: yes
+    unwanted-reply-threshold: 10000000
+    val-log-level: 1
+    cache-min-ttl: 1800
+    cache-max-ttl: 14400
+    prefetch: yes
+    qname-minimisation: yes
+    prefetch-key: yes
+    forward-zone:
+        name: \".\"
+        forward-addr: 1.1.1.1
+        forward-addr: 8.8.8.8" &gt;&gt; /etc/unbound/unbound.conf
+</code></pre>
+
+<p>Download the host entries for all the ad servers which we will block:</p>
+
+<pre><code>$ curl https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social/hosts -o /tmp/adblocking_hosts
+</code></pre>
+
+<p>Include the ads configuration in <code>/etc/unbound/unbound.d/ads.conf</code>:</p>
+
+<pre><code>$ echo "server:" &gt; /etc/unbound/unbound.conf.d/ads.conf
+$ cat /etc/unbound/adblocking_hosts | grep '^0\.0\.0\.0' | awk '{print "    local-zone: \""$2"\" redirect\n    local-data: \""$2" A 0.0.0.0\""}' &gt;&gt; /etc/unbound/unbound.conf.d/ads.conf
+</code></pre>
+
+<p>Update the VPN Server&rsquo;s nameserver configuration to unbound:</p>
+
+<pre><code>$ chattr -i /etc/resolv.conf
+$ mv /etc/resolv.conf /etc/resolv.conf.old
+$ echo "nameserver 127.0.0.1" &gt;&gt;/etc/resolv.conf
+$ chattr +i /etc/resolv.conf
+</code></pre>
+
+<p>Enable and Restart Unbound:</p>
+
+<pre><code>$ systemctl enable unbound
+$ systemctl restart unbound
+</code></pre>
+
+<p>Test if DNS Resolution works:</p>
+
+<pre><code>$ dig google.com
+</code></pre>
+
+<h2>Wireguard Installation</h2>
+
+<p>Include the sources and install wireguard and its dependencies:</p>
+
+<pre><code>$ echo "deb http://deb.debian.org/debian/ unstable main" &gt;&gt;/etc/apt/sources.list.d/unstable.list
+$ echo -e "Package: *\nPin: release a=unstable\nPin-Priority: 90"  &gt;&gt;/etc/apt/preferences.d/limit-unstable
+$ apt update
+$ apt install wireguard qrencode haveged ifupdown -y
+</code></pre>
+
+<p>Set the environment variables and tweak where you need to:</p>
+
+<pre><code>$ export SERVER_PRIVKEY=$(wg genkey)
+$ export SERVER_PUBKEY=$(echo "$SERVER_PRIVKEY" | wg pubkey)
+$ export CLIENT_NAME="ruan-pc"
+$ export CLIENT_PRIVKEY=$(wg genkey)
+$ export CLIENT_PUBKEY=$(echo "$CLIENT_PRIVKEY" | wg pubkey)
+$ export CLIENT_ADDRESS_V4="${PRIVATE_SUBNET_V4::-4}3"
+$ export PRESHARED_KEY=$(wg genpsk)
+$ export WIREGUARD_PUB_NIC="wg0"
+$ export PEER_PORT=$(shuf -i1024-65535 -n1)
+$ export WG_CONFIG="/etc/wireguard/$WIREGUARD_PUB_NIC.conf"
+</code></pre>
+
+<p>Create the wireguard clients directory and create the config filename:</p>
+
+<pre><code>$ mkdir -p /etc/wireguard/clients
+$ touch $WG_CONFIG &amp;&amp; chmod 600 $WG_CONFIG
+</code></pre>
+
+<p>Create the wireguard server config content and write it to the config file:</p>
+
+<pre><code>$ echo "# $PRIVATE_SUBNET_V4 $SERVER_HOST:$SERVER_PORT $SERVER_PUBKEY $CLIENT_DNS $MTU_CHOICE $NAT_CHOICE $CLIENT_ALLOWED_IP
+[Interface]
+Address = $GATEWAY_ADDRESS_V4/$PRIVATE_SUBNET_MASK_V4
+ListenPort = $SERVER_PORT
+PrivateKey = $SERVER_PRIVKEY
+PostUp = iptables -A FORWARD -i $WIREGUARD_PUB_NIC -o $SERVER_PUB_NIC -j ACCEPT; iptables -t nat -A POSTROUTING -o $SERVER_PUB_NIC -j MASQUERADE; iptables -A INPUT -s $PRIVATE_SUBNET_V4 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+PostDown = iptables -D FORWARD -i $WIREGUARD_PUB_NIC  -o $SERVER_PUB_NIC -j ACCEPT; iptables -t nat -D POSTROUTING -o $SERVER_PUB_NIC -j MASQUERADE; iptables -D INPUT -s $PRIVATE_SUBNET_V4 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+SaveConfig = false
+# $CLIENT_NAME start
+[Peer]
+PublicKey = $CLIENT_PUBKEY
+PresharedKey = $PRESHARED_KEY
+AllowedIPs = $CLIENT_ADDRESS_V4/32
+# $CLIENT_NAME end &gt;&gt;" &gt;&gt; $WG_CONFIG
+</code></pre>
+
+<p>Create the client config:</p>
+
+<pre><code>$ echo "# $CLIENT_NAME
+[Interface]
+Address = $CLIENT_ADDRESS_V4/$PRIVATE_SUBNET_MASK_V4
+DNS = $CLIENT_DNS
+ListenPort = $PEER_PORT
+MTU = $MTU_CHOICE
+PrivateKey = $CLIENT_PRIVKEY
+[Peer]
+AllowedIPs = $CLIENT_ALLOWED_IP
+Endpoint = $SERVER_HOST:$SERVER_PORT
+PersistentKeepalive = $NAT_CHOICE
+PresharedKey = $PRESHARED_KEY
+PublicKey = $SERVER_PUBKEY" &gt;&gt; /etc/wireguard/clients/"$CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf
+</code></pre>
+
+<p>Restart and Enable Wireguard:</p>
+
+<pre><code>$ systemctl enable wg-quick@$WIREGUARD_PUB_NIC
+$ systemctl restart wg-quick@$WIREGUARD_PUB_NIC
+</code></pre>
+
+<h2>Connect your Client</h2>
+
+<p>Head over to <a href="https://www.wireguard.com/install/">Wireguard.com</a> and install the client of your choice then generate a QR Code:</p>
+
+<pre><code>$ qrencode -t ansiutf8 -l L &lt;/etc/wireguard/clients/"$CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf
+</code></pre>
+
+<p>Configure your client and connect to the VPN, after the connection has been established you can have a look on the server for connection details with:</p>
+
+<pre><code>$ wg show
+</code></pre>
+
+<p>Once connected head over to a website with ads, such as <a href="https://www.speedtest.net/">https://www.speedtest.net/</a> and you should see no ads.</p>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
+  
+</feed>

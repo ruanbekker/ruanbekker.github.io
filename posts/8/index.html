@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="I recently discovered that the faas-cli allows you to append your function&rsquo;s yaml to an existing file when generating a new function. And that &hellip;">
+  <meta name="description" content="So your application need to store secrets and you are looking for a home for them. In this tutorial we will see how we can use Python, S3 and KMS to &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,374 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/09/04/aws-s3-kms-and-python-for-secrets-management/">AWS S3 KMS and Python for Secrets Management</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-09-04T19:58:45+02:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>4</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>7:58 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://miro.medium.com/max/2400/1*9PSzVZDHjr321CpxJHcxPQ.png" alt="" /></p>
+
+<p>So your application need to store secrets and you are looking for a home for them. In this tutorial we will see how we can use Python, S3 and KMS to build our own solution for managing secrets.</p>
+
+<p>There is SSM and Secrets Manager that probably does a better job, but my mind got curious :D</p>
+
+<h2>High Level Goal</h2>
+
+<p>From a High-Level we want to store secrets encrypted on S3 with KMS, namespaced with <strong>team/application/environment/value</strong> in json format so that our application receives the json dictionary of configured key/value pairs.</p>
+
+<p>We can leverage <strong>IAM</strong> to delegate permissions on the namespacing that we decide on, for my example the namespace will look like this on S3:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>s3://s3bucket/secrets/engineering/app1/production/appconfig.json</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We will apply <strong>IAM</strong> permissions for our user to only <strong>Put</strong> and <strong>Get</strong> on <code>secrets/engineering*</code>. So with this idea we can apply IAM permissions on groups for different departments, or even let users manage their own secrets such as:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>s3://s3bucket/secrets/personal/user.name/app/appconfig.json</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After the object has been downloaded from S3 and decrypted using KMS, the value of the object will look like this:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>{u'surname': u'bekker', u'name': u'ruan', u'job_title': u'systems-development-engineer'}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Requirements</h2>
+
+<p>We will create the following resources on AWS:</p>
+
+<ul>
+<li>KMS Key</li>
+<li>S3 Bucket</li>
+<li>IAM User</li>
+<li>IAM Policy</li>
+<li>Python Dependencies: Boto3</li>
+</ul>
+
+
+<h2>Provision AWS Resources</h2>
+
+<p><img src="https://miro.medium.com/max/2728/1*Lq9xaUXuNo2Nb8kQakYdsg.png" alt="" /></p>
+
+<p>First we will create our <strong>S3 Bucket</strong>,  head over to <a href="https://s3.console.aws.amazon.com/s3/home?region=eu-west-1">Amazon S3</a> create a new s3 bucket, make sure that the bucket is <strong>NOT</strong> public, by using the default configuration, you should be good.</p>
+
+<p>Once your S3 Bucket is provisioned, head over to <a href="https://console.aws.amazon.com/iam/home#/users">Amazon IAM</a> and create a IAM User, enable programmatic access, and keep your access key and secret key safe. For now we will not apply any permissions as we will come back to this step.</p>
+
+<p>Head over to <a href="https://eu-west-1.console.aws.amazon.com/kms/home?region=eu-west-1#/kms/home">Amazon KMS</a> and create a KMS Key, we will define the <strong>key administrator</strong>, which will be my user (ruan.bekker in this case) with more privileged permissions:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*EUPWbCQ8nsfbBWHQI6srYw.png" alt="" /></p>
+
+<p>and then we will define the <strong>key usage permissions</strong> (app.user in this case), which will be the user that we provisioned from the previous step, this will be the user that will encrypt and decrypt the data:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*5xA5H0qpJ1FYTG1hUjy_Tw.png" alt="" /></p>
+
+<p>Next, review the policy generated from the previous selected sections:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*bLDVPFaZUDQ4EyWjACYRUw.png" alt="" /></p>
+
+<p>Once you select finish, you will be returned to the section where your KMS Key information will be displayed, keep note of your <strong>KMS Key Alias</strong>, as we will need it later:</p>
+
+<p><img src="https://miro.medium.com/max/5120/1*aooUMS0OyEd5hopnOUrcmA.png" alt="" /></p>
+
+<h2>Create a IAM Policy for our App User</h2>
+
+<p>Next we will create the IAM Policy for the user that will encrypt/decrypt and store data in S3</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
+</span><span class='line'>    <span class="nt">&quot;Version&quot;</span><span class="p">:</span> <span class="s2">&quot;2012-10-17&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="nt">&quot;Statement&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="nt">&quot;Sid&quot;</span><span class="p">:</span> <span class="s2">&quot;S3PutAndGetAccess&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;Effect&quot;</span><span class="p">:</span> <span class="s2">&quot;Allow&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;Action&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>                <span class="s2">&quot;s3:PutObject&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s2">&quot;s3:GetObject&quot;</span>
+</span><span class='line'>            <span class="p">],</span>
+</span><span class='line'>            <span class="nt">&quot;Resource&quot;</span><span class="p">:</span> <span class="s2">&quot;arn:aws:s3:::arn:aws:s3:::s3-bucket-name/secrets/engineering*&quot;</span>
+</span><span class='line'>        <span class="p">},</span>
+</span><span class='line'>        <span class="p">{</span>
+</span><span class='line'>            <span class="nt">&quot;Sid&quot;</span><span class="p">:</span> <span class="s2">&quot;KMSDecryptAndEncryptAccess&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;Effect&quot;</span><span class="p">:</span> <span class="s2">&quot;Allow&quot;</span><span class="p">,</span>
+</span><span class='line'>            <span class="nt">&quot;Action&quot;</span><span class="p">:</span> <span class="p">[</span>
+</span><span class='line'>                <span class="s2">&quot;kms:Decrypt&quot;</span><span class="p">,</span>
+</span><span class='line'>                <span class="s2">&quot;kms:Encrypt&quot;</span>
+</span><span class='line'>            <span class="p">],</span>
+</span><span class='line'>            <span class="nt">&quot;Resource&quot;</span><span class="p">:</span> <span class="s2">&quot;arn:aws:kms:eu-west-1:123456789012:key/xxxx-xxxx-xxxx-xxxx-xxxx&quot;</span>
+</span><span class='line'>        <span class="p">}</span>
+</span><span class='line'>    <span class="p">]</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After the policy has been saved, associate the policy to the IAM User</p>
+
+<h2>Encrypt and Put to S3</h2>
+
+<p>Now we will use Python to define the data that we want to <strong>store in S3</strong>, we will then <strong>encrypt</strong> the data with <strong>KMS</strong>, use base64 to <strong>encode</strong> the ciphertext and push the encrypted value to <strong>S3</strong>, with Server Side Encryption enabled, which we will also use our KMS key.</p>
+
+<p>Install boto3 in Python:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>pip install boto3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enter the Python REPL and import the required packages, we will also save the access key and secret key as variables so that we can use it with boto3. You can also save it to the <a href="https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html">credential provider</a> and utilise the profile name:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span> <span class="nn">base64</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;redacted&#39;</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;redacted&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next define the data that we want to <strong>encrypt and store</strong> in S3:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">mydata</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;ruan&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&quot;surname&quot;</span><span class="p">:</span> <span class="s">&quot;bekker&quot;</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&quot;job_title&quot;</span><span class="p">:</span> <span class="s">&quot;systems-development-engineer&quot;</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next we will use KMS to encrypt the data and use base64 to encode the ciphertext:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">kms</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_access_key_id</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret_access_key</span>
+</span><span class='line'><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;kms&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">ciphertext</span> <span class="o">=</span> <span class="n">kms</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">KeyId</span><span class="o">=</span><span class="s">&#39;alias/secrets-key&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Plaintext</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">mydata</span><span class="p">)</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">encoded_ciphertext</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">ciphertext</span><span class="p">[</span><span class="s">&quot;CiphertextBlob&quot;</span><span class="p">])</span>
+</span><span class='line'><span class="c"># preview the data</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">encoded_ciphertext</span>
+</span><span class='line'><span class="s">&#39;AQICAHiKOz...42720nCleoI26UW7P89lPdwvV8Q==&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next we will use S3 to push the encrypted data onto S3 in our name spaced key: <strong>secrets/engineering/app1/production/appconfig.json</strong></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">s3</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_access_key_id</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret_access_key</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span>
+</span><span class='line'><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;s3&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">put_object</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Body</span><span class="o">=</span><span class="n">encoded_ciphertext</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruan-secret-store&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Key</span><span class="o">=</span><span class="s">&#39;secrets/engineering/app1/production/appconfig.json&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">ServerSideEncryption</span><span class="o">=</span><span class="s">&#39;aws:kms&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">SSEKMSKeyId</span><span class="o">=</span><span class="s">&#39;alias/secrets-key&#39;</span>
+</span><span class='line'><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now our object is stored in S3, encrypted with KMS and ServerSideEncryption Enabled.</p>
+
+<p>You can try to download the object and decode the base64 encoded file and you will find that its complete garbage as its encrypted.</p>
+
+<p>Next we will use S3 to Get the object and use KMS to decrypt and use base64 to decode after the object has been decrypted:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">get_object</span><span class="p">(</span>
+</span><span class='line'>    <span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruan-secret-store&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="n">Key</span><span class="o">=</span><span class="s">&#39;secrets/engineering/app1/production/appconfig.json&#39;</span>
+</span><span class='line'><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">encoded_ciphertext</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Body&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">encoded_ciphertext</span>
+</span><span class='line'><span class="s">&#39;AQICAHiKOz...42720nCleoI26UW7P89lPdwvV8Q==&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now let’s decode the result with base64:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">decoded_ciphertext</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">encoded_ciphertext</span><span class="p">)</span>
+</span><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">plaintext</span> <span class="o">=</span> <span class="n">kms</span><span class="o">.</span><span class="n">decrypt</span><span class="p">(</span><span class="n">CiphertextBlob</span><span class="o">=</span><span class="nb">bytes</span><span class="p">(</span><span class="n">decoded_ciphertext</span><span class="p">))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we need to deserialize the JSON as it’s in string format:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="o">&gt;&gt;&gt;</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">plaintext</span><span class="p">[</span><span class="s">&quot;Plaintext&quot;</span><span class="p">])</span>
+</span><span class='line'><span class="p">{</span><span class="s">u&#39;surname&#39;</span><span class="p">:</span> <span class="s">u&#39;bekker&#39;</span><span class="p">,</span> <span class="s">u&#39;name&#39;</span><span class="p">:</span> <span class="s">u&#39;ruan&#39;</span><span class="p">,</span> <span class="s">u&#39;job_title&#39;</span><span class="p">:</span> <span class="s">u&#39;systems-development-engineer&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Using it in a Application</h2>
+
+<p>Let’s say you are using <strong>Docker</strong> and you want to bootstrap your application configs to your environment that you are retrieving from S3.</p>
+
+<p>We will use a <code>get_secrets.py</code> python script that will read the data into memory, decrypt and write the values in plaintext to disk, then we will use the <code>boot.sh</code> script to read the values into the environment and remove the temp file that was written to disk, then start the application since we have the values stored in our environment.</p>
+
+<p>Our <strong>&ldquo;application&rdquo;</strong> in this example will just be a line of echo to return the values for demonstration.</p>
+
+<p>The <code>get_secrets.py</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">base64</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">aws_access_key_id</span><span class="o">=</span><span class="s">&#39;redacted&#39;</span>
+</span><span class='line'><span class="n">aws_secret_access_key</span><span class="o">=</span><span class="s">&#39;redacted&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">kms</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_access_key_id</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret_access_key</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;kms&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">s3</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">aws_access_key_id</span><span class="o">=</span><span class="n">aws_access_key_id</span><span class="p">,</span> <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="n">aws_secret_access_key</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;s3&#39;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">response</span> <span class="o">=</span> <span class="n">s3</span><span class="o">.</span><span class="n">get_object</span><span class="p">(</span><span class="n">Bucket</span><span class="o">=</span><span class="s">&#39;ruan-secret-store&#39;</span><span class="p">,</span> <span class="n">Key</span><span class="o">=</span><span class="s">&#39;secrets/engineering/app1/production/appconfig.json&#39;</span><span class="p">)</span>
+</span><span class='line'><span class="n">encoded_ciphertext</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;Body&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">decoded_ciphertext</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">encoded_ciphertext</span><span class="p">)</span>
+</span><span class='line'><span class="n">plaintext</span> <span class="o">=</span> <span class="n">kms</span><span class="o">.</span><span class="n">decrypt</span><span class="p">(</span><span class="n">CiphertextBlob</span><span class="o">=</span><span class="nb">bytes</span><span class="p">(</span><span class="n">decoded_ciphertext</span><span class="p">))</span>
+</span><span class='line'><span class="n">values</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">plaintext</span><span class="p">[</span><span class="s">&quot;Plaintext&quot;</span><span class="p">])</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;envs.tmp&#39;</span><span class="p">,</span> <span class="s">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span class='line'>    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">values</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+</span><span class='line'>        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;{}={}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">upper</span><span class="p">(),</span> <span class="n">values</span><span class="p">[</span><span class="n">key</span><span class="p">])</span> <span class="o">+</span> <span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And our <code>boot.sh</code> script:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/usr/bin/env bash</span>
+</span><span class='line'><span class="nb">source</span> ./envs.tmp
+</span><span class='line'>rm -rf ./envs.tmp
+</span><span class='line'><span class="nb">echo</span> <span class="s2">&quot;Hello, my name is ${NAME} ${SURNAME}, and I am a ${JOB_TITLE}&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Running that will produce:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>bash boot.sh
+</span><span class='line'>Hello, my name is ruan bekker, and I am a systems-development-engineer
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>And there we have a simple and effective way of encrypting/decrypting data using S3, KMS and Python at a ridiculously cheap cost, its almost free.</p>
+
+<p>If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3049,357 +3417,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Install Alertmanager to Alert Based on Metrics From Prometheus</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-05-17T12:49:26-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>17</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>12:49 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="prometheus" /></p>
-
-<p>So we are pushing our time series metrics into prometheus, and now we would like to alarm based on certain metric dimensions. That&rsquo;s where alertmanager fits in. We can setup targets and rules, once rules for our targets does not match, we can alarm to destinations suchs as slack, email etc.</p>
-
-<p><a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a></p>
-
-<h2>What we will be doing:</h2>
-
-<p>In our previous tutorial we installed blackbox exporter to probe a endpoint. Now we will install Alertmanager and configure an alert to notify us via email and slack when our endpoint goes down. See <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">this post</a> if you have not seen the previous tutorial.</p>
-
-<h2>Install Alertmanager</h2>
-
-<p>Create the user for alertmanager:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ useradd --no-create-home --shell /bin/false alertmanager</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Download alertmanager and extract:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ https://github.com/prometheus/alertmanager/releases/download/v0.17.0/alertmanager-0.17.0.linux-amd64.tar.gz
-</span><span class='line'>$ tar -xvf alertmanager-0.17.0.linux-amd64.tar.gz</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Move alertmanager and amtool birnaries in place:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cp alertmanager-0.17.0.linux-amd64/alertmanager /usr/local/bin/
-</span><span class='line'>$ cp alertmanager-0.17.0.linux-amd64/amtool /usr/local/bin/</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure that the correct permissions are in place:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chown alertmanager:alertmanager /usr/local/bin/alertmanager
-</span><span class='line'>$ chown alertmanager:alertmanager /usr/local/bin/amtool</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Cleanup:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ rm -rf alertmanager-0.17.0*</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Configure Alertmanager:</h2>
-
-<p>Create the alertmanager directory and configure the global alertmanager configuration:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /etc/alertmanager
-</span><span class='line'>$ vim /etc/alertmanager/alertmanager.yml</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Provide the global config and ensure to populate your personal information. See <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/">this post</a> to create a slack webhook.</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>global:
-</span><span class='line'>  smtp_smarthost: 'smtp.domain.net:587'
-</span><span class='line'>  smtp_from: 'AlertManager &lt;mailer@domain.com&gt;'
-</span><span class='line'>  smtp_require_tls: true
-</span><span class='line'>  smtp_hello: 'alertmanager'
-</span><span class='line'>  smtp_auth_username: 'username'
-</span><span class='line'>  smtp_auth_password: 'password'
-</span><span class='line'>
-</span><span class='line'>  slack_api_url: 'https://hooks.slack.com/services/x/xx/xxx'
-</span><span class='line'>
-</span><span class='line'>route:
-</span><span class='line'>  group_by: ['instance', 'alert']
-</span><span class='line'>  group_wait: 30s
-</span><span class='line'>  group_interval: 5m
-</span><span class='line'>  repeat_interval: 3h
-</span><span class='line'>  receiver: team-1
-</span><span class='line'>
-</span><span class='line'>receivers:
-</span><span class='line'>  - name: 'team-1'
-</span><span class='line'>    email_configs:
-</span><span class='line'>      - to: 'user@domain.com'
-</span><span class='line'>    slack_configs:
-</span><span class='line'>      # https://prometheus.io/docs/alerting/configuration/#slack_config
-</span><span class='line'>      - channel: 'system_events'
-</span><span class='line'>      - username: 'AlertManager'
-</span><span class='line'>      - icon_emoji: ':joy:'</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure the permissions are in place:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chown alertmanager:alertmanager -R /etc/alertmanager</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the alertmanager systemd unit file:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/systemd/system/alertmanager.service</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And supply the unit file configuration. Note that I am exposing port <code>9093</code> directly as Im not using a reverse proxy.</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[Unit]
-</span><span class='line'>Description=Alertmanager
-</span><span class='line'>Wants=network-online.target
-</span><span class='line'>After=network-online.target
-</span><span class='line'>
-</span><span class='line'>[Service]
-</span><span class='line'>User=alertmanager
-</span><span class='line'>Group=alertmanager
-</span><span class='line'>Type=simple
-</span><span class='line'>WorkingDirectory=/etc/alertmanager/
-</span><span class='line'>ExecStart=/usr/local/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.external-url http://0.0.0.0:9093
-</span><span class='line'>
-</span><span class='line'>[Install]
-</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to inform prometheus that we will send alerts to alertmanager to it&rsquo;s exposed port:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/prometheus/prometheus.yml</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And supply the alertmanager configuration for prometheus:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>...
-</span><span class='line'>alerting:
-</span><span class='line'>  alertmanagers:
-</span><span class='line'>  - static_configs:
-</span><span class='line'>    - targets:
-</span><span class='line'>      - localhost:9093
-</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So when we get alerted, our alert will include a link to our alert. We need to provide the base url of that alert. That get&rsquo;s done in our alertmanager systemd unit file: <code>/etc/systemd/system/alertmanager.service</code> under <code>--web.external-url</code> passing the alertmanager base ip address:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[Unit]
-</span><span class='line'>Description=Alertmanager
-</span><span class='line'>Wants=network-online.target
-</span><span class='line'>After=network-online.target
-</span><span class='line'>
-</span><span class='line'>[Service]
-</span><span class='line'>User=alertmanager
-</span><span class='line'>Group=alertmanager
-</span><span class='line'>Type=simple
-</span><span class='line'>WorkingDirectory=/etc/alertmanager/
-</span><span class='line'>ExecStart=/usr/local/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.external-url http://&lt;your.alertmanager.ip.address&gt;:9093
-</span><span class='line'>
-</span><span class='line'>[Install]
-</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then we need to do the same with the prometheus systemd unit file: <code>/etc/systemd/system/prometheus.service</code> under <code>--web.external-url</code> passing the prometheus base ip address:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>[Unit]
-</span><span class='line'>Description=Prometheus
-</span><span class='line'>Wants=network-online.target
-</span><span class='line'>After=network-online.target
-</span><span class='line'>
-</span><span class='line'>[Service]
-</span><span class='line'>User=prometheus
-</span><span class='line'>Group=prometheus
-</span><span class='line'>Type=simple
-</span><span class='line'>ExecStart=/usr/local/bin/prometheus \
-</span><span class='line'>    --config.file /etc/prometheus/prometheus.yml \
-</span><span class='line'>    --storage.tsdb.path /var/lib/prometheus/ \
-</span><span class='line'>    --web.console.templates=/etc/prometheus/consoles \
-</span><span class='line'>    --web.console.libraries=/etc/prometheus/console_libraries \
-</span><span class='line'>    --web.external-url http://&lt;your.prometheus.ip.address&gt;
-</span><span class='line'>
-</span><span class='line'>[Install]
-</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Since we have edited the systemd unit files, we need to reload the systemd daemon:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl daemon-reload</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then restart prometheus and alertmanager:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart prometheus
-</span><span class='line'>$ systemctl restart alertmanager</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Inspect the status of alertmanager and prometheus:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl status alertmanager
-</span><span class='line'>$ systemctl status prometheus</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If everything seems good, enable alertmanager on boot:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl enable alertmanager</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Access Alertmanager:</h2>
-
-<p>Access alertmanager on your endpoint on port <code>9093</code>:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57946361-69856980-78dc-11e9-8c48-ebcc3b0d201e.png" alt="alertmanager" /></p>
-
-<p>From our previous tutorial we started a local web service on port <code>8080</code> that is being monitored by prometheus. Let&rsquo;s stop that service to test out the alerting. You should get a notification via email:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57946586-f29ca080-78dc-11e9-983c-6b857ef21bae.png" alt="alertmanager" /></p>
-
-<p>And the notification via slack:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57946602-03e5ad00-78dd-11e9-9ecc-c3d58b2ad3ec.png" alt="alertmanager" /></p>
-
-<p>When you start the service again and head over to the prometheus ui under alerts, you will see that the service recovered:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57946647-2677c600-78dd-11e9-95a9-b9f4190172bf.png" alt="prometheus" /></p>
-
-<h2>Install Prometheus Alertmanager Plugin</h2>
-
-<p>Install the Prometheus Alertmanager Plugin in Grafana. Head to the instance where grafana is installed and install the plugin:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ grafana-cli plugins install camptocamp-prometheus-alertmanager-datasource</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once the plugin is installed, restart grafana:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ service grafana-server restart</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install the dasboard <a href="https://grafana.com/dashboards/8010">grafana.com/dashboards/8010</a>. Create a new datasource, select the prometheus-alertmanager datasource, configure and save.</p>
-
-<p>Add a new dasboard, select import and provide the ID <code>8010</code>, select the prometheus-alertmanager datasource and save. You should see the following (more or less):</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/57947092-3f34ab80-78de-11e9-904b-f42d5ecd7d0a.png" alt="prometheus-alertmanager" /></p>
-
-<h2>Resources</h2>
-
-<p>See all <a href="https://blog.ruanbekker.com/blog/categories/prometheus/">#prometheus</a> blogposts</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/9">&larr; Older</a>
@@ -3450,6 +3467,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/03/10/ssh-using-aws-ssm-session-manager/">SSH Using AWS SSM Session Manager</a>
       </li>
     
@@ -3463,10 +3484,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/03/10/visualize-weather-data-with-grafana-and-the-dht22-sensor/">Visualize Weather Data With Grafana and the DHT22 Sensor</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose/">CICD With DroneCI and Gitea Using Docker Compose</a>
       </li>
     
   </ul>

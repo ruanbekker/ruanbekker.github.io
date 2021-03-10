@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="This is a quick post to demonstrate how to encrypt and decrypt files with ccrypt About Ccrypt&rsquo;s description from its project page: Encryption &hellip;">
+  <meta name="description" content="In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules. &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,241 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/12/18/harden-your-ssh-security-on-linux-servers/">Harden Your SSH Security on Linux Servers</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-12-18T13:32:18+00:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>18</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>1:32 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules.</p>
+
+<p>This will be the list of things that we will do:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>  - Change the SSH Port
+</span><span class='line'>  - Don't allow root to SSH
+</span><span class='line'>  - Disable password based authentication
+</span><span class='line'>  - Enable key based authentication and only for a singular user
+</span><span class='line'>  - Allow our user to sudo
+</span><span class='line'>  - Use iptables to block sources trying to DDoS your server</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Packages</h2>
+
+<p>First let&rsquo;s install the packages that we need, I&rsquo;m using Debian so I will be using the <code>apt</code> package manager:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt upgrade -y
+</span><span class='line'>$ apt install sudo -y</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Dedicated User</h2>
+
+<p>Let&rsquo;s create our user james:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ useradd -m -s /bin/bash james</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Allow our user to sudo without a password, by running <code>visudo</code> then append the following line:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>james ALL=(ALL:ALL) NOPASSWD: ALL</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>SSH Authorized Keys</h2>
+
+<p>If you don&rsquo;t already have a private SSH key, generate one on your client side:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh-keygen -f ~/.ssh/james -t rsa -C "james" -q -N ""</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then copy the public key:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ~/.ssh/james.pub | pbcopy</span></code></pre></td></tr></table></div></figure>
+
+
+<p>On your server create the SSH directories:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /home/james/.ssh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now paste your public key into <code>/home/james/.ssh/authorized_keys</code></p>
+
+<p>Then change the ownership:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod 700 /home/james/.ssh
+</span><span class='line'>$ chmod 644 /home/james/.ssh/authorized_keys
+</span><span class='line'>$ chown -R james:james /home/james</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>SSH Config</h2>
+
+<p>Backup your SSH config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cp /etc/ssh/sshd_config /etc/ssh_sshd_config.bak</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We will be using the SSH port <code>2914</code>, replace your SSH config with the following and make your adjustments where you need to:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'># /etc/ssh/sshd_config
+</span><span class='line'>Port 2914
+</span><span class='line'>HostKey /etc/ssh/ssh_host_rsa_key
+</span><span class='line'>HostKey /etc/ssh/ssh_host_ecdsa_key
+</span><span class='line'>HostKey /etc/ssh/ssh_host_ed25519_key
+</span><span class='line'>LoginGraceTime 1m
+</span><span class='line'>PermitRootLogin no
+</span><span class='line'>MaxAuthTries 3
+</span><span class='line'>MaxSessions 5
+</span><span class='line'>AuthenticationMethods publickey
+</span><span class='line'>PubkeyAuthentication yes
+</span><span class='line'>AuthorizedKeysFile      /home/james/.ssh/authorized_keys
+</span><span class='line'>PasswordAuthentication no
+</span><span class='line'>PermitEmptyPasswords no
+</span><span class='line'>ChallengeResponseAuthentication no
+</span><span class='line'>UsePAM yes
+</span><span class='line'>AllowUsers james
+</span><span class='line'>DenyUsers root
+</span><span class='line'>X11Forwarding yes
+</span><span class='line'>PrintMotd no
+</span><span class='line'>UseDNS no
+</span><span class='line'>PidFile /var/run/sshd.pid
+</span><span class='line'>AcceptEnv LANG LC_*
+</span><span class='line'>Subsystem       sftp    /usr/lib/openssh/sftp-server</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then save the file and restart SSH:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart sshd</span></code></pre></td></tr></table></div></figure>
+
+
+<p>While you are still connected to the shell session, open up a new terminal and try to connect with your new user and private SSH key to ensure that you can connect to your server.</p>
+
+<h2>Iptables</h2>
+
+<p>We want to drop incoming connections which make more than 10 connection attempts to SSH within 60 seconds.</p>
+
+<p>The tokens get refilled into buckets at 3 per minute and maximum of 3 tokens that can be filled into the bucket.</p>
+
+<p>Let&rsquo;s create our script:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /opt/scripts
+</span><span class='line'>$ touch /opt/scripts/fw.sh</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In our script we will place the following content:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>#!/usr/bin/env bash
+</span><span class='line'>INTERFACE=eth0 # check ifconfig to determine the correct interface
+</span><span class='line'>SSH_PORT=2914
+</span><span class='line'>CONNECTION_ATTEMPTS=10
+</span><span class='line'>CONNECTION_TIME=60
+</span><span class='line'>#WHITELIST_IP=x.x.x.x/32 # replace ip and uncomment if you want to whitelist a ip
+</span><span class='line'>#iptables -I INPUT -s ${WHITELIST_IP} -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -j ACCEPT # uncomment if you want to use whitelisting
+</span><span class='line'>iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --set
+</span><span class='line'>iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --update --seconds ${CONNECTION_TIME} --hitcount ${CONNECTION_ATTEMPTS} -j DROP
+</span><span class='line'>iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state NEW -m limit --limit 3/min --limit-burst 3 -j ACCEPT
+</span><span class='line'>iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
+</span><span class='line'>iptables -A OUTPUT -o ${INTERFACE} -p tcp --sport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we want to execute this script whenever the server boots, open up <code>/etc/rc.local</code> and append the following line, so that the file looks more or less like:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
+</span><span class='line'>/opt/scripts/fw.sh
+</span><span class='line'>exit 0</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure both files are executable:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x /opt/scripts/fw.sh
+</span><span class='line'>$ chmod +x /etc/rc.local</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you are sure everything is in place, reboot:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ reboot</span></code></pre></td></tr></table></div></figure>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2746,165 +2981,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/10/23/basic-ping-role-with-ansible-in-a-playbook/">Basic Ping Role With Ansible in a Playbook</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-10-23T13:13:16+00:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2020</span></span> <span class='time'>1:13 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>This is a short post on how to create a basic role to reference the ping module in Ansible.</p>
-
-<h2>Directory Structure</h2>
-
-<p>This is our directory strucuture:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ tree .
-</span><span class='line'>.
-</span><span class='line'>├── inventory.ini
-</span><span class='line'>├── playbooks
-</span><span class='line'>│   └── myplaybook.yml
-</span><span class='line'>└── roles
-</span><span class='line'>    └── ping
-</span><span class='line'>        └── tasks
-</span><span class='line'>            └── main.yml
-</span><span class='line'>
-</span><span class='line'>4 directories, 3 files</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the directories:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p playbooks
-</span><span class='line'>$ mkdir -p roles/ping/tasks</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>inventory.ini</code> includes the hosts that we will be using, and in this case I will be defining a group named <code>rpifleet</code> with all the host nested under that group and I&rsquo;m using the user <code>pi</code> and my private ssh key <code>~/.ssh/id_rsa</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat inventory.ini
-</span><span class='line'>[rpifleet]
-</span><span class='line'>rpi-01 ansible_host=rpi-01.local ansible_user=pi ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_python_interpreter=/usr/bin/python3
-</span><span class='line'>rpi-02 ansible_host=rpi-02.local ansible_user=pi ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_python_interpreter=/usr/bin/python3
-</span><span class='line'>[rpifleet:vars]
-</span><span class='line'>ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Next our role is a basic role that will reference our ping module, so from our main playbook we will reference the role that we are defining:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/ping/tasks/main.yml
-</span><span class='line'>---
-</span><span class='line'>- name: Test Ping
-</span><span class='line'>  action: ping</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have defined our <code>ping</code> role, we need to include it into our playbook:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat playbooks/myplaybook.yml
-</span><span class='line'>---
-</span><span class='line'>- name: ping raspberry pi fleet
-</span><span class='line'>  hosts: rpifleet
-</span><span class='line'>  roles:
-</span><span class='line'>    - { role: ../roles/ping }</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will see due to my playbooks directory being non-default, I defined the path to the role directory.</p>
-
-<h2>Install Ansible</h2>
-
-<p>Next we need to install ansible:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ pip install ansible</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Run the Ansible Playbook</h2>
-
-<p>Now run the playbook which will ping the nodes using ssh. Using the ping module is useful when testing the connection to your nodes:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible-playbook -i inventory.ini playbooks/myplaybook.yml
-</span><span class='line'>
-</span><span class='line'>PLAY [ping raspberry pi fleet] *****************************************************
-</span><span class='line'>
-</span><span class='line'>TASK [Gathering Facts] *************************************************************
-</span><span class='line'>ok: [rpi-02]
-</span><span class='line'>ok: [rpi-01]
-</span><span class='line'>
-</span><span class='line'>TASK [../roles/ping : Test Ping] ***************************************************
-</span><span class='line'>ok: [rpi-02]
-</span><span class='line'>ok: [rpi-01]
-</span><span class='line'>
-</span><span class='line'>PLAY RECAP *************************************************************************
-</span><span class='line'>rpi-01                     : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
-</span><span class='line'>rpi-02                     : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -2955,6 +3031,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/03/10/ssh-using-aws-ssm-session-manager/">SSH Using AWS SSM Session Manager</a>
       </li>
     
@@ -2968,10 +3048,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/03/10/visualize-weather-data-with-grafana-and-the-dht22-sensor/">Visualize Weather Data With Grafana and the DHT22 Sensor</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/09/cicd-with-droneci-and-gitea-using-docker-compose/">CICD With DroneCI and Gitea Using Docker Compose</a>
       </li>
     
   </ul>

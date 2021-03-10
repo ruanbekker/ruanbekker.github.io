@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Linux | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/linux/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-03-10T00:56:14-05:00</updated>
+  <updated>2021-03-10T01:19:14-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,212 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Wireguard VPN With Unbound ADS Blocking DNS]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/"/>
+    <updated>2021-03-10T00:59:51-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will setup a Wireguard VPN with Unbound DNS Server with some additional configuration to block ads for any clients using the DNS Server while connected to the VPN.</p>
+
+<p>A massive thank you to <a href="https://github.com/complexorganizations/wireguard-manager/blob/main/wireguard-server.sh">complexorganizations</a> for providing the source where this tuturial is based off.</p>
+
+<h2>Install Packages</h2>
+
+<p>I will be using Debian Buster for this installation:</p>
+
+<pre><code>$ apt update
+$ apt upgrade -y
+$ apt update &amp;&amp; apt install iptables curl coreutils bc jq sed e2fsprogs -y
+$ apt install linux-headers-"$(uname -r)" -y
+</code></pre>
+
+<p>I want to disable IPv6, in my case I had to apply a couple of kernel parameter tweaks:</p>
+
+<pre><code>$ echo net.ipv6.conf.all.disable_ipv6 = 1 &gt; /etc/sysctl.d/70-disable-ipv6.conf
+$ echo "net.ipv6.conf.$(ip -4 route ls | grep default | grep -Po '(?&lt;=dev )(\S+)' | head -1).disable_ipv6 = 1" &gt;&gt; /etc/sysctl.d/70-disable-ipv6.conf
+$ echo 'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/60-enable-ip-forwarding.conf
+$ sysctl -p -f /etc/sysctl.d/70-disable-ipv6.conf
+$ sysctl -p -f /etc/sysctl.d/60-enable-ip-forwarding.conf
+</code></pre>
+
+<h2>Environment Variables</h2>
+
+<p>A couple of environment variables that we will reference during our installation, tweak where your setup differs:</p>
+
+<pre><code>$ export NPROC=$(nproc)
+$ export SERVER_HOST=$(curl -s -4 ifconfig.co)
+$ export SERVER_PORT="51820"
+$ export MTU_CHOICE="1280"
+$ export NAT_CHOICE="25"
+$ export IPV4_SUBNET="10.7.0.0/24"
+$ export PRIVATE_SUBNET_V4=${IPV4_SUBNET}
+$ export GATEWAY_ADDRESS_V4="${PRIVATE_SUBNET_V4::-4}1"
+$ export PRIVATE_SUBNET_MASK_V4=$(echo "$PRIVATE_SUBNET_V4" | cut -d "/" -f 2)
+$ export CLIENT_DNS="$GATEWAY_ADDRESS_V4"
+$ export CLIENT_ALLOWED_IP="0.0.0.0/0"
+</code></pre>
+
+<h2>Unbound Installation</h2>
+
+<p>Download the unbound <code>root.hints</code> file from internic:</p>
+
+<pre><code>$ curl https://www.internic.net/domain/named.cache --create-dirs -o /etc/unbound/root.hints
+</code></pre>
+
+<p>Generate the <code>/etc/unbound/unbound.conf</code> config:</p>
+
+<pre><code>$ echo "include: \"/etc/unbound/unbound.conf.d/*.conf\"
+server:
+    num-threads: $NPROC
+    verbosity: 1
+    root-hints: /etc/unbound/root.hints
+    # auto-trust-anchor-file: /var/lib/unbound/root.key
+    interface: 0.0.0.0
+    interface: ::0
+    max-udp-size: 3072
+    access-control: 0.0.0.0/0                 refuse
+    access-control: $PRIVATE_SUBNET_V4               allow
+    access-control: 127.0.0.1                 allow
+    private-address: $PRIVATE_SUBNET_V4
+    hide-identity: yes
+    hide-version: yes
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-referral-path: yes
+    unwanted-reply-threshold: 10000000
+    val-log-level: 1
+    cache-min-ttl: 1800
+    cache-max-ttl: 14400
+    prefetch: yes
+    qname-minimisation: yes
+    prefetch-key: yes
+    forward-zone:
+        name: \".\"
+        forward-addr: 1.1.1.1
+        forward-addr: 8.8.8.8" &gt;&gt; /etc/unbound/unbound.conf
+</code></pre>
+
+<p>Download the host entries for all the ad servers which we will block:</p>
+
+<pre><code>$ curl https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social/hosts -o /tmp/adblocking_hosts
+</code></pre>
+
+<p>Include the ads configuration in <code>/etc/unbound/unbound.d/ads.conf</code>:</p>
+
+<pre><code>$ echo "server:" &gt; /etc/unbound/unbound.conf.d/ads.conf
+$ cat /etc/unbound/adblocking_hosts | grep '^0\.0\.0\.0' | awk '{print "    local-zone: \""$2"\" redirect\n    local-data: \""$2" A 0.0.0.0\""}' &gt;&gt; /etc/unbound/unbound.conf.d/ads.conf
+</code></pre>
+
+<p>Update the VPN Server&rsquo;s nameserver configuration to unbound:</p>
+
+<pre><code>$ chattr -i /etc/resolv.conf
+$ mv /etc/resolv.conf /etc/resolv.conf.old
+$ echo "nameserver 127.0.0.1" &gt;&gt;/etc/resolv.conf
+$ chattr +i /etc/resolv.conf
+</code></pre>
+
+<p>Enable and Restart Unbound:</p>
+
+<pre><code>$ systemctl enable unbound
+$ systemctl restart unbound
+</code></pre>
+
+<p>Test if DNS Resolution works:</p>
+
+<pre><code>$ dig google.com
+</code></pre>
+
+<h2>Wireguard Installation</h2>
+
+<p>Include the sources and install wireguard and its dependencies:</p>
+
+<pre><code>$ echo "deb http://deb.debian.org/debian/ unstable main" &gt;&gt;/etc/apt/sources.list.d/unstable.list
+$ echo -e "Package: *\nPin: release a=unstable\nPin-Priority: 90"  &gt;&gt;/etc/apt/preferences.d/limit-unstable
+$ apt update
+$ apt install wireguard qrencode haveged ifupdown -y
+</code></pre>
+
+<p>Set the environment variables and tweak where you need to:</p>
+
+<pre><code>$ export SERVER_PRIVKEY=$(wg genkey)
+$ export SERVER_PUBKEY=$(echo "$SERVER_PRIVKEY" | wg pubkey)
+$ export CLIENT_NAME="ruan-pc"
+$ export CLIENT_PRIVKEY=$(wg genkey)
+$ export CLIENT_PUBKEY=$(echo "$CLIENT_PRIVKEY" | wg pubkey)
+$ export CLIENT_ADDRESS_V4="${PRIVATE_SUBNET_V4::-4}3"
+$ export PRESHARED_KEY=$(wg genpsk)
+$ export WIREGUARD_PUB_NIC="wg0"
+$ export PEER_PORT=$(shuf -i1024-65535 -n1)
+$ export WG_CONFIG="/etc/wireguard/$WIREGUARD_PUB_NIC.conf"
+</code></pre>
+
+<p>Create the wireguard clients directory and create the config filename:</p>
+
+<pre><code>$ mkdir -p /etc/wireguard/clients
+$ touch $WG_CONFIG &amp;&amp; chmod 600 $WG_CONFIG
+</code></pre>
+
+<p>Create the wireguard server config content and write it to the config file:</p>
+
+<pre><code>$ echo "# $PRIVATE_SUBNET_V4 $SERVER_HOST:$SERVER_PORT $SERVER_PUBKEY $CLIENT_DNS $MTU_CHOICE $NAT_CHOICE $CLIENT_ALLOWED_IP
+[Interface]
+Address = $GATEWAY_ADDRESS_V4/$PRIVATE_SUBNET_MASK_V4
+ListenPort = $SERVER_PORT
+PrivateKey = $SERVER_PRIVKEY
+PostUp = iptables -A FORWARD -i $WIREGUARD_PUB_NIC -o $SERVER_PUB_NIC -j ACCEPT; iptables -t nat -A POSTROUTING -o $SERVER_PUB_NIC -j MASQUERADE; iptables -A INPUT -s $PRIVATE_SUBNET_V4 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+PostDown = iptables -D FORWARD -i $WIREGUARD_PUB_NIC  -o $SERVER_PUB_NIC -j ACCEPT; iptables -t nat -D POSTROUTING -o $SERVER_PUB_NIC -j MASQUERADE; iptables -D INPUT -s $PRIVATE_SUBNET_V4 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+SaveConfig = false
+# $CLIENT_NAME start
+[Peer]
+PublicKey = $CLIENT_PUBKEY
+PresharedKey = $PRESHARED_KEY
+AllowedIPs = $CLIENT_ADDRESS_V4/32
+# $CLIENT_NAME end &gt;&gt;" &gt;&gt; $WG_CONFIG
+</code></pre>
+
+<p>Create the client config:</p>
+
+<pre><code>$ echo "# $CLIENT_NAME
+[Interface]
+Address = $CLIENT_ADDRESS_V4/$PRIVATE_SUBNET_MASK_V4
+DNS = $CLIENT_DNS
+ListenPort = $PEER_PORT
+MTU = $MTU_CHOICE
+PrivateKey = $CLIENT_PRIVKEY
+[Peer]
+AllowedIPs = $CLIENT_ALLOWED_IP
+Endpoint = $SERVER_HOST:$SERVER_PORT
+PersistentKeepalive = $NAT_CHOICE
+PresharedKey = $PRESHARED_KEY
+PublicKey = $SERVER_PUBKEY" &gt;&gt; /etc/wireguard/clients/"$CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf
+</code></pre>
+
+<p>Restart and Enable Wireguard:</p>
+
+<pre><code>$ systemctl enable wg-quick@$WIREGUARD_PUB_NIC
+$ systemctl restart wg-quick@$WIREGUARD_PUB_NIC
+</code></pre>
+
+<h2>Connect your Client</h2>
+
+<p>Head over to <a href="https://www.wireguard.com/install/">Wireguard.com</a> and install the client of your choice then generate a QR Code:</p>
+
+<pre><code>$ qrencode -t ansiutf8 -l L &lt;/etc/wireguard/clients/"$CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf
+</code></pre>
+
+<p>Configure your client and connect to the VPN, after the connection has been established you can have a look on the server for connection details with:</p>
+
+<pre><code>$ wg show
+</code></pre>
+
+<p>Once connected head over to a website with ads, such as <a href="https://www.speedtest.net/">https://www.speedtest.net/</a> and you should see no ads.</p>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Harden Your SSH Security on Linux Servers]]></title>
@@ -400,172 +606,6 @@ There is a screen on:
 <p><a href="https://twitter.com/ruanbekker"><img src="https://user-images.githubusercontent.com/567298/71188576-e2410f80-2289-11ea-8667-08f0c14ab7b5.png" alt="" /></a></p>
 
 <p><a href="https://ko-fi.com/A6423ZIQ"><img src="https://www.ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" /></a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Sysadmin Linux Troubleshooting Cheatsheet]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/02/10/sysadmin-linux-troubleshooting-cheatsheet/"/>
-    <updated>2019-02-10T14:17:54-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/02/10/sysadmin-linux-troubleshooting-cheatsheet</id>
-    <content type="html"><![CDATA[<p>This is a one pager of all the commands I use when I have to troubleshoot problems. This post will be updated as time goes by.</p>
-
-<h2>Curl / Web Response Times</h2>
-
-<p>Template file:</p>
-
-<pre><code class="bash">$ cat curl-format.txt
-time_namelookup:  %{time_namelookup}\n
-time_connect:  %{time_connect}\n
-time_appconnect:  %{time_appconnect}\n
-time_pretransfer:  %{time_pretransfer}\n
-time_redirect:  %{time_redirect}\n
-time_starttransfer:  %{time_starttransfer}\n
-----------\n
-time_total:  %{time_total}\n
-</code></pre>
-
-<p>The host header, source addres, destination address:</p>
-
-<pre><code class="bash">$ curl -sk -w "@curl-format.txt" -o /dev/null -H "Host: remote-host.mydomain.com" 10.0.2.10 https://10.244.0.240:443 -L
-
-time_namelookup:  0.012178
-time_connect:  0.012225
-time_appconnect:  0.062149
-time_pretransfer:  0.062175
-time_redirect:  0.000172
-time_starttransfer:  0.125631
-----------
-time_total:  0.125849
-</code></pre>
-
-<h2>MTR / Network Latencies / Packetloss</h2>
-
-<p>No dns, TCP, counts, port, source address, destination address:</p>
-
-<pre><code class="bash">$ mtr -n -T -c 10 --port 443 10.2.0.2 10.244.10.5 --report
-Start: Sun Feb 10 19:04:50 2019
-HOST: my-internet-gatewewy         Loss%   Snt   Last   Avg  Best  Wrst StDev
-  1.|-- 172.18.110.22              0.0%    10    0.3   0.3   0.3   0.3   0.0
-  2.|-- 172.18.110.22              0.0%    10    0.3   0.3   0.3   0.3   0.0
-  3.|-- 172.18.110.22              0.0%    10    0.3   0.3   0.3   0.3   0.0
-</code></pre>
-
-<h2>TCPTraceroute</h2>
-
-<p>No dns, TCP, port, source address, destination address:</p>
-
-<pre><code class="bash">$ traceroute -T -n -p 443 -s 10.80.4.7 10.2.129.4; done
-traceroute to 10.2.129.4 (10.2.129.4), 30 hops max, 60 byte packets
- 1  10.80.4.1   0.322 ms  0.291 ms  0.224 ms
- 2  10.2.129.4  179.090 ms  179.022 ms  179.023 ms
-</code></pre>
-
-<h2>Connection Related:</h2>
-
-<p>Connection flow: <a href="https://askubuntu.com/questions/538443/whats-the-difference-between-port-status-listening-time-wait-close-wait">Thanks to</a></p>
-
-<pre><code>Consider two programs attempting a socket connection (call them a and b). Both set up sockets and transition to the LISTEN state. Then one program (say a) tries to connect to the other (b). a sends a request and enters the SYN_SENT state, and b receives the request and enters the SYN_RECV state. When b acknowledges the request, they enter the ESTABLISHED state, and do their business. Now a couple of things can happen:
-
-    a wishes to close the connection, and enters FIN_WAIT1. b receives the FIN request, sends an ACK (then a enters FIN_WAIT2), enters CLOSE_WAIT, tells a it is closing down and the enters LAST_ACK. Once a acknowledges this (and enters TIME_WAIT), b enters CLOSE. a waits a bit to see if anythings is left, then enters CLOSE.
-    a and b have finished their business and decide to close the connection (simultaneous closing). When a is in FIN_WAIT, and instead of receiving an ACK from b, it receives a FIN (as b wishes to close it as well), a enters CLOSING. But there are still some messages to send (the ACK that a is supposed to get for its original FIN), and once this ACK arrives, a enters TIME_WAIT as usual.
-</code></pre>
-
-<p>Active Connections:</p>
-
-<pre><code>$ netstat -n -A  inet | grep -v "127.0.0.1"
-</code></pre>
-
-<p>Established Connections:</p>
-
-<pre><code>$ netstat -nputw | grep ESTABLISHED
-$ netstat -antp | grep :3306 | grep ESTABLISHED
-</code></pre>
-
-<p>Time Wait Connections:</p>
-
-<pre><code>$ netstat -antp | grep TIME_WAIT
-</code></pre>
-
-<p>How many connections:</p>
-
-<pre><code>$ wc -l /proc/net/tcp
-</code></pre>
-
-<p>Listing Open files per Port:</p>
-
-<pre><code>$ lsof -i:3306
-</code></pre>
-
-<p>Listing Open files per User:</p>
-
-<pre><code>$ lsof -u glassfish
-</code></pre>
-
-<h2>Network Throughput</h2>
-
-<p>You can test the network throughput between two linux hosts with <code>iperf</code>:</p>
-
-<p>On side-a we will start the server in TCP mode:</p>
-
-<pre><code>$ iperf -s
-------------------------------------------------------------
-Server listening on TCP port 5001
-TCP window size:  128 KByte (default)
-------------------------------------------------------------
-</code></pre>
-
-<p>On side-b we will start the client, which connects to the server:</p>
-
-<pre><code>$ iperf -c 192.168.1.213
-------------------------------------------------------------
-Client connecting to 192.168.1.213, TCP port 5001
-TCP window size: 43.8 KByte (default)
-------------------------------------------------------------
-[  3] local 192.168.0.114 port 43870 connected with 192.168.1.213 port 5001
-[ ID] Interval       Transfer     Bandwidth
-[  3]  0.0-10.0 sec  11.4 MBytes  9.54 Mbits/sec
-</code></pre>
-
-<p>We can also run this in UDP mode where the server will run <code>iperf -s -u</code> and the client will run <code>iperf -c host-address -u</code></p>
-
-<h2>Resources</h2>
-
-<ul>
-<li><a href="https://aws.amazon.com/premiumsupport/knowledge-center/troubleshoot-vpn-packet-loss/">AWS: Troubleshoot VPN Latencies</a></li>
-<li><a href="https://www.linode.com/docs/networking/diagnostics/diagnosing-network-issues-with-mtr/">Linode: Diagnose Network Issues with MTR</a></li>
-</ul>
-
-
-<h2>Thank You</h2>
-
-<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
-
-<center>
-<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
-<input type="hidden" name="cmd" value="_s-xclick" />
-<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
-<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
-<img alt="" border="0" src="https://www.paypal.com/en_ZA/i/scr/pixel.gif" width="1" height="1" />
-</form>
-</center>
-
-
-<p><br></p>
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
 ]]></content>
   </entry>
   

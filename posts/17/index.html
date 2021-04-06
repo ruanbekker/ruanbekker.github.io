@@ -9,12 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="We can gain insights when making requests to websites such as: Lookup time
-Connect time
-AppCon time
-Redirect time
-PreXfer time
-StartXfer time We will &hellip;">
+  <meta name="description" content="In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -126,6 +121,232 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/11/11/setup-apm-server-on-ubuntu-for-your-elastic-stack-to-get-insights-in-your-application-performance-metrics/">Setup APM Server on Ubuntu for Your Elastic Stack to Get Insights in Your Application Performance Metrics</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-11-11T12:31:43-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>12:31 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-overview.png" alt="" /></p>
+
+<p>In this post we will setup the Elastic Stack with Elasticsearc, Kibana and APM . The APM Server (Application Performance Metrics) which will receive the metric data from the application side, and is then pushed to apm indices on Elasticsearch.</p>
+
+<p>This will be a 2 post blog on APM:</p>
+
+<ul>
+<li>1) <a href="">Setup the Elastic Stack with Elasticsearch, Kibana and APM Server</a> - this post</li>
+<li>2) <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">Setup a Python Flask application with the APM Agent</a></li>
+</ul>
+
+
+<h2>What is APM</h2>
+
+<p>From their website APM is described as: &ldquo;Elastic APM is an application performance monitoring system built on the Elastic Stack. It allows you to monitor software services and applications in real time, collecting detailed performance information on response time for incoming requests, database queries, calls to caches, external HTTP requests, etc.&rdquo;</p>
+
+<p>You get metrics like average, p99 response times etc, and also have insights when errors occur, it even allows you to look at the stacktrace, poinpointing on which line of your code it ocurred etc.</p>
+
+<ul>
+<li><a href="https://www.elastic.co/solutions/apm">More Info</a></li>
+</ul>
+
+
+<h2>APM Agents:</h2>
+
+<p>The APM Agents will be loaded inside your application, application metrics will then be pushed to the APM Server (which we will setup in this post), which then gets pushed to Elasticsearch and is then consumed by Kibana.</p>
+
+<p>At the time of writing, the APM Agents are supported in the following languages:</p>
+
+<ul>
+<li>Node.js</li>
+<li>Django</li>
+<li>Flask</li>
+<li>Ruby on Rails</li>
+<li>Rack</li>
+<li>RUM</li>
+<li>Golang</li>
+<li>Java</li>
+</ul>
+
+
+<h2>Setup the Elastic Stack</h2>
+
+<p>One thing to note, every service in your Elastic Stack needs to be running on the same version. In this post we will setup Elasticsearch, APM and Kibana all running on version <code>6.4.3</code></p>
+
+<h2>Setup the Pre-Requirements:</h2>
+
+<p>Elasticsearch depends on Java, se we will go ahead and setup the repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch <span class="p">|</span> sudo apt-key add -
+</span><span class='line'><span class="nv">$ </span>apt-get install apt-transport-https -y
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s2">&quot;deb https://artifacts.elastic.co/packages/6.x/apt stable main&quot;</span> <span class="p">|</span> sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+</span><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> apt upgrade -y
+</span><span class='line'><span class="nv">$ </span>apt install openjdk-8-jdk -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify that Java is installed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>java -version
+</span><span class='line'>openjdk version <span class="s2">&quot;1.8.0_181&quot;</span>
+</span><span class='line'>OpenJDK Runtime Environment <span class="o">(</span>build 1.8.0_181-8u181-b13-1ubuntu0.16.04.1-b13<span class="o">)</span>
+</span><span class='line'>OpenJDK 64-Bit Server VM <span class="o">(</span>build 25.181-b13, mixed mode<span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Setup Kernel parameters for Elasticsearch:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sysctl -w vm.max_map_count<span class="o">=</span>262144
+</span><span class='line'><span class="nv">$ </span><span class="nb">echo</span> <span class="s1">&#39;vm.max_map_count=262144&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setup Elasticsearch:</h2>
+
+<p>Search for the latest versions (when already having elasticsearch, either upgrade or install apm on the same version as elasticsearch/kibana):</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-cache madison elasticsearch
+</span><span class='line'>elasticsearch <span class="p">|</span>      6.4.3 <span class="p">|</span> https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
+</span><span class='line'>elasticsearch <span class="p">|</span>      6.4.2 <span class="p">|</span> https://artifacts.elastic.co/packages/6.x/apt stable/main amd64 Packages
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Install Elasticsearch:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get install <span class="nv">elasticsearch</span><span class="o">=</span>6.4.3 -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure Elasticsearch to lock the memory on startup:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#bootstrap.memory_lock: true/bootstrap.memory_lock: true/g&#39;</span> /etc/elasticsearch/elasticsearch.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable Elasticsearch on startup and start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl daemon-reload
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>elasticsearch.service
+</span><span class='line'><span class="nv">$ </span>systemctl start elasticsearch.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install Kibana:</h2>
+
+<p>Install Kibana version <code>6.4.3</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install <span class="nv">kibana</span><span class="o">=</span>6.4.3 -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For demonstration, I will configure Kibana to listen on all interfaces on port <code>5601</code>, but note this will enable access for everyone, you can [follow this blogpost] to setup a Nginx Reverse Proxy to upstream to localhost on port 5601.</p>
+
+<p>Since this demonstration we are using Elasticsearch locally, so if you have a remote cluster, configuration can be applied where needed.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#server.host: &quot;localhost&quot;/server.host: &quot;0.0.0.0&quot;/&#39;</span>g /etc/kibana/kibana.yml
+</span><span class='line'><span class="nv">$ </span>sed -i <span class="s1">&#39;s/#elasticsearch.url: &quot;http:\/\/localhost:9200&quot;/elasticsearch.url: &quot;http:\/\/localhost:9200&quot;/&#39;</span>g /etc/kibana/kibana.yml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable Kibana on startup and start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>kibana.service
+</span><span class='line'><span class="nv">$ </span>systemctl restart kibana.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install the APM Server</h2>
+
+<p>Install APM Server version <code>6.4.3</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install apm-server<span class="o">=</span>6.4.3 -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since we have everything locally, the configuration can be kept as is, but if you need to configure the elasticsearch or kibana hosts, it can be done via <code>/etc/apm-server/apm-server.yml</code></p>
+
+<p>Then once Kibana and Elasticsearch is started, load the mapping templates, enable and start the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apm-server setup
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>apm-server.service
+</span><span class='line'><span class="nv">$ </span>systemctl restart apm-server.service
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure all the services are running with <code>netstat -tulpn</code> and port <code>9200</code>, <code>9300</code>, <code>5601</code> and <code>8300</code> should be listening</p>
+
+<h2>Access Your Elastic Stack</h2>
+
+<p>Access Kibana on your routable endpoint on port <code>5601</code> and you should see something like this:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/elastic-apm-startup.png" alt="" /></p>
+
+<h2>Configuring a Application to push metrics to APM</h2>
+
+<p>In the <a href="https://blog.ruanbekker.com/blog/2018/11/11/get-application-performance-metrics-on-python-flask-with-elastic-apm-on-kibana-and-elasticsearch/">next post</a> I will setup a Python Flask Application on APM</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2699,606 +2920,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">Setting Up a Docker Swarm Cluster on 3 RaspberryPi Nodes</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-10-23T16:24:00-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>4:24 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/rpi-docker-swarm.png" alt="" /></p>
-
-<p>As the curious person that I am, I like to play around with new stuff that I stumble upon, and one of them was having a docker swarm cluster running on 3 Raspberry Pi&rsquo;s on my LAN.</p>
-
-<p>The idea is to have 3 Raspberry Pi&rsquo;s (Model 3 B), a Manager Node, and 2 Worker Nodes, each with a 32 GB SanDisk SD Card, which I will also be part of a 3x Replicated GlusterFS Volume that will come in handy later for some data that needs persistent data.</p>
-
-<p>More Inforamtion on: <a href="https://docs.docker.com/engine/swarm/">Docker Swarm</a></p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>Provision Raspbian on each RaspberryPi</h2>
-
-<p>Grab the <a href="https://downloads.raspberrypi.org/raspbian_lite_latest">Latest Raspbian Lite ISO</a> and the following <a href="https://www.raspberrypi.org/documentation/installation/installing-images/">source</a> will help provisioning your RaspberryPi with Raspbian.</p>
-
-<h2>Installing Docker on Raspberry PI</h2>
-
-<p>On each node, run the following to install docker, and also add your user to the docker group, so that you can run docker commands with a normal user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get update <span class="o">&amp;&amp;</span> sudo apt-get upgrade -y
-</span><span class='line'><span class="nv">$ </span>sudo apt-get remove docker.io
-</span><span class='line'><span class="nv">$ </span>curl https://get.docker.com <span class="p">|</span> sudo bash
-</span><span class='line'><span class="nv">$ </span>sudo usermod -aG docker pi
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you have an internal DNS Server, set an A Record for each node, or for simplicity, set your hosts file on each node so that your hostname for each node responds to it&rsquo;s provisioned IP Address:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/hosts
-</span><span class='line'>192.168.0.2   rpi-01
-</span><span class='line'>192.168.0.3   rpi-02
-</span><span class='line'>192.168.0.4   rpi-03
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Also, to have passwordless SSH, from each node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa
-</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-01
-</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-02
-</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-03
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Initialize the Swarm</h2>
-
-<p>Time to set up our swarm. As we have more than one network interface, we will need to setup our swarm by specifying the IP Address of our network interface that is accessible from our LAN:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ifconfig eth0
-</span><span class='line'>eth0      Link encap:Ethernet  HWaddr a1:12:bc:d3:cd:4d
-</span><span class='line'>          inet addr:192.168.0.2  Bcast:192.168.0.255  Mask:255.255.255.0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have our IP Address, initialize the swarm on the manager node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker swarm init --advertise-addr 192.168.0.2
-</span><span class='line'>Swarm initialized: current node <span class="o">(</span>siqyf3yricsvjkzvej00a9b8h<span class="o">)</span> is now a manager.
-</span><span class='line'>
-</span><span class='line'>To add a worker to this swarm, run the following <span class="nb">command</span>:
-</span><span class='line'>
-</span><span class='line'>    docker swarm join <span class="se">\</span>
-</span><span class='line'>    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 <span class="se">\</span>
-</span><span class='line'>    192.168.0.2:2377
-</span><span class='line'>
-</span><span class='line'>To add a manager to this swarm, run <span class="s1">&#39;docker swarm join-token manager&#39;</span> and follow the instructions.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then from <code>rpi-02</code> join the manager node of the swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then from <code>rpi-03</code> join the manager node of the swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
-</span><span class='line'>This node joined a swarm as a worker.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then from the manager node: <code>rpi-01</code>, ensure that the nodes are checked in:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker node ls
-</span><span class='line'>ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-</span><span class='line'>62s7gx1xdm2e3gp5qoca2ru0d     rpi-03              Ready               Active
-</span><span class='line'>6fhyfy9yt761ar9pl84dkxck3 *   rpi-01              Ready               Active              Leader
-</span><span class='line'>pg0nyy9l27mtfc13qnv9kywe7     rpi-02              Ready               Active
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Setting Up a Replicated GlusterFS Volume</h2>
-
-<p>I have decided to setup a replicated glusterfs volume to have data replicated throughout the cluster if I would like to have some persistent data. From each node, install the GlusterFS Client and Server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt install glusterfs-server glusterfs-client -y <span class="o">&amp;&amp;</span> sudo systemctl <span class="nb">enable </span>glusterfs-server
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Probe the other nodes from the manager node:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster peer probe rpi-02
-</span><span class='line'>peer probe: success.
-</span><span class='line'>
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster peer probe rpi-03
-</span><span class='line'>peer probe: success.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure that we can see all 3 nodes in our GlusterFS Pool:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster pool list
-</span><span class='line'>UUID                                    Hostname        State
-</span><span class='line'>778c7463-ba48-43de-9f97-83a960bba99e    rpi-02          Connected
-</span><span class='line'>00a20a3c-5902-477e-a8fe-da35aa955b5e    rpi-03          Connected
-</span><span class='line'>d82fb688-c50b-405d-a26f-9cb2922cce75    localhost       Connected
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>From each node, create the directory where GlusterFS will store the data for the bricks that we will specify when creating the volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Next, create a 3 Way Replicated GlusterFS Volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume create rpi-gfs replica <span class="m">3</span> <span class="se">\</span>
-</span><span class='line'>rpi-01:/gluster/brick <span class="se">\</span>
-</span><span class='line'>rpi-02:/gluster/brick <span class="se">\</span>
-</span><span class='line'>rpi-03:/gluster/brick <span class="se">\</span>
-</span><span class='line'>force
-</span><span class='line'>
-</span><span class='line'>volume create: rpi-gfs: success: please start the volume to access data
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Start the GlusterFS Volume:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume start rpi-gfs
-</span><span class='line'>volume start: rpi-gfs: success
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify the GlusterFS Volume Info, and from the below output you will see that the volume is replicated 3 ways from the 3 bricks that we specified</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume info
-</span><span class='line'>
-</span><span class='line'>Volume Name: rpi-gfs
-</span><span class='line'>Type: Replicate
-</span><span class='line'>Volume ID: b879db15-63e9-44ca-ad76-eeaa3e247623
-</span><span class='line'>Status: Started
-</span><span class='line'>Number of Bricks: <span class="m">1</span> x <span class="nv">3</span> <span class="o">=</span> 3
-</span><span class='line'>Transport-type: tcp
-</span><span class='line'>Bricks:
-</span><span class='line'>Brick1: rpi-01:/gluster/brick
-</span><span class='line'>Brick2: rpi-02:/gluster/brick
-</span><span class='line'>Brick3: rpi-03:/gluster/brick
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Mount the GlusterFS Volume on each Node, first on <code>rpi-01</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo umount /mnt
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
-</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then on <code>rpi-02</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo umount /mnt
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
-</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And lastly on <code>rpi-03</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo umount /mnt
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
-</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then your GlusterFS Volume will be mounted on all the nodes, and when a file is written to the <code>/mnt/</code> partition, data will be replicated to all the nodes in the Cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>df -h
-</span><span class='line'>Filesystem          Size  Used Avail Use% Mounted on
-</span><span class='line'>/dev/root            30G  4.5G   24G  16% /
-</span><span class='line'>localhost:/rpi-gfs   30G  4.5G   24G  16% /mnt
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create a Web Service on Docker Swarm:</h2>
-
-<p>Let&rsquo;s create a Web Service in our Swarm, called <code>web</code> and by specifying <code>1</code> replica and publishing the exposed port <code>80</code> to our containers port <code>80</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service create --name web --replicas <span class="m">1</span> --publish 80:80 hypriot/rpi-busybox-httpd
-</span><span class='line'>vsvyanuw6q6yf4jr52m5z7vr1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verifying that our Service is Started and equals to the desired replica count:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ls
-</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
-</span><span class='line'>vsvyanuw6q6y        web                 replicated          1/1                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Inspecting the Service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-<span class='line-number'>80</span>
-<span class='line-number'>81</span>
-<span class='line-number'>82</span>
-<span class='line-number'>83</span>
-<span class='line-number'>84</span>
-<span class='line-number'>85</span>
-<span class='line-number'>86</span>
-<span class='line-number'>87</span>
-<span class='line-number'>88</span>
-<span class='line-number'>89</span>
-<span class='line-number'>90</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service inspect web
-</span><span class='line'><span class="o">[</span>
-</span><span class='line'>    <span class="o">{</span>
-</span><span class='line'>        <span class="s2">&quot;ID&quot;</span>: <span class="s2">&quot;vsvyanuw6q6yf4jr52m5z7vr1&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;Version&quot;</span>: <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;Index&quot;</span>: 2493
-</span><span class='line'>        <span class="o">}</span>,
-</span><span class='line'>        <span class="s2">&quot;CreatedAt&quot;</span>: <span class="s2">&quot;2017-07-16T21:20:00.017836646Z&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;UpdatedAt&quot;</span>: <span class="s2">&quot;2017-07-16T21:20:00.026359794Z&quot;</span>,
-</span><span class='line'>        <span class="s2">&quot;Spec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;web&quot;</span>,
-</span><span class='line'>            <span class="s2">&quot;Labels&quot;</span>: <span class="o">{}</span>,
-</span><span class='line'>            <span class="s2">&quot;TaskTemplate&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;ContainerSpec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Image&quot;</span>: <span class="s2">&quot;hypriot/rpi-busybox-httpd:latest@sha256:c00342f952d97628bf5dda457d3b409c37df687c859df82b9424f61264f54cd1&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;StopGracePeriod&quot;</span>: 10000000000,
-</span><span class='line'>                    <span class="s2">&quot;DNSConfig&quot;</span>: <span class="o">{}</span>
-</span><span class='line'>                <span class="o">}</span>,
-</span><span class='line'>                <span class="s2">&quot;Resources&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Limits&quot;</span>: <span class="o">{}</span>,
-</span><span class='line'>                    <span class="s2">&quot;Reservations&quot;</span>: <span class="o">{}</span>
-</span><span class='line'>                <span class="o">}</span>,
-</span><span class='line'>                <span class="s2">&quot;RestartPolicy&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Condition&quot;</span>: <span class="s2">&quot;any&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;Delay&quot;</span>: 5000000000,
-</span><span class='line'>                    <span class="s2">&quot;MaxAttempts&quot;</span>: 0
-</span><span class='line'>                <span class="o">}</span>,
-</span><span class='line'>                <span class="s2">&quot;Placement&quot;</span>: <span class="o">{}</span>,
-</span><span class='line'>                <span class="s2">&quot;ForceUpdate&quot;</span>: 0
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;Mode&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Replicated&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Replicas&quot;</span>: 1
-</span><span class='line'>                <span class="o">}</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;UpdateConfig&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Parallelism&quot;</span>: 1,
-</span><span class='line'>                <span class="s2">&quot;FailureAction&quot;</span>: <span class="s2">&quot;pause&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Monitor&quot;</span>: 5000000000,
-</span><span class='line'>                <span class="s2">&quot;MaxFailureRatio&quot;</span>: 0,
-</span><span class='line'>                <span class="s2">&quot;Order&quot;</span>: <span class="s2">&quot;stop-first&quot;</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;RollbackConfig&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Parallelism&quot;</span>: 1,
-</span><span class='line'>                <span class="s2">&quot;FailureAction&quot;</span>: <span class="s2">&quot;pause&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Monitor&quot;</span>: 5000000000,
-</span><span class='line'>                <span class="s2">&quot;MaxFailureRatio&quot;</span>: 0,
-</span><span class='line'>                <span class="s2">&quot;Order&quot;</span>: <span class="s2">&quot;stop-first&quot;</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;EndpointSpec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;vip&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                    <span class="o">{</span>
-</span><span class='line'>                        <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
-</span><span class='line'>                        <span class="s2">&quot;TargetPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishedPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
-</span><span class='line'>                    <span class="o">}</span>
-</span><span class='line'>                <span class="o">]</span>
-</span><span class='line'>            <span class="o">}</span>
-</span><span class='line'>        <span class="o">}</span>,
-</span><span class='line'>        <span class="s2">&quot;Endpoint&quot;</span>: <span class="o">{</span>
-</span><span class='line'>            <span class="s2">&quot;Spec&quot;</span>: <span class="o">{</span>
-</span><span class='line'>                <span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;vip&quot;</span>,
-</span><span class='line'>                <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                    <span class="o">{</span>
-</span><span class='line'>                        <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
-</span><span class='line'>                        <span class="s2">&quot;TargetPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishedPort&quot;</span>: 80,
-</span><span class='line'>                        <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
-</span><span class='line'>                    <span class="o">}</span>
-</span><span class='line'>                <span class="o">]</span>
-</span><span class='line'>            <span class="o">}</span>,
-</span><span class='line'>            <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;TargetPort&quot;</span>: 80,
-</span><span class='line'>                    <span class="s2">&quot;PublishedPort&quot;</span>: 80,
-</span><span class='line'>                    <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
-</span><span class='line'>                <span class="o">}</span>
-</span><span class='line'>            <span class="o">]</span>,
-</span><span class='line'>            <span class="s2">&quot;VirtualIPs&quot;</span>: <span class="o">[</span>
-</span><span class='line'>                <span class="o">{</span>
-</span><span class='line'>                    <span class="s2">&quot;NetworkID&quot;</span>: <span class="s2">&quot;zjerz0xsw39icnh24enja4cgk&quot;</span>,
-</span><span class='line'>                    <span class="s2">&quot;Addr&quot;</span>: <span class="s2">&quot;10.255.0.13/16&quot;</span>
-</span><span class='line'>                <span class="o">}</span>
-</span><span class='line'>            <span class="o">]</span>
-</span><span class='line'>        <span class="o">}</span>
-</span><span class='line'>    <span class="o">}</span>
-</span><span class='line'><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Docker Swarm&rsquo;s Routing mesh takes care of the internal routing, so requests will respond even if the container is not running on the node that you are making the request against.</p>
-
-<p>With that said, verifying on which node our service is running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ps web
-</span><span class='line'>ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
-</span><span class='line'>sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running <span class="m">2</span> minutes ago
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we make a HTTP Request to one of these Nodes IP Addresses, our request will be responded with this awesome static page:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/armed-with-hypriot.jpg" alt="" /></p>
-
-<p>We can see we only have one container in our swarm, let&rsquo;s scale that up to <code>3</code> containers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service scale <span class="nv">web01</span><span class="o">=</span>3
-</span><span class='line'>web01 scaled to 3
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that the service is scaled to 3 containers, requests will be handled using the round-robin algorithm. To ensured that the service scaled, we will see that we will have 3 replicas:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ls
-</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
-</span><span class='line'>vsvyanuw6q6y        web                 replicated          3/3                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verifying where these containers are running on:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ps web01
-</span><span class='line'>ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
-</span><span class='line'>sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running <span class="m">2</span> minutes ago
-</span><span class='line'>ope3ya7hh9j4        web.2               hypriot/rpi-busybox-httpd:latest   rpi-03              Running             Running <span class="m">30</span> seconds ago
-</span><span class='line'>07m1ww7ptxro        web.3               hypriot/rpi-busybox-httpd:latest   rpi-01              Running             Running <span class="m">28</span> seconds ago
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Lastly, removing the service from our swarm:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service rm web01
-</span><span class='line'>web01
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Massive Thanks:</h2>
-
-<p>a Massive thanks to <a href="https://twitter.com/alexellisuk">Alex Ellis</a> for mentioning me on one of his blogposts:</p>
-
-<ul>
-<li><a href="https://blog.alexellis.io/blog-community-inspiration/">https://blog.alexellis.io/blog-community-inspiration/</a></li>
-</ul>
-
-
-<p><img src="https://objects.ruanbekker.com/assets/images/tweet-alexellis-21072017.png" alt="" /></p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/18">&larr; Older</a>
@@ -3349,6 +2970,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a>
       </li>
     
@@ -3362,10 +2987,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/03/10/generate-grafana-loki-log-links-from-metric-label-values/">Generate Grafana Loki Log Links From Metric Label Values</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/10/visualize-weather-data-with-grafana-and-the-dht22-sensor/">Visualize Weather Data With Grafana and the DHT22 Sensor</a>
       </li>
     
   </ul>

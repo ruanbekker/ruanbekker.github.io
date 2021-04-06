@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules. &hellip;">
+  <meta name="description" content="In this tutorial we will use minica to enable us to run our web applications over HTTPS for local development. To read more about about minica check &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,261 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/12/23/https-for-local-development-with-minica/">HTTPS for Local Development With MiniCA</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-12-23T03:11:08-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2020</span></span> <span class='time'>3:11 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial we will use <a href="https://github.com/jsha/minica">minica</a> to enable us to run our web applications over HTTPS for local development.</p>
+
+<p>To read more about about <a href="https://github.com/jsha/minica">minica</a> check out their website.</p>
+
+<h2>Generate Certificates</h2>
+
+<p>You can use their binary from their github page or use my docker image to generate the certificates to a <code>./certs</code> directory:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker run --user "$(id -u):$(id -g)" -it -v $PWD/certs:/output ruanbekker/minica --domains 192.168.0.20.nip.io</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the case from above, we are generating certificates for the FQDN <code>192.168.0.20.nip.io</code>. You will find the generated certificates under <code>./certs/</code>.</p>
+
+<h2>Application Stack</h2>
+
+<p>We will use docker to create a nginx webserver to serve our content via https using the generated vertificates.</p>
+
+<p>Our <code>docker-compose.yml</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>version: '3.7'
+</span><span class='line'>services:
+</span><span class='line'>  nginx:
+</span><span class='line'>    image: nginx
+</span><span class='line'>    container_name: nginx
+</span><span class='line'>    ports:
+</span><span class='line'>      - 80:80
+</span><span class='line'>      - 443:443
+</span><span class='line'>    volumes:
+</span><span class='line'>      - ~/personal/docker-minica-nginx/nginx.conf:/etc/nginx/nginx.conf
+</span><span class='line'>      - ~/personal/docker-minica-nginx/ssl.conf:/etc/nginx/conf.d/ssl.conf
+</span><span class='line'>      - ~/personal/docker-minica-nginx/certs/192.168.0.6.nip.io:/etc/nginx/certs
+</span><span class='line'>      - ~/personal/docker-minica-nginx/html/index.html:/usr/share/nginx/html/index.html</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>nginx.conf</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>user  nginx;
+</span><span class='line'>worker_processes  1;
+</span><span class='line'>error_log  /var/log/nginx/error.log warn;
+</span><span class='line'>pid        /var/run/nginx.pid;
+</span><span class='line'>
+</span><span class='line'>events {
+</span><span class='line'>    worker_connections  1024;
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>http {
+</span><span class='line'>    include       /etc/nginx/mime.types;
+</span><span class='line'>    default_type  application/octet-stream;
+</span><span class='line'>
+</span><span class='line'>    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+</span><span class='line'>                      '$status $body_bytes_sent "$http_referer" '
+</span><span class='line'>                      '"$http_user_agent" "$http_x_forwarded_for"';
+</span><span class='line'>
+</span><span class='line'>    access_log  /var/log/nginx/access.log  main;
+</span><span class='line'>
+</span><span class='line'>    sendfile        on;
+</span><span class='line'>    keepalive_timeout  65;
+</span><span class='line'>    include /etc/nginx/conf.d/ssl.conf;
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>ssl.conf</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>server {
+</span><span class='line'>    listen 80;
+</span><span class='line'>    server_name 192.168.0.6.nip.io;
+</span><span class='line'>    return 301 https://$host$request_uri;
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>server {
+</span><span class='line'>    listen 443 ssl;
+</span><span class='line'>    server_name 192.168.0.6.nip.io;
+</span><span class='line'>
+</span><span class='line'>    ssl_certificate /etc/nginx/certs/cert.pem;
+</span><span class='line'>    ssl_certificate_key /etc/nginx/certs/key.pem;
+</span><span class='line'>
+</span><span class='line'>    location / {
+</span><span class='line'>        root   /usr/share/nginx/html;
+</span><span class='line'>        index  index.html;
+</span><span class='line'>    }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>html/index.html</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&lt;!DOCTYPE html&gt;
+</span><span class='line'>&lt;html lang="en-us"&gt;
+</span><span class='line'>&lt;head&gt;
+</span><span class='line'>    &lt;meta charset="utf-8"&gt;
+</span><span class='line'>    &lt;link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous"&gt;
+</span><span class='line'>    &lt;script src="https://code.jquery.com/jquery-3.1.1.min.js" crossorigin="anonymous"&gt;&lt;/script&gt;
+</span><span class='line'>    &lt;title&gt;Sample Page&lt;/title&gt;
+</span><span class='line'>&lt;/head&gt;
+</span><span class='line'>&lt;body&gt;
+</span><span class='line'>    &lt;div class="container-fluid"&gt;
+</span><span class='line'>        &lt;div class="row"&gt;
+</span><span class='line'>            &lt;div class="bitProcessor"&gt;&lt;/div&gt;
+</span><span class='line'>            &lt;div class="col-md-12" style="background-color: white; position: absolute; top: 40%;width: 80%;left: 10%;"&gt;
+</span><span class='line'>                &lt;center&gt;
+</span><span class='line'>                    &lt;h1&gt;Hello, World!&lt;/h1&gt;
+</span><span class='line'>                  &lt;p&gt;This is sample text.&lt;/p&gt;
+</span><span class='line'>                &lt;/center&gt;
+</span><span class='line'>            &lt;/div&gt;
+</span><span class='line'>        &lt;/div&gt;
+</span><span class='line'>    &lt;/div&gt;
+</span><span class='line'>&lt;/body&gt;
+</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Import Certificates</h2>
+
+<p>We have a certificate <code>./certs/minica.pem</code> which we need to import and trust on our local workstation, I am using a Mac so it will be Keychain Access.</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/101961866-5a2ee500-3c13-11eb-9f89-03fa1bd4670d.png" alt="image" /></p>
+
+<p>Once you open Keychain Access, select &ldquo;file&rdquo;, &ldquo;import items&rdquo; and browse and import <code>./certs/minica.pem</code>, once you are done search for minica:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/101962064-d4f80000-3c13-11eb-9479-c043ba3ced2c.png" alt="image" /></p>
+
+<p>Select the item, file -> get info, expand trust, change &ldquo;when using this certificate&rdquo; to Always trust and close.</p>
+
+<p>You will now see the root ca is trusted:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/101962197-2dc79880-3c14-11eb-8d26-49874c9703fa.png" alt="image" /></p>
+
+<h2>Boot the Application Stack</h2>
+
+<p>As we have <code>docker-compose.yml</code> in our current working directory, we can use docker-compose to boot our application:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up
+</span><span class='line'>Creating network "docker-minica-nginx_default" with the default driver
+</span><span class='line'>Creating nginx ... done
+</span><span class='line'>Attaching to nginx</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now when we browse to <code>https://192.168.0.6.nip.io</code> we will see:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/101962367-a9c1e080-3c14-11eb-898b-688b50c1b9db.png" alt="image" /></p>
+
+<p>And when we inspect the certificate, we can see its valid:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/101962411-c78f4580-3c14-11eb-80cd-cf8e449eca95.png" alt="image" /></p>
+
+<h2>Thank You</h2>
+
+<p>Thank you for reading.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2850,137 +3105,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/10/26/use-a-ssh-jump-host-with-ansible/">Use a SSH Jump Host With Ansible</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-10-26T05:25:18+00:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>26</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>5:25 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this post we will demonstrate how to use a SSH Bastion or Jump Host with Ansible to reach the target server.</p>
-
-<p>In some scenarios, the target server might be in a private range which is only accessible via a bastion host, and that counts the same for ansible as ansible is using SSH to reach to the target servers.</p>
-
-<h2>SSH Config</h2>
-
-<p>Our bastion host is configured as <code>bastion</code> and the config under <code>~/.ssh/config</code> looks like this:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Host *
-</span><span class='line'>    Port 22
-</span><span class='line'>    StrictHostKeyChecking no
-</span><span class='line'>    UserKnownHostsFile /dev/null
-</span><span class='line'>    ServerAliveInterval 60
-</span><span class='line'>    ServerAliveCountMax 30
-</span><span class='line'>
-</span><span class='line'>Host bastion
-</span><span class='line'>    HostName bastion.mydomain.com
-</span><span class='line'>    User bastion
-</span><span class='line'>    IdentityFile ~/.ssh/id_rsa</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To verify that our config is working, you should be able to use:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh bastion</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Using a Bastion with Ansible</h2>
-
-<p>In order to reach our target server we need to use the bastion, so to test the SSH connection we can use this SSH one-liner. Our target server has a IP address of <code>172.31.81.94</code> and expects us to provide a <code>ansible.pem</code> private key and we need to authenticate with the <code>ubuntu</code> user:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh -o ProxyCommand="ssh -W %h:%p -q bastion" -i ~/.ssh/ansible.pem ubuntu@172.31.81.94</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If we can reach our server its time to include it in our playbook.</p>
-
-<p>In our inventory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat inventory.ini
-</span><span class='line'>[deployment]
-</span><span class='line'>server-a ansible_host=172.31.81.94 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/ansible.pem
-</span><span class='line'>[deployment:vars]
-</span><span class='line'>ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q bastion"'</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And our playbook which will use the ping module:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat playbook.yml
-</span><span class='line'>- name: Test Ping
-</span><span class='line'>  hosts: deployment
-</span><span class='line'>  tasks:
-</span><span class='line'>  - action: ping</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Test it out:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible-playbook -i inventory.ini ping.yml
-</span><span class='line'>
-</span><span class='line'>PLAY [Test Ping] ***********************************************************************************************************************************************************
-</span><span class='line'>
-</span><span class='line'>TASK [Gathering Facts] *****************************************************************************************************************************************************
-</span><span class='line'>ok: [server-a]
-</span><span class='line'>
-</span><span class='line'>TASK [ping] ****************************************************************************************************************************************************************
-</span><span class='line'>ok: [server-a]
-</span><span class='line'>
-</span><span class='line'>PLAY RECAP *****************************************************************************************************************************************************************
-</span><span class='line'>server-a                   : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -3031,6 +3155,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a>
       </li>
     
@@ -3044,10 +3172,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/03/10/generate-grafana-loki-log-links-from-metric-label-values/">Generate Grafana Loki Log Links From Metric Label Values</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/10/visualize-weather-data-with-grafana-and-the-dht22-sensor/">Visualize Weather Data With Grafana and the DHT22 Sensor</a>
       </li>
     
   </ul>

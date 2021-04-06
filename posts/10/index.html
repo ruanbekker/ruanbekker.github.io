@@ -9,8 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial we will use Concourse to Deploy our application to Docker Swarm. The Flow Our application code resides on Github
-The pipeline &hellip;">
+  <meta name="description" content="Vault is one of Hashicorp&rsquo;s awesome services, which enables you to centrally store, access and distribute dynamic secrets such as tokens, &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -122,6 +121,463 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">Setup Hashicorp Vault Server on Docker and a Getting Started CLI Guide</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-05-06T16:49:09-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>6</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>4:49 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57256060-f1a27e00-7055-11e9-9a05-77d3fdd6c76f.png" alt="" /></p>
+
+<p>Vault is one of Hashicorp&rsquo;s awesome services, which enables you to centrally store, access and distribute dynamic secrets such as tokens, passwords, certificates and encryption keys.</p>
+
+<h2>What will we be doing today</h2>
+
+<p>We will setup a Vault Server on Docker and demonstrate a getting started guide with the Vault CLI to Initialize the Vault, Create / Use and Manage Secrets.</p>
+
+<p>For related posts:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/">Use the S3 Storage Backend to Persist Data</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/create-secrets-with-vaults-transits-secret-engine/">Create Secrets with Vaults Transit Secret Engine</a></li>
+</ul>
+
+
+<h2>Setting up the Vault Server</h2>
+
+<p>Create the directory structure:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ touch docker-compose.yml
+</span><span class='line'>$ mkdir -p volumes/{config,file,logs}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Populate the vault config <code>vault.json</code>. (As you can see the config is local, in the next couple of posts, I will show how to persist this config to Amazon S3)</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat &gt; volumes/config/vault.json &lt;&lt; EOF
+</span><span class='line'>{
+</span><span class='line'>  "backend": {
+</span><span class='line'>    "file": {
+</span><span class='line'>      "path": "/vault/file"
+</span><span class='line'>    }
+</span><span class='line'>  },
+</span><span class='line'>  "listener": {
+</span><span class='line'>    "tcp":{
+</span><span class='line'>      "address": "0.0.0.0:8200",
+</span><span class='line'>      "tls_disable": 1
+</span><span class='line'>    }
+</span><span class='line'>  },
+</span><span class='line'>  "ui": true
+</span><span class='line'>}
+</span><span class='line'>EOF</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Populate the <code>docker-compose.yml</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat &gt; docker-compose.yml &lt;&lt; EOF
+</span><span class='line'>version: '2'
+</span><span class='line'>services:
+</span><span class='line'>  vault:
+</span><span class='line'>    image: vault
+</span><span class='line'>    container_name: vault
+</span><span class='line'>    ports:
+</span><span class='line'>      - "8200:8200"
+</span><span class='line'>    restart: always
+</span><span class='line'>    volumes:
+</span><span class='line'>      - ./volumes/logs:/vault/logs
+</span><span class='line'>      - ./volumes/file:/vault/file
+</span><span class='line'>      - ./volumes/config:/vault/config
+</span><span class='line'>    cap_add:
+</span><span class='line'>      - IPC_LOCK
+</span><span class='line'>    entrypoint: vault server -config=/vault/config/vault.json
+</span><span class='line'>EOF</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Start the Vault Server:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The UI is available at <a href="http://localhost:8200/ui">http://localhost:8200/ui</a> and the api at <a href="http://localhost:8200">http://localhost:8200</a></p>
+
+<h2>Interacting with the Vault CLI</h2>
+
+<p>I will demonstrate how to use the Vault CLI to interact with Vault. Let&rsquo;s start by installing the vault cli tools, I am using mac, so I will be using brew:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ brew install vault</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set environment variables:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export VAULT_ADDR='http://127.0.0.1:8200'</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Initialize the Vault Cluster:</h2>
+
+<p>Initialize new vault cluster with 6 key shares:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault operator init -key-shares=6 -key-threshold=3
+</span><span class='line'>Unseal Key 1: RntjR...DQv
+</span><span class='line'>Unseal Key 2: 7E1bG...0LL+
+</span><span class='line'>Unseal Key 3: AEuhl...A1NO
+</span><span class='line'>Unseal Key 4: bZU76...FMGl
+</span><span class='line'>Unseal Key 5: DmEjY...n7Hk
+</span><span class='line'>Unseal Key 6: pC4pK...XbKb
+</span><span class='line'>
+</span><span class='line'>Initial Root Token: s.F0JGq..98s2U
+</span><span class='line'>
+</span><span class='line'>Vault initialized with 10 key shares and a key threshold of 3. Please
+</span><span class='line'>securely distribute the key shares printed above. When the Vault is re-sealed,
+</span><span class='line'>restarted, or stopped, you must supply at least 3 of these keys to unseal it
+</span><span class='line'>before it can start servicing requests.
+</span><span class='line'>
+</span><span class='line'>Vault does not store the generated master key. Without at least 3 key to
+</span><span class='line'>reconstruct the master key, Vault will remain permanently sealed!
+</span><span class='line'>
+</span><span class='line'>It is possible to generate new unseal keys, provided you have a quorum of
+</span><span class='line'>existing unseal keys shares. See "vault operator rekey" for more information.</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In order to unseal the vault cluster, we need to supply it with 3 key shares:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault operator unseal RntjR...DQv
+</span><span class='line'>$ vault operator unseal bZU76...FMGl
+</span><span class='line'>$ vault operator unseal pC4pK...XbKb</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure the vault is unsealed:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault status -format=json
+</span><span class='line'>{
+</span><span class='line'>  "type": "shamir",
+</span><span class='line'>  "initialized": true,
+</span><span class='line'>  "sealed": false,
+</span><span class='line'>  "t": 3,
+</span><span class='line'>  "n": 5,
+</span><span class='line'>  "progress": 0,
+</span><span class='line'>  "nonce": "",
+</span><span class='line'>  "version": "1.1.0",
+</span><span class='line'>  "migration": false,
+</span><span class='line'>  "cluster_name": "vault-cluster-dca2b572",
+</span><span class='line'>  "cluster_id": "469c2f1d-xx-xx-xx-03bfc497c883",
+</span><span class='line'>  "recovery_seal": false
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Authenticate against the vault:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault login s.tdlEqsfzGbePVlke5hTpr9Um
+</span><span class='line'>Success! You are now authenticated. The token information displayed below
+</span><span class='line'>is already stored in the token helper. You do NOT need to run "vault login"
+</span><span class='line'>again. Future Vault requests will automatically use this token.</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Using the cli your auth token will be saved locally at <code>~/.vault-token</code>.</p>
+
+<p>Enable the secret kv engine:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault secrets enable -version=1 -path=secret kv</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create and Read Secrets</h2>
+
+<p>Write a secret to the path enabled above:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv put secret/my-app/password password=123</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List your secrets:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv list secret/
+</span><span class='line'>Keys
+</span><span class='line'>----
+</span><span class='line'>my-app/</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the secret (defaults in table format):</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get secret/my-app/password
+</span><span class='line'>Key                 Value
+</span><span class='line'>---                 -----
+</span><span class='line'>refresh_interval    768h
+</span><span class='line'>password            123</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the secret in json format:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get --format=json secret/my-app/password
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "0249c878-7432-9555-835a-89b275fca32o",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "lease_duration": 2764800,
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "password": "123"
+</span><span class='line'>  },
+</span><span class='line'>  "warnings": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read only the password value in the secret:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get -field=password secret/my-app/password
+</span><span class='line'>123</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Key with Multiple Secrets</h2>
+
+<p>Create a key with multiple secrets:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv put secret/reminders/app db_username=db.ruanbekker.com username=root password=secret</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read all the secrets:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get --format=json secret/reminders/app
+</span><span class='line'>{
+</span><span class='line'>  "request_id": "0144c878-7532-9555-835a-8cb275fca3dd",
+</span><span class='line'>  "lease_id": "",
+</span><span class='line'>  "lease_duration": 2764800,
+</span><span class='line'>  "renewable": false,
+</span><span class='line'>  "data": {
+</span><span class='line'>    "db_username": "db.ruanbekker.com",
+</span><span class='line'>    "password": "secret",
+</span><span class='line'>    "username": "root"
+</span><span class='line'>  },
+</span><span class='line'>  "warnings": null
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read only the username field in the key:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get -field=username secret/reminders/app
+</span><span class='line'>root</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Delete the secret:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv delete secret/reminders</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Versioning</h2>
+
+<p>Create a key and set the metadata to max of 5 versions:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv metadata put -max-versions=5 secret/fooapp/appname</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get the metadata of the key:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv metadata get secret/fooapp/appname
+</span><span class='line'>======= Metadata =======
+</span><span class='line'>Key                Value
+</span><span class='line'>---                -----
+</span><span class='line'>cas_required       false
+</span><span class='line'>created_time       2019-04-07T12:35:54.355411Z
+</span><span class='line'>current_version    0
+</span><span class='line'>max_versions       5
+</span><span class='line'>oldest_version     0
+</span><span class='line'>updated_time       2019-04-07T12:35:54.355411Z</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Write a secret <code>appname</code> to our key: <code>secret/fooapp/appname</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv put secret/fooapp/appname appname=app1
+</span><span class='line'>Key              Value
+</span><span class='line'>---              -----
+</span><span class='line'>created_time     2019-04-07T12:36:41.7577102Z
+</span><span class='line'>deletion_time    n/a
+</span><span class='line'>destroyed        false
+</span><span class='line'>version          1</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Overwrite the key with a couple of requests:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv put secret/fooapp/appname appname=app2
+</span><span class='line'>$ vault kv put secret/fooapp/appname appname=app3</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Read the current value:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get -field=appname secret/fooapp/appname
+</span><span class='line'>app3</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Get the version=2 value of this file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vault kv get -field=appname -version=2 secret/fooapp/appname
+</span><span class='line'>app2</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, hope this was informative. Have a look at <a href="https://www.vaultproject.io">Hashicorp&rsquo;s Vault Documentation</a> for more information on the project. I will post more posts on Vault under the <a href="https://blog.ruanbekker.com/blog/categories/vault">#vault</a> category.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2958,389 +3414,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/04/06/install-elasticsearch-with-ansible-tutorial/">Install Elasticsearch With Ansible Tutorial</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-04-06T15:45:09-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>6</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>3:45 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/55700285-f3cdda00-59ce-11e9-9c00-a05b9d469e23.png" alt="" /></p>
-
-<p>In this tutorial we will install a elasticsearch cluster with ansible (well rather a node)</p>
-
-<p>Our inventory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat inventory.ini
-</span><span class='line'>[newes]
-</span><span class='line'>esnewnode
-</span><span class='line'>
-</span><span class='line'>[newes:vars]
-</span><span class='line'>ansible_python_interpreter=/usr/bin/python3</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our playbook to bootstrap our nodes with Python:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat bootstrap-python.yml
-</span><span class='line'>---
-</span><span class='line'>- hosts: newes
-</span><span class='line'>  gather_facts: False
-</span><span class='line'>
-</span><span class='line'>  tasks:
-</span><span class='line'>  - name: install python
-</span><span class='line'>    raw: test -e /usr/bin/python || ( apt update && apt install python -y )</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our playbook to provision users:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat provision-users.yml
-</span><span class='line'>---
-</span><span class='line'># Provisions User on Nodes
-</span><span class='line'># Setup Passwordless SSH from Jumpbox
-</span><span class='line'># Install Packages using APT
-</span><span class='line'>- name: bootstrap python
-</span><span class='line'>  hosts: newes
-</span><span class='line'>  roles:
-</span><span class='line'>    - bootstrap-python
-</span><span class='line'>
-</span><span class='line'>- name: setup pre-requisites
-</span><span class='line'>  hosts: newes
-</span><span class='line'>  roles:
-</span><span class='line'>    - create-sudo-user
-</span><span class='line'>    - install-modules
-</span><span class='line'>    - configure-hosts-file
-</span><span class='line'>
-</span><span class='line'>#- name: setup ruan user on the nodes
-</span><span class='line'>#  become: yes
-</span><span class='line'>#  become_user: ruan
-</span><span class='line'>#  hosts: admin
-</span><span class='line'>#  roles:
-</span><span class='line'>#    - configure-admin
-</span><span class='line'>
-</span><span class='line'>- name: copy public key to nodes
-</span><span class='line'>  become: yes
-</span><span class='line'>  become_user: ruan
-</span><span class='line'>  hosts: newes
-</span><span class='line'>  roles:
-</span><span class='line'>    - copy-keys
-</span><span class='line'>
-</span><span class='line'>- name: install elasticsearch
-</span><span class='line'>  hosts: newes
-</span><span class='line'>  roles:
-</span><span class='line'>    - elasticsearch</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our roles that will be included in our playbooks from above:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/create-sudo-user/tasks/main.yml
-</span><span class='line'>---
-</span><span class='line'>- name: Create Sudo User
-</span><span class='line'>  user: name=ruan
-</span><span class='line'>        groups=sudo
-</span><span class='line'>        shell=/bin/bash
-</span><span class='line'>        generate_ssh_key=no
-</span><span class='line'>        state=present
-</span><span class='line'>
-</span><span class='line'>- name: Set Passwordless SSH Access for ruan user
-</span><span class='line'>  copy: src=sudoers
-</span><span class='line'>        dest=/etc/sudoers.d
-</span><span class='line'>        mode=0440</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Sudoers file for the create sudo role:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/create-sudo-user/files/sudoers
-</span><span class='line'>ruan ALL=(ALL) NOPASSWD:ALL</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The role to install all the apt packages:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/install-modules/tasks/main.yml
-</span><span class='line'>---
-</span><span class='line'>- name: Install Packages
-</span><span class='line'>  apt: name= state=latest update_cache=yes
-</span><span class='line'>  with_items:
-</span><span class='line'>    - apt-transport-https
-</span><span class='line'>    - ntp
-</span><span class='line'>    - python
-</span><span class='line'>    - tcpdump
-</span><span class='line'>    - wget
-</span><span class='line'>    - openssl
-</span><span class='line'>    - curl</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Role to configure hosts file:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/configure-hosts-file/tasks/main.yml
-</span><span class='line'>---
-</span><span class='line'>- name: Configure Hosts File
-</span><span class='line'>  lineinfile: path=/etc/hosts regexp='.*$' line=" " state=present
-</span><span class='line'>  when: hostvars[item].ansible_default_ipv4.address is defined
-</span><span class='line'>  with_items: ""</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The role to copy the ssh keys:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/copy-keys/tasks/main.yml
-</span><span class='line'>---
-</span><span class='line'>- name: Copy Public Key to Other Hosts
-</span><span class='line'>  become: true
-</span><span class='line'>  become_user: ruan
-</span><span class='line'>  copy:
-</span><span class='line'>    src: /tmp/id_rsa.pub
-</span><span class='line'>    dest: /tmp/id_rsa.pub
-</span><span class='line'>    mode: 0644
-</span><span class='line'>- name: Append Public key in authorized_keys file
-</span><span class='line'>  authorized_key:
-</span><span class='line'>    user: ruan
-</span><span class='line'>    state: present
-</span><span class='line'>    key: ""</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The role to install elasticsearch:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat roles/elasticsearch/tasks/main.yml
-</span><span class='line'>---
-</span><span class='line'>- name: get apt repo key
-</span><span class='line'>  apt_key:
-</span><span class='line'>    url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
-</span><span class='line'>    state: present
-</span><span class='line'>
-</span><span class='line'>- name: install apt repo
-</span><span class='line'>  apt_repository:
-</span><span class='line'>    repo: deb https://artifacts.elastic.co/packages/6.x/apt stable main
-</span><span class='line'>    state: present
-</span><span class='line'>    filename: elastic-6.x.list
-</span><span class='line'>    update_cache: yes
-</span><span class='line'>
-</span><span class='line'>- name: install java
-</span><span class='line'>  apt:
-</span><span class='line'>    name: openjdk-8-jre
-</span><span class='line'>    state: present
-</span><span class='line'>    update_cache: yes
-</span><span class='line'>
-</span><span class='line'>- name: install elasticsearch
-</span><span class='line'>  apt:
-</span><span class='line'>    name: elasticsearch
-</span><span class='line'>    state: present
-</span><span class='line'>    update_cache: yes
-</span><span class='line'>
-</span><span class='line'>- name: reload systemd config
-</span><span class='line'>  systemd: daemon_reload=yes
-</span><span class='line'>
-</span><span class='line'>- name: enable service elasticsearch and ensure it is not masked
-</span><span class='line'>  systemd:
-</span><span class='line'>    name: elasticsearch
-</span><span class='line'>    enabled: yes
-</span><span class='line'>    masked: no
-</span><span class='line'>
-</span><span class='line'>- name: ensure elasticsearch is running
-</span><span class='line'>  systemd: state=started name=elasticsearch</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy Elasticsearch</h2>
-
-<p>Bootstrap python then deploy elasticsearch:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible-playbook -i inventory.ini -u root bootstrap-python.yml
-</span><span class='line'>$ ansible-playbook -i inventory.ini -u root provision-users.yml</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Test out elasticsearch:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://127.0.0.1:9200/
-</span><span class='line'>{
-</span><span class='line'>  "name" : "Z52AEZ7",
-</span><span class='line'>  "cluster_name" : "elasticsearch",
-</span><span class='line'>  "cluster_uuid" : "fUiYVjsSQpCbo9QKEiuvaA",
-</span><span class='line'>  "version" : {
-</span><span class='line'>    "number" : "6.3.0",
-</span><span class='line'>    "build_flavor" : "default",
-</span><span class='line'>    "build_type" : "deb",
-</span><span class='line'>    "build_hash" : "424e937",
-</span><span class='line'>    "build_date" : "2018-06-11T23:38:03.357887Z",
-</span><span class='line'>    "build_snapshot" : false,
-</span><span class='line'>    "lucene_version" : "7.3.1",
-</span><span class='line'>    "minimum_wire_compatibility_version" : "5.6.0",
-</span><span class='line'>    "minimum_index_compatibility_version" : "5.0.0"
-</span><span class='line'>  },
-</span><span class='line'>  "tagline" : "You Know, for Search"
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/11">&larr; Older</a>
@@ -3391,6 +3464,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a>
       </li>
     
@@ -3404,10 +3481,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/03/10/generate-grafana-loki-log-links-from-metric-label-values/">Generate Grafana Loki Log Links From Metric Label Values</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/10/visualize-weather-data-with-grafana-and-the-dht22-sensor/">Visualize Weather Data With Grafana and the DHT22 Sensor</a>
       </li>
     
   </ul>

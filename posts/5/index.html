@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="This is a quick post on how to do port forwarding with iptables on linux. What would we like to achieve We have a lxc container running a redis &hellip;">
+  <meta name="description" content="In this post we will be setting up a analytical dashboard using grafana to visualize our nginx access logs. In this tutorial I will be using my other &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,501 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/04/28/nginx-analysis-dashboard-using-grafana-and-elasticsearch/">Nginx Analysis Dashboard Using Grafana and Elasticsearch</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-04-28T20:07:22+02:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>28</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>8:07 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post we will be setting up a <strong>analytical dashboard</strong> using <strong>grafana</strong> to visualize our <strong>nginx access logs</strong>.</p>
+
+<p><img width="1212" alt="grafana-nginx-elasticsearch-prometheus" src="https://user-images.githubusercontent.com/567298/80539136-48ac0c00-89a7-11ea-869d-597da4fa4d92.png"></p>
+
+<p>In this tutorial I will be using my other blog <code>sysadmins.co.za</code> which is being served on nginx. We will also be setting up the other components such as filebeat, logstash, elasticsearch and redis, which require if you would like to follow along.</p>
+
+<h2>The End Result</h2>
+
+<p>We will be able to analyze our Nginx Access logs to answer questions such as:</p>
+
+<ul>
+<li>Whats the Top 10 Countries accessing your website in the last 24 hours</li>
+<li>Who&rsquo;s the Top 10 Referers?</li>
+<li>Whats the most popular page for the past 24 hours?</li>
+<li>How does the percentage of 200&rsquo;s vs 404&rsquo;s look like?</li>
+<li>Ability to view results based on status code</li>
+<li>Everyone loves a World Map to view hotspots</li>
+</ul>
+
+
+<p>At the end of the tutorial, your dashboard will look similar to this:</p>
+
+<p><img width="1123" alt="grafana-elasticsearch-nginx-dashboard" src="https://user-images.githubusercontent.com/567298/80523974-32925180-898f-11ea-96b6-e8e559655745.png"></p>
+
+<h2>High Level Overview</h2>
+
+<p>Our infrastructure will require Nginx with Filebeat, Redis, Logstash, Elasticsearch and Grafana and will look like this:</p>
+
+<p><img width="871" alt="grafana-elasticsearch-logs-setup" src="https://user-images.githubusercontent.com/567298/80526020-6d49b900-8992-11ea-9a39-67331ccc3808.png"></p>
+
+<p>I will drill down how everything is connected:</p>
+
+<ol>
+<li>Nginx has a custom <code>log_format</code> that we define, that will write to <code>/var/log/nginx/access_json.log</code>, which will be picked up by <strong>Filebeat</strong> as a input.</li>
+<li>and <strong>Filebeat</strong> has an output that pushes the data to <strong>Redis</strong></li>
+<li><strong>Logstash</strong> is configured with <strong>Redis</strong> as an input with configured filter section to transform the data and outputs to <strong>Elasticsearch</strong></li>
+<li>From <strong>Grafana</strong> we have a configured <strong>Elasticsearch</strong> datasource</li>
+<li>Use the grafana template to build this awesome dashboard on Grafana</li>
+</ol>
+
+
+<p>But first, a massive thank you to <a href="https://www.akiraka.net">akiraka</a> for templatizing this dashboard and made it available on <a href="https://grafana.com/orgs/akiraka">grafana</a></p>
+
+<h2>Let&rsquo;s build all the things</h2>
+
+<p>I will be using LXD to run my system/server containers (running ubuntu 18), but you can use a vps, cloud instance, multipass, virtualbox, or anything to host your servers that we will be deploying redis, logstash, etc.</p>
+
+<p>Servers provisioned for this setup:</p>
+
+<ul>
+<li>Nginx</li>
+<li>Redis</li>
+<li>Logstash</li>
+<li>Elasticsearch</li>
+<li>Grafana</li>
+<li>Prometheus</li>
+</ul>
+
+
+<h2>Elasticsearch</h2>
+
+<p>If you don&rsquo;t have a cluster running already, you can follow <strong><a href="https://blog.ruanbekker.com/blog/2019/04/02/setup-a-5-node-highly-available-elasticsearch-cluster/">this tutorial</a></strong> which will help you deploy a HA Elasticsearch Cluster, or if you prefer docker, you can follow <strong><a href="https://blog.ruanbekker.com/blog/2018/04/29/running-a-3-node-elasticsearch-cluster-with-docker-compose-on-your-laptop-for-testing/">this tutorial</a></strong></p>
+
+<h2>Redis</h2>
+
+<p>For our in-memory data store, I will be securing my redis installation with a password as well.</p>
+
+<p>Install redis:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install redis-server -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Generate a password:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ openssl rand -base64 36
+</span><span class='line'>9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In your redis config <code>/etc/redis/redis.conf</code>, you need to change the following:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>...
+</span><span class='line'>bind 0.0.0.0
+</span><span class='line'>port 6379
+</span><span class='line'>daemonize yes
+</span><span class='line'>supervised systemd
+</span><span class='line'>requirepass 9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv
+</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart redis to activate your changes:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart redis.service</span></code></pre></td></tr></table></div></figure>
+
+
+<p>and then set and get a key using your password:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ redis-cli -a "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv" set test ok
+</span><span class='line'>$ redis-cli -a "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv" get test
+</span><span class='line'>ok</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Logstash</h2>
+
+<p>On the logstash server, install the requirements:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install wget apt-transport-https default-jre -y
+</span><span class='line'>$ wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+</span><span class='line'>$ echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | tee -a /etc/apt/sources.list.d/elastic-7.x.list</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now the repository for elastic is setup now we need to update and install logstash:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install logstash -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once logstash is installed, we need to provide logstash with a configuration, in our scenario we will have a input for redis, a filter section to transform and output as elasticsearch.</p>
+
+<p>Just make sure of the following:</p>
+
+<ul>
+<li>Populate the connection details of redis (we will define the key in filebeat later)</li>
+<li>Ensure that <code>GeoLite2-City.mmdb</code> is in the path that I have under filter</li>
+<li>Populate the connectiond details of Elasticsearch and choose a suitable index name, we will need to provide that index name in Grafana later</li>
+</ul>
+
+
+<p>Create the config: <code>/etc/logstash/conf.d/logs.conf</code> and my config will look like the following. (<a href="https://grafana.com/grafana/dashboards/11190">config source</a>)</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>input {
+</span><span class='line'>  redis {
+</span><span class='line'>    data_type =&gt;"list"
+</span><span class='line'>    key =&gt;"nginx_logs"
+</span><span class='line'>    host =&gt;"10.47.127.37"
+</span><span class='line'>    port =&gt; 6379
+</span><span class='line'>    password =&gt; "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv"
+</span><span class='line'>    db =&gt; 0
+</span><span class='line'>  }
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>filter {
+</span><span class='line'>  geoip {
+</span><span class='line'>    target =&gt; "geoip"
+</span><span class='line'>    source =&gt; "client_ip"
+</span><span class='line'>    database =&gt; "/usr/share/logstash/vendor/bundle/jruby/2.5.0/gems/logstash-filter-geoip-6.0.3-java/vendor/GeoLite2-City.mmdb"
+</span><span class='line'>    add_field =&gt; [ "[geoip][coordinates]", "%{[geoip][longitude]}" ]
+</span><span class='line'>    add_field =&gt; [ "[geoip][coordinates]", "%{[geoip][latitude]}" ]
+</span><span class='line'>    remove_field =&gt; ["[geoip][latitude]", "[geoip][longitude]", "[geoip][country_code]", "[geoip][country_code2]", "[geoip][country_code3]", "[geoip][timezone]", "[geoip][continent_code]", "[geoip][region_code]"]
+</span><span class='line'>  }
+</span><span class='line'>  mutate {
+</span><span class='line'>    convert =&gt; [ "size", "integer" ]
+</span><span class='line'>    convert =&gt; [ "status", "integer" ]
+</span><span class='line'>    convert =&gt; [ "responsetime", "float" ]
+</span><span class='line'>    convert =&gt; [ "upstreamtime", "float" ]
+</span><span class='line'>    convert =&gt; [ "[geoip][coordinates]", "float" ]
+</span><span class='line'>    remove_field =&gt; [ "ecs","agent","host","cloud","@version","input","logs_type" ]
+</span><span class='line'>  }
+</span><span class='line'>  useragent {
+</span><span class='line'>    source =&gt; "http_user_agent"
+</span><span class='line'>    target =&gt; "ua"
+</span><span class='line'>    remove_field =&gt; [ "[ua][minor]","[ua][major]","[ua][build]","[ua][patch]","[ua][os_minor]","[ua][os_major]" ]
+</span><span class='line'>  }
+</span><span class='line'>}
+</span><span class='line'>output {
+</span><span class='line'>  elasticsearch {
+</span><span class='line'>    hosts =&gt; ["10.47.127.132", "10.47.127.199", "10.47.127.130"]
+</span><span class='line'>    #user =&gt; "myusername"
+</span><span class='line'>    #password =&gt; "mypassword"
+</span><span class='line'>    index =&gt; "logstash-nginx-sysadmins-%{+YYYY.MM.dd}"
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Nginx</h2>
+
+<p>On our nginx server we will install nginx and filebeat, then configure nginx to log to a custom log format, and configure filebeat to read the logs and push it to redis.</p>
+
+<p>Installing nginx:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install nginx -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Installing <a href="https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-installation.html">filebeat</a>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.6.2-amd64.deb
+</span><span class='line'>$ dpkg -i filebeat-7.6.2-amd64.deb</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next we will configure nginx to log to a seperate file with a custom log format to include data such as the, request method, upstream response time, hostname, remote address, etc.</p>
+
+<p>Under the <code>http</code> directive in your <code>/etc/nginx/nginx.conf</code>, configure the <code>log_format</code> and <code>access_log</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>http {
+</span><span class='line'>...
+</span><span class='line'>        log_format json_logs '{"@timestamp":"$time_iso8601","host":"$hostname",'
+</span><span class='line'>                            '"server_ip":"$server_addr","client_ip":"$remote_addr",'
+</span><span class='line'>                            '"xff":"$http_x_forwarded_for","domain":"$host",'
+</span><span class='line'>                            '"url":"$uri","referer":"$http_referer",'
+</span><span class='line'>                            '"args":"$args","upstreamtime":"$upstream_response_time",'
+</span><span class='line'>                            '"responsetime":"$request_time","request_method":"$request_method",'
+</span><span class='line'>                            '"status":"$status","size":"$body_bytes_sent",'
+</span><span class='line'>                            '"request_body":"$request_body","request_length":"$request_length",'
+</span><span class='line'>                            '"protocol":"$server_protocol","upstreamhost":"$upstream_addr",'
+</span><span class='line'>                            '"file_dir":"$request_filename","http_user_agent":"$http_user_agent"'
+</span><span class='line'>                            '}';
+</span><span class='line'>
+</span><span class='line'>        access_log  /var/log/nginx/access_json.log  json_logs;
+</span><span class='line'>...
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart nginx to activate the changes:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart nginx</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next we need to configure filebeat to read from our nginx access logs and configure the output to redis. Edit the filebeat config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/filebeat/filebeat.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And configure filebeat with the following and make sure to change the values where you need to:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'># config source: akiraka.net
+</span><span class='line'># filebeat input 
+</span><span class='line'>filebeat.inputs:
+</span><span class='line'>- type: log
+</span><span class='line'>  enabled: true
+</span><span class='line'>  paths:
+</span><span class='line'>    - /var/log/nginx/access_json.log
+</span><span class='line'>  json.keys_under_root: true
+</span><span class='line'>  json.overwrite_keys: true
+</span><span class='line'>  json.add_error_key: true
+</span><span class='line'>
+</span><span class='line'># filebeat modules 
+</span><span class='line'>filebeat.config.modules:
+</span><span class='line'>  # remove the escape character before the wildcard below
+</span><span class='line'>  path: ${path.config}/modules.d/\*.yml
+</span><span class='line'>  reload.enabled: false
+</span><span class='line'>
+</span><span class='line'># elasticsearch template settings
+</span><span class='line'>setup.template.settings:
+</span><span class='line'>  index.number_of_shards: 3
+</span><span class='line'>
+</span><span class='line'># redis output
+</span><span class='line'>output.redis:
+</span><span class='line'>  hosts: ["10.47.127.140:6379"]
+</span><span class='line'>  password: "9V5YlWvm8WuC4n1KZLYUEbLruLJLNJEnDzhu4WnAIfgxMmlv"
+</span><span class='line'>  key: "nginx_logs"
+</span><span class='line'>  # ^ this key needs to be the same as the configured key on logstash 
+</span><span class='line'>  db: 0
+</span><span class='line'>  timeout: 5</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart filebeat:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart filebeat</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you make a request to your nginx server, you should see a similar logline like below:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ tail -n1 /var/log/nginx/access_elg.log
+</span><span class='line'>{"@timestamp":"2020-04-28T20:05:03+00:00","host":"sysadmins-blog","server_ip":"10.68.100.89","client_ip":"x.x.x.x","xff":"x.x.x.x","domain":"sysadmins.co.za","url":"/","referer":"-","args":"-","upstreamtime":"0.310","responsetime":"0.312","request_method":"GET","status":"200","size":"4453","request_body":"-","request_length":"519","protocol":"HTTP/1.1","upstreamhost":"127.0.0.1:2369","file_dir":"/var/www/web/root/","http_user_agent":"Mozilla/5.0"}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Grafana</h2>
+
+<p>On the grafana server, install grafana:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install apt-transport-https software-properties-common wget -y
+</span><span class='line'>$ wget -q -O - https://packages.grafana.com/gpg.key | apt-key add -
+</span><span class='line'>$ add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
+</span><span class='line'>$ apt update && apt install grafana -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we need to install a couple of grafana plugins that we require for our dashboards:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ grafana-cli plugins install grafana-worldmap-panel
+</span><span class='line'>$ grafana-cli plugins install grafana-clock-panel
+</span><span class='line'>$ grafana-cli plugins install grafana-piechart-panel</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now reload systemd and restart grafana:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl daemon-reload
+</span><span class='line'>$ systemctl restart grafana-server</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you would like to setup nginx as a reverse proxy to grafana, you can have a look at <strong><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">this blogpost</a></strong> on how to do that.</p>
+
+<h2>Prometheus</h2>
+
+<p>If you don&rsquo;t have Prometheus installed already, you can view my <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">blogpost</a> on setting up Prometheus.</p>
+
+<h2>Verifying</h2>
+
+<p>To verify if everything works as expected, make a request to your nginx server, then have a look if your index count on elasticsearch increases:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://elasticsearch-endpoint-address:9200/_cat/indices/logstash-*?v
+</span><span class='line'>health status index                               uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+</span><span class='line'>green  open   logstash-nginx-x-2020.04.28 SWbHCer-TeOcw6bi_695Xw   5   1      58279            0     32.6mb         16.3mb</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you dont, make sure that all the processes are running on the servers, and that each server is able to reach each other on the targeted ports.</p>
+
+<h2>The Fun Part: Dashboarding</h2>
+
+<p>Now that we have everything in place, the fun part is to build the dashboards, first we need to configure elasticsearch as our datasource and specify the index we want to read from. Open grafana on <code>http://ip.of.grafana.server:3000</code>, default user and password is admin.</p>
+
+<p>Select config on the left and select datasources, add a datasource, select elasticsearch and specify your datasource name, mine is <strong>es-nginx</strong> in this example, the <strong>url</strong> of your elasticsearch endpoint, if you have secured your elasticsearch cluster with authentication, provide the auth, then provide your index name as as provided in logstash.</p>
+
+<p>My configured index will look like <code>logstash-nginx-sysadmins-YYYY-MM-dd</code>, therefore I specified index name as <code>logstash-nginx-sysadmins-*</code> and my timefield as <code>@timestamp</code>, the version, and select save and test, which would look like this:</p>
+
+<p><img width="569" alt="AC025E20-38D0-4676-B576-9F5932913BA1" src="https://user-images.githubusercontent.com/567298/80538019-48ab0c80-89a5-11ea-8f4f-a30384991ab9.png"></p>
+
+<p>Now we will import our dashboard template (Once again a massive thank you to <a href="https://grafana.com/grafana/dashboards/11190">Shenxiang, Qingkong and Ruixi</a> which made this template available!), head over to dashboards and select import, then provide the ID: <code>11190</code>, after that it will prompt what your dashboard needs to be named and you need to select your Elasticsearch and Prometheus datasource.</p>
+
+<p>The description of the panels is in Chinese, if you would like it in english, I have translated mine to english and made the dashboard json available in <a href="https://gist.githubusercontent.com/ruanbekker/699fca31ebd7223b675d0acd25ea84bc/raw/316a015a0464989117cd72a1e8e056854d582178/nginx_grafana_dashboard_11190_eng.json">this gist</a></p>
+
+<h2>Tour of our Dashboard Panels</h2>
+
+<p>Looking at our hotspot map:</p>
+
+<p><img width="1212" alt="grafana" src="https://user-images.githubusercontent.com/567298/80539136-48ac0c00-89a7-11ea-869d-597da4fa4d92.png"></p>
+
+<p>The summary and top 10 pages:</p>
+
+<p><img width="1243" alt="76E8CBE1-4B03-4226-8041-B98879BAD66A" src="https://user-images.githubusercontent.com/567298/80540596-e86a9980-89a9-11ea-924d-29f777a7c15a.png"></p>
+
+<p>Page views, historical trends:</p>
+
+<p><img width="1239" alt="grafana-page-views" src="https://user-images.githubusercontent.com/567298/80539728-4eeeb800-89a8-11ea-959e-5e2915387b7b.png"></p>
+
+<p>Top 10 referers and table data of our logs:</p>
+
+<p><img width="1235" alt="B17C4F55-DF91-4EA0-9669-C237FF560459" src="https://user-images.githubusercontent.com/567298/80540381-772ae680-89a9-11ea-9067-61cd519c9d8a.png"></p>
+
+<h2>Thank You</h2>
+
+<p>I hope this was useful, if you have any issues with this feel free to reach out to me. If you like my work, please feel free to share this post, follow me on Twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> or visit me on my <strong><a href="https://ruan.dev">website</a></strong></p>
+
+<p><a href="https://ko-fi.com/A6423ZIQ"><img src="https://www.ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" /></a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2960,253 +3455,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/02/12/lightweight-development-kubernetes-options-k3d/">Lightweight Development Kubernetes Options: K3d</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-02-12T00:27:00+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>12</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>12:27 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this post we will cover a lightweight development kubernetes called, &ldquo;<a href="https://github.com/rancher/k3d">k3d</a>&rdquo; which we will deploy on a mac.</p>
-
-<h2>What is k3d</h2>
-
-<p><a href="https://github.com/rancher/k3d">k3d</a> is a binary that provisions a <a href="https://github.com/rancher/k3s">k3s</a> kubernetes cluster on docker</p>
-
-<h2>Pre-Requirements</h2>
-
-<p>You will require docker and we will be using brew to install k3d on a mac.</p>
-
-<h2>Install k3d</h2>
-
-<p>Installing k3d is as easy as:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>brew install k3d
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify your installation:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>k3d --version
-</span><span class='line'>k3d version v1.3.1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deploy a 3 Node Cluster</h2>
-
-<p>Using k3d, we will deploy a 3 node k3s cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>k3d create --name<span class="o">=</span><span class="s2">&quot;demo&quot;</span> --workers<span class="o">=</span><span class="s2">&quot;2&quot;</span> --publish<span class="o">=</span><span class="s2">&quot;80:80&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This will deploy a master and 2 worker nodes and we will also publish our host port 80 to our container port 80 (k3s comes default with traefik)</p>
-
-<p>Set your kubeconfig:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">export </span><span class="nv">KUBECONFIG</span><span class="o">=</span><span class="s2">&quot;$(k3d get-kubeconfig --name=&#39;demo&#39;)&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Test it out by listing your nodes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get nodes
-</span><span class='line'>NAME                STATUS   ROLES    AGE    VERSION
-</span><span class='line'>k3d-demo-server     Ready    master   102s   v1.14.6-k3s.1
-</span><span class='line'>k3d-demo-worker-0   Ready    worker   102s   v1.14.6-k3s.1
-</span><span class='line'>k3d-demo-worker-1   Ready    worker   102s   v1.14.6-k3s.1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That was easy right?</p>
-
-<h2>Deploy a Sample App</h2>
-
-<p>We will deploy a simple golang web application that will return the container name upon a http request. We will also make use of the traefik ingress for demonstration.</p>
-
-<p>Our deployment manifest that I will save as <code>app.yml</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">extensions/v1beta1</span>
-</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Deployment</span>
-</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3s-demo</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
-</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">2</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">matchLabels</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">template</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">containers</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ruanbekker/hostname:latest</span>
-</span><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
-</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Service</span>
-</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
-</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">targetPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">8000</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">extensions/v1beta1</span>
-</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Ingress</span>
-</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">annotations</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">kubernetes.io/ingress.class</span><span class="p-Indicator">:</span> <span class="s">&quot;traefik&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">rules</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo.example.org</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">http</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">backend</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">serviceName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">k3d-demo</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">servicePort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Deploy our application:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl apply -f app.yml
-</span><span class='line'>deployment.extensions/k3s-demo created
-</span><span class='line'>service/k3d-demo created
-</span><span class='line'>ingress.extensions/k3d-demo created
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify that the pods are running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>kubectl get pods
-</span><span class='line'>NAME                       READY   STATUS    RESTARTS   AGE
-</span><span class='line'>k3s-demo-f76d866b9-dv5z9   1/1     Running   <span class="m">0</span>          10s
-</span><span class='line'>k3s-demo-f76d866b9-qxltk   1/1     Running   <span class="m">0</span>          10s
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Make a http request:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -H <span class="s2">&quot;Host: k3d-demo.example.org&quot;</span> http://localhost
-</span><span class='line'>Hostname: k3d-demo-f76d866b9-qxltk
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deleting your Cluster</h2>
-
-<p>To delete your cluster:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>k3d delete --name demo
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Thank you for reading. If you like my content, feel free to visit me at <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<p><a href="https://twitter.com/ruanbekker"><img src="https://user-images.githubusercontent.com/567298/71188576-e2410f80-2289-11ea-8667-08f0c14ab7b5.png" alt="" /></a></p>
-
-<p><a href="https://ko-fi.com/A6423ZIQ"><img src="https://www.ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" /></a></p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/6">&larr; Older</a>
@@ -3257,6 +3505,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/05/03/setup-a-crypto-digibyte-full-node-on-linux/">Setup a Crypto Digibyte Full Node on Linux</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a>
       </li>
     
@@ -3270,10 +3522,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/03/10/bypass-the-medium-paywall-system/">Bypass the Medium Paywall System</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/10/generate-grafana-loki-log-links-from-metric-label-values/">Generate Grafana Loki Log Links From Metric Label Values</a>
       </li>
     
   </ul>

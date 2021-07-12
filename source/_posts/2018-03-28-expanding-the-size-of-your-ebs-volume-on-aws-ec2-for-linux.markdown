@@ -64,6 +64,26 @@ Example using XFS shown below:
 $ sudo xfs_growfs /dev/xvda1
 ```
 
+**Note:** If you are using nvme, it will look like this:
+
+```
+$ sudo lsblk
+NAME        MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+nvme1n1     259:0    0  160G  0 disk
+-nvme1n1p1  259:1    0   80G  0 part /data
+
+$ sudo growpart /dev/nvme1n1 1
+CHANGED: partition=1 start=2048 old: size=167770112 end=167772160 new: size=335542239 end=335544287
+
+$ resize2fs /dev/nvme1n1p1
+resize2fs 1.45.5 (07-Jan-2020)
+
+$ sudo lsblk
+NAME        MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+nvme1n1     259:0    0  160G  0 disk
+-nvme1n1p1  259:1    0  160G  0 part /data
+```
+
 Now we will have a resized partition to 100GB:
 
 ```bash

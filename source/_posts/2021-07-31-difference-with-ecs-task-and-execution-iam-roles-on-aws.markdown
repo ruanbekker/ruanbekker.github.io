@@ -6,7 +6,7 @@ comments: true
 categories: ["aws", "ecs", "iam", "security"]
 ---
 
-![](../images/ruanbekker-header-photo.png)
+![](https://blog.ruanbekker.com/images/ruanbekker-header-photo.png)
 
 In this post we will look at what the difference is between the [AWS ECS Task Execution IAM Role](https://docs.aws.amazon.com/AmazonECS/latest/userguide/task-iam-roles.html) and the [IAM Role for Tasks](https://docs.aws.amazon.com/AmazonECS/latest/userguide/task-iam-roles.html) and give a example policy to demonstrate.
 

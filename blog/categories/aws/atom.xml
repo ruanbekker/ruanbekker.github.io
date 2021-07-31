@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Aws | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/aws/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-07-12T02:37:56-04:00</updated>
+  <updated>2021-07-31T03:59:55-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,159 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Difference With ECS Task and Execution IAM Roles on AWS]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/07/31/difference-with-ecs-task-and-execution-iam-roles-on-aws/"/>
+    <updated>2021-07-31T03:37:34-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/07/31/difference-with-ecs-task-and-execution-iam-roles-on-aws</id>
+    <content type="html"><![CDATA[<p><img src="../images/ruanbekker-header-photo.png" alt="" /></p>
+
+<p>In this post we will look at what the difference is between the <a href="https://docs.aws.amazon.com/AmazonECS/latest/userguide/task-iam-roles.html">AWS ECS Task Execution IAM Role</a> and the <a href="https://docs.aws.amazon.com/AmazonECS/latest/userguide/task-iam-roles.html">IAM Role for Tasks</a> and give a example policy to demonstrate.</p>
+
+<h2>ECS Task Execution Role</h2>
+
+<p>The ECS Execution Role is used by the ecs-agent which runs on ECS and is responsible for:
+- Pulling down docker images from ECR
+- Fetching the SSM Parameters from SSM for your Task (Secrets and LogConfigurations)
+- Writing Logs to CloudWatch</p>
+
+<p>The IAM Role has been configured that the Trusted Identity is ecs so only ECS is allowed to assume credentials from the IAM Policy that is associated to the Role.</p>
+
+<p>The trusted identity in the IAM Role to be ecs:</p>
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+</code></pre>
+
+<p>and the policy will look like this more or less for a example service, I am demonstrating my-dev-service:</p>
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "SSMGetParameters",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:GetParameter"
+            ],
+            "Resource": "arn:aws:ssm:eu-west-1:*:parameter/my-service/dev/*"
+        },
+        {
+            "Sid": "KMSDecryptParametersWithKey",
+            "Effect": "Allow",
+            "Action": [
+                "kms:GetPublicKey",
+                "kms:Decrypt",
+                "kms:GenerateDataKey",
+                "kms:DescribeKey"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+</code></pre>
+
+<p>In the ECS Task Definition the role arn is specified as <code>"executionRoleArn"</code> in:</p>
+
+<pre><code class="json">{
+  "family": "my-dev-service",
+  "executionRoleArn":"arn:aws:iam::000000000000:role/ecs-exec-role",
+  "taskRoleArn":"arn:aws:iam::000000000000:role/ecs-task-role",
+  "containerDefinitions": []
+}
+</code></pre>
+
+<h2>ECS Task Role</h2>
+
+<p>The ECS Task Role is used by the service that is deployed to ECS, so this will be your application requiring access to SQS as an example</p>
+
+<p>Same as before, we set the trusted identity in the IAM Role to be ecs:</p>
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+</code></pre>
+
+<p>So only the ECS tasks using the role is allowed to assume credentials from the IAM Role, and the policy associated to the role, can look something like this:</p>
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowDevSQS",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:GetQueueUrl",
+                "sqs:ReceiveMessage",
+                "sqs:SendMessage",
+                "sqs:ChangeMessageVisibility"
+            ],
+            "Resource": [
+                "arn:aws:sqs:eu-west-1:000000000000:dev-pending-queue",
+                "arn:aws:sqs:eu-west-1:000000000000:dev-confirmed-queue"
+            ]
+        }
+    ]
+}
+</code></pre>
+
+<p>The role arn will be specified in <code>"taskRoleArn"</code> from the following in the ECS Task Definition:</p>
+
+<pre><code class="json">{
+  "family": "my-dev-service",
+  "executionRoleArn":"arn:aws:iam::000000000000:role/ecs-exec-role",
+  "taskRoleArn":"arn:aws:iam::000000000000:role/ecs-task-role",
+  "containerDefinitions": []
+}
+</code></pre>
+
+<h2>Application Code</h2>
+
+<p>In your application you don’t need to reference any aws access keys as the role will assume credentials for you by the SDK, with python a short example will be:</p>
+
+<pre><code class="python">import boto3
+sqs = boto3.Session(region_name='eu-west-1').client('sqs')
+</code></pre>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[SSH Using AWS SSM Session Manager]]></title>
@@ -557,359 +710,6 @@ upload: ./foo to s3://ruanbekker-prod-s3-bucket/foo
       ui.createComponent('product', {
         id: '4392613544020',
         node: document.getElementById('product-component-1574800622582'),
-        moneyFormat: '%24%7B%7Bamount%7D%7D',
-        options: {
-  "product": {
-    "styles": {
-      "product": {
-        "@media (min-width: 601px)": {
-          "max-width": "calc(25% - 20px)",
-          "margin-left": "20px",
-          "margin-bottom": "50px"
-        }
-      }
-    },
-    "text": {
-      "button": "Add to cart"
-    }
-  },
-  "productSet": {
-    "styles": {
-      "products": {
-        "@media (min-width: 601px)": {
-          "margin-left": "-20px"
-        }
-      }
-    }
-  },
-  "modalProduct": {
-    "contents": {
-      "img": false,
-      "imgWithCarousel": true,
-      "button": false,
-      "buttonWithQuantity": true
-    },
-    "styles": {
-      "product": {
-        "@media (min-width: 601px)": {
-          "max-width": "100%",
-          "margin-left": "0px",
-          "margin-bottom": "0px"
-        }
-      }
-    },
-    "text": {
-      "button": "Add to cart"
-    }
-  },
-  "cart": {
-    "text": {
-      "total": "Subtotal",
-      "button": "Checkout"
-    }
-  }
-},
-      });
-    });
-  }
-})();
-/*]]&gt;*/
-</script>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Setup VPC Peering on AWS]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/11/23/how-to-setup-vpc-peering-on-aws/"/>
-    <updated>2019-11-23T09:09:40+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/11/23/how-to-setup-vpc-peering-on-aws</id>
-    <content type="html"><![CDATA[<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/ruanbekker"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
-
-<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
-
-<p>In this tutorial I will demonstrate how to create a VPC Peering Connection between Two AWS Accounts and how to route traffic between them and then show you how we create Two EC2 Instances and demonstrate how to SSH to each other via it&rsquo;s Private IP Address.</p>
-
-<h2>Scenario Information</h2>
-
-<p>We will have Two AWS Accounts in this demonstration, a &ldquo;Green AWS Account&rdquo; and a &ldquo;Blue AWS Account&rdquo;.</p>
-
-<p>In this scenario, we will have two teams, both teams manage their own account and in this scenario the two teams need to be able to communicate to each other. To keep it simple, each team has a EC2 instance and the two EC2 instances need to be able to communicate with each other.</p>
-
-<p>Therefore we will setup a VPC Peering Connection between the two accounts. Both accounts will be operating in the eu-west-2 (London) region.</p>
-
-<pre><code>Account, CIDR
-green: 10.1.0.0/16
-blue:  10.2.0.0/16
-</code></pre>
-
-<h2>Getting Started</h2>
-
-<p>This will be our <strong>Green</strong> AWS Account:</p>
-
-<p><img width="1291" alt="140424C7-6FD5-4D74-AD26-AA1077D3DA92" src="https://user-images.githubusercontent.com/567298/69486624-55579180-0e56-11ea-897c-55607680fb58.png"></p>
-
-<p>This will be our <strong>Blue</strong> AWS Account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486632-61435380-0e56-11ea-86d1-3af018fe5fe3.png" alt="AAFBF715-897D-4D54-BDF2-9A5282A60165" /></p>
-
-<h2>Creating the VPCs</h2>
-
-<p>From our <strong>green</strong> account, head over to VPC and create a new VPC with a CIDR of <code>10.1.0.0/16</code>:</p>
-
-<p><img width="1291" alt="55FB3F87-9F73-4CDD-845B-8748700B0981" src="https://user-images.githubusercontent.com/567298/69486652-d6af2400-0e56-11ea-9f4d-9331001625f4.png"></p>
-
-<p>Then head over to the <strong>blue</strong> account, head over to VPC and create a new VPC with CIDR of <code>10.2.0.0/16</code>:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486659-f1819880-0e56-11ea-8c3c-5aff2f84e2aa.png" alt="854DC039-7F83-4E6F-BD28-6843BE417EEB" /></p>
-
-<p>So in summary we have the following resources:</p>
-
-<pre><code>Green: vpc-0af4b247a1353b78b | 10.1.0.0/16
-Blue: vpc-031c4ce3f56660c30 | 10.2.0.0/16
-</code></pre>
-
-<h2>Creating the Subnets</h2>
-
-<p>Now we need to create subnets for the VPC&rsquo;s that we created. We will create the following subnets in our VPC, each subnet in its own availability zone:</p>
-
-<pre><code>10.1.0.0/20 (az-2a)
-10.1.16.0/20 (az-2b)
-10.1.32.0/20 (az-2c)
-</code></pre>
-
-<p>Let&rsquo;s go ahead and do this, head over to your <strong>green</strong> account, from the VPC section select &ldquo;Subnets&rdquo;:</p>
-
-<p><img width="1292" alt="BBB38DDB-D9CF-4BD4-AEA0-C30B6998F016" src="https://user-images.githubusercontent.com/567298/69486747-92705380-0e57-11ea-86da-5cafd9c22701.png"></p>
-
-<p>Go ahead and create a subnet where you will need to specify the VPC that you created, slect the first CIDR block, in my case 10.1.0.0/20 and select the first AZ:</p>
-
-<p><img width="1292" alt="BB1627EE-A92D-4274-BF97-40AE4E01A9A4" src="https://user-images.githubusercontent.com/567298/69486786-0d396e80-0e58-11ea-9860-7febe6e65f7d.png"></p>
-
-<p>Do this for the other two subnets as well and then when you are done, it may look more or less like this:</p>
-
-<p><img width="1290" alt="051767FD-2D52-48BD-B495-01ACB431B358" src="https://user-images.githubusercontent.com/567298/69487635-3660fb80-0e66-11ea-8b59-71364414d3ae.png"></p>
-
-<p>Repeat this process that you have three subnets for your <strong>blue</strong> account as well:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486798-3823c280-0e58-11ea-8991-6518d986de31.png" alt="881A973C-7C9A-423C-B6F4-555CE78E0A16" /></p>
-
-<h2>Setup VPC Peering Connection</h2>
-
-<p>Now that we&rsquo;ve created our VPC&rsquo;s and subnets for each VPC we want to peer our two VPC&rsquo;s with each other so that we have a direct connection between our VPC&rsquo;s so that our EC2 instances from our <strong>green</strong> account is able to connect with our EC2 instances in our <strong>blue</strong> account.</p>
-
-<p>Head over to your <strong>green</strong> account&rsquo;s VPC section and select &ldquo;Peering Connections&rdquo;:</p>
-
-<p><img width="1292" alt="21972956-D24A-4C45-94C5-10A6FC742D98" src="https://user-images.githubusercontent.com/567298/69486833-c8620780-0e58-11ea-8638-de60804bdb65.png"></p>
-
-<p>Create a new peering connection, we will first need to name our peering connection, select the source VPC which will be our green account&rsquo;s VPC, since the VPC that we want to peer with is in another account, get the AWS Account ID from the <strong>blue</strong> account, and select &ldquo;Another account&rdquo; and provide the account id that we want to peer with, select the AWS Region and provide the VPC ID of the <strong>blue</strong> account:</p>
-
-<p><img width="1291" alt="1BDCB500-7BF0-4C5F-B171-9E09463A956A" src="https://user-images.githubusercontent.com/567298/69487659-817b0e80-0e66-11ea-83b6-4ec7c941804f.png"></p>
-
-<p>Once you create the peering connection, you will find the peering request details:</p>
-
-<p><img width="1291" alt="C74BAE40-9C78-45FE-BE7F-3AC495E93A41" src="https://user-images.githubusercontent.com/567298/69486874-9c935180-0e59-11ea-99a2-a54bd5982ab1.png"></p>
-
-<p>Now let&rsquo;s head over to our <strong>blue</strong> Account, head over to VPC, select Peering connections and you will find the peering request from our <strong>green</strong> account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486892-dbc1a280-0e59-11ea-983d-b7814257c323.png" alt="05DB8A16-6CF4-48F1-920C-20AE7492E381" /></p>
-
-<p>From the top, hit &ldquo;Actions&rdquo; and accept the request:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486900-014eac00-0e5a-11ea-9cc2-025ef35ad921.png" alt="0FF04F44-F5B7-4AAF-9D66-89396EC2AA06" /></p>
-
-<p>You should see that the VPC Peering connection has been established:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486904-14617c00-0e5a-11ea-8459-ab1bdf6141b0.png" alt="2D1D101F-3574-4A40-A1A6-F2F875B29158" /></p>
-
-<p>From the <strong>blue</strong> account you should see that the VPC Peering Connection is active:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69486911-2a6f3c80-0e5a-11ea-833c-bea298c55326.png" alt="A2070A8B-6247-4D75-BFF8-D5AE152EFA42" /></p>
-
-<p>If you head back to the <strong>green</strong> account, you will see under Peering Connections that the connection has been established:</p>
-
-<p><img width="1290" alt="1A50F913-9C6E-4F6D-A61C-5954617EBE5B" src="https://user-images.githubusercontent.com/567298/69486921-64d8d980-0e5a-11ea-86fa-cd37b44cbfdb.png"></p>
-
-<p>We have now successfully created our VPC peering connection and the two VPC&rsquo;s from different accounts has been peered. Now we would like to launch our EC2 instances in our VPC, we will connect to our EC2 instance in our <strong>green</strong> account via the internet and then SSH to our EC2 instance in our <strong>blue</strong> account via the VPC peering connection via the Private IP Address.</p>
-
-<h2>Setup Internet Gateway</h2>
-
-<p>In order to connect to a Public Elastic IP, we first need to create a Internet Gateway on our VPC and add a route to route all public traffic via our Internet Gateway. This allows our resources in that VPC to be able to connect to the Internet.</p>
-
-<p>Head over to &ldquo;Internet Gateways&rdquo;, and create a new Internet Gateway:</p>
-
-<p><img width="1283" alt="9750329C-E89E-425E-9DCC-D420D092C5E6" src="https://user-images.githubusercontent.com/567298/69486997-5212d480-0e5b-11ea-9455-0c3d94f4d6e9.png"></p>
-
-<p>Our IGW (Internet Gateway) will now be in a detached state, we now need to attach our IGW to our VPC. Hit &ldquo;Actions&rdquo;, then select &ldquo;Attach to VPC&rdquo;, and select your VPC:</p>
-
-<p><img width="1281" alt="0BF7CB7A-C40A-483C-8083-410DBFFBA171" src="https://user-images.githubusercontent.com/567298/69487007-91412580-0e5b-11ea-8d3f-4ca7dff0976d.png"></p>
-
-<p>You should now see that your IGW has been attached to your VPC:</p>
-
-<p><img width="1073" alt="B6C3094F-233C-4A6C-A6FC-C5FD7727FBBD" src="https://user-images.githubusercontent.com/567298/69487019-b6ce2f00-0e5b-11ea-903a-cb576ab29f11.png"></p>
-
-<p>Now that we have created an IGW and associated it to our VPC, we now need to configure our routing table so that it knows how to route non-local traffic via the IGW.</p>
-
-<h2>Configure Routing Table</h2>
-
-<p>Head over to VPC, select your VPC, select the &ldquo;Route Tables&rdquo; section from the left and you should see the following when you select the &ldquo;Routes&rdquo; section:</p>
-
-<p><img width="1286" alt="FF7E141E-2C8D-4D87-BE67-513AB44784F2" src="https://user-images.githubusercontent.com/567298/69487055-55f32680-0e5c-11ea-8ce9-81de2bf5eab5.png"></p>
-
-<p>Select &ldquo;Edit Routes&rdquo; and add a route with the destination <code>0.0.0.0/0</code> select the Internet Gateway as a target and it will filter through your available IGW&rsquo;s and select the IGW that you created earlier, then select save. (If your blue account needs internet access, repeat these steps on the blue account as well.)</p>
-
-<p><img width="1274" alt="E223A267-1A4F-4DA4-B23A-37CE6EDAFEF5" src="https://user-images.githubusercontent.com/567298/69487097-ea5d8900-0e5c-11ea-97f6-66cd6604035f.png"></p>
-
-<p>While we are at our routing tables configuration, we should also inform our VPC how to reach the subnet from the VPC from the other account. So that our <strong>Green</strong> App (10.1.0.0/16) can reach our <strong>blue</strong> app (10.2.0.0/16) via the Peering Connection.</p>
-
-<p>We do this by adding a route to our routing table. From the <strong>green</strong> account&rsquo;s VPC&rsquo;s routing table add a new route with the destination of <code>10.2.0.0/16</code>, select &ldquo;Peering Connection&rdquo; as the target and it should resolve to the peering connection resource that we created, then select save:</p>
-
-<p><img width="1271" alt="B5E8CF35-0C06-4261-9668-6C091BA19E2A" src="https://user-images.githubusercontent.com/567298/69487275-a3bd5e00-0e5f-11ea-8d4f-a2d270b3e57b.png"></p>
-
-<p>Now our <strong>green</strong> Account knows how to route traffic to our <strong>blue</strong> account and also knows which network traffic to route. But we also need to route traffic back. Head over to your <strong>blue</strong> Account and add a route <code>10.1.0.0/16</code> to the peering connection so that we can route traffic back to our <strong>green</strong> Account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69487287-e41cdc00-0e5f-11ea-86cd-b9c9f6d77ad5.png" alt="885DCDE3-ACA5-4136-851D-3DF9D2D9D62D" /></p>
-
-<h2>Launch EC2 Instances</h2>
-
-<p>Now we want to launch a EC2 instance in each account and ensure to launch them into the VPC&rsquo;s that we created, I will also be creating two new SSH keys (blue-keypair + green-keypair) And I have created a Security Group that allows ICMP and SSH from anywhere, this is purely for demonstration (always review the sources that you want to allow).</p>
-
-<p>For our <strong>green</strong> account:</p>
-
-<p><img width="1284" alt="C60E3DAD-DD12-4670-97CD-AC524269C20E" src="https://user-images.githubusercontent.com/567298/69487311-4ece1780-0e60-11ea-9b66-b00568184790.png"></p>
-
-<p>For our <strong>blue</strong> account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69487313-57265280-0e60-11ea-8814-fcdf4465967c.png" alt="1BFBF8B9-D090-4883-8E2B-92F29B19AEDE" /></p>
-
-<p>Once the EC2 instances are deployed, you should see something like this. For my <strong>green</strong> account:</p>
-
-<p><img width="1278" alt="image" src="https://user-images.githubusercontent.com/567298/69487370-2bf03300-0e61-11ea-89a5-c9fcef4ee50a.png"></p>
-
-<p>And for my <strong>blue</strong> account:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/69487324-7ae99880-0e60-11ea-9d46-fb4ebcb14e07.png" alt="74F20740-17EE-46C9-9A51-D3ACAB8937B5" /></p>
-
-<h2>Public IP Addressing</h2>
-
-<p>Now that our EC2 instances are provisioned, we will be connecting to our <strong>green</strong> EC2 instances using a Public IP, therefore we need to create a Elastic IP. From EC2, select Elastic IPs and allocate a New Address:</p>
-
-<p><img width="1283" alt="C4B9AC94-7AFC-465D-8D51-0497ABA475B3" src="https://user-images.githubusercontent.com/567298/69487353-d9167b80-0e60-11ea-85dd-26c94b227494.png"></p>
-
-<p>Select the IP, hit &ldquo;Actions&rdquo; and select &ldquo;Associate Address&rdquo;, then select the EC2 instance to which you want to associate the Elastic IP to:</p>
-
-<p><img width="771" alt="E3AA99D6-CD59-4530-B818-422E1D584932" src="https://user-images.githubusercontent.com/567298/69487364-fc412b00-0e60-11ea-88b4-f1b0b7ad83dc.png"></p>
-
-<p>You should know see that the EC2 instance has a Public IP assigned to it:</p>
-
-<p><img width="1048" alt="FE545350-0A45-453C-9855-4F65CC0783C6" src="https://user-images.githubusercontent.com/567298/69487694-d7e84d00-0e66-11ea-8cec-ad8142f01b9b.png"></p>
-
-<h2>Test Network Connectivity</h2>
-
-<p>From the downloaded SSH keypairs:</p>
-
-<pre><code>$ ls | grep keyp
-blue-keypair.pem.txt
-green-keypair.pem.txt
-</code></pre>
-
-<p>Apply the correct permissions to our keypairs so that we can use them to SSH:</p>
-
-<pre><code>$ chmod 0400 blue-keypair.pem.txt green-keypair.pem.txt
-</code></pre>
-
-<p>We will want to add both SSH keys to our agent so we can include them when we SSH:</p>
-
-<pre><code>$ eval $(ssh-agent -t 36000)
-Agent pid 6613
-</code></pre>
-
-<p>Add both keys to your ssh-agent:</p>
-
-<pre><code>$ ssh-add blue-keypair.pem.txt
-Identity added: blue-keypair.pem.txt (blue-keypair.pem.txt)
-
-$ ssh-add green-keypair.pem.txt
-Identity added: green-keypair.pem.txt (green-keypair.pem.txt)
-</code></pre>
-
-<p>SSH to our <strong>Green</strong> EC2 instance:</p>
-
-<pre><code>$ ssh -A ec2-user@3.11.6.171
-
-       __|  __|_  )
-       _|  (     /   Amazon Linux 2 AMI
-      ___|\___|___|
-
-https://aws.amazon.com/amazon-linux-2/
-[ec2-user@ip-10-1-1-190 ~]$
-</code></pre>
-
-<p>Now lets ping our <strong>Blue</strong> EC2 Instance which will be accessible via our VPC Peering Connection:</p>
-
-<pre><code>[ec2-user@ip-10-1-1-190 ~]$ ping 10.2.1.167
-PING 10.2.1.167 (10.2.1.167) 56(84) bytes of data.
-64 bytes from 10.2.1.167: icmp_seq=1 ttl=255 time=0.754 ms
-64 bytes from 10.2.1.167: icmp_seq=2 ttl=255 time=0.854 ms
-</code></pre>
-
-<p>And since we&rsquo;ve allowed SSH traffic, we should be able to SSH to our instance via its Private IP Address:</p>
-
-<pre><code>[ec2-user@ip-10-1-1-190 ~]$ ssh 10.2.1.167
-
-       __|  __|_  )
-       _|  (     /   Amazon Linux 2 AMI
-      ___|\___|___|
-
-https://aws.amazon.com/amazon-linux-2/
-[ec2-user@ip-10-2-1-167 ~]$
-</code></pre>
-
-<p>Now we have successfully created a VPC Peering Connection between Two AWS Accounts and demonstrated how to communicate to and from resources in those VPC&rsquo;s.</p>
-
-<h2>Thank You</h2>
-
-<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<center><script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script></center>
-
-
-<p><br></p>
-
-<p>Feel free to have a look at my <strong><a href="https://bekkerclothing.com/collections/developer">Developer T-Shirt Range</a>:</strong></p>
-
-<div id='product-component-1574559271268'></div>
-
-
-<script type="text/javascript">
-/*&lt;![CDATA[*/
-(function () {
-  var scriptURL = 'https://sdks.shopifycdn.com/buy-button/latest/buy-button-storefront.min.js';
-  if (window.ShopifyBuy) {
-    if (window.ShopifyBuy.UI) {
-      ShopifyBuyInit();
-    } else {
-      loadScript();
-    }
-  } else {
-    loadScript();
-  }
-  function loadScript() {
-    var script = document.createElement('script');
-    script.async = true;
-    script.src = scriptURL;
-    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(script);
-    script.onload = ShopifyBuyInit;
-  }
-  function ShopifyBuyInit() {
-    var client = ShopifyBuy.buildClient({
-      domain: 'bekkerclothing.myshopify.com',
-      storefrontAccessToken: '68eb29a6d90539cb0321ea90bb043fae',
-    });
-    ShopifyBuy.UI.onReady(client).then(function (ui) {
-      ui.createComponent('product', {
-        id: '4391499104340',
-        node: document.getElementById('product-component-1574559271268'),
         moneyFormat: '%24%7B%7Bamount%7D%7D',
         options: {
   "product": {

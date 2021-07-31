@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Ecs | Ruan Bekker's Blog]]></title>
+  <link href="https://blog.ruanbekker.com/blog/categories/ecs/atom.xml" rel="self"/>
+  <link href="https://blog.ruanbekker.com/"/>
+  <updated>2021-07-31T03:59:55-04:00</updated>
+  <id>https://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Difference With ECS Task and Execution IAM Roles on AWS]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/07/31/difference-with-ecs-task-and-execution-iam-roles-on-aws/"/>
+    <updated>2021-07-31T03:37:34-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/07/31/difference-with-ecs-task-and-execution-iam-roles-on-aws</id>
+    <content type="html"><![CDATA[<p><img src="../images/ruanbekker-header-photo.png" alt="" /></p>
+
+<p>In this post we will look at what the difference is between the <a href="https://docs.aws.amazon.com/AmazonECS/latest/userguide/task-iam-roles.html">AWS ECS Task Execution IAM Role</a> and the <a href="https://docs.aws.amazon.com/AmazonECS/latest/userguide/task-iam-roles.html">IAM Role for Tasks</a> and give a example policy to demonstrate.</p>
+
+<h2>ECS Task Execution Role</h2>
+
+<p>The ECS Execution Role is used by the ecs-agent which runs on ECS and is responsible for:
+- Pulling down docker images from ECR
+- Fetching the SSM Parameters from SSM for your Task (Secrets and LogConfigurations)
+- Writing Logs to CloudWatch</p>
+
+<p>The IAM Role has been configured that the Trusted Identity is ecs so only ECS is allowed to assume credentials from the IAM Policy that is associated to the Role.</p>
+
+<p>The trusted identity in the IAM Role to be ecs:</p>
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+</code></pre>
+
+<p>and the policy will look like this more or less for a example service, I am demonstrating my-dev-service:</p>
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "SSMGetParameters",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:GetParameter"
+            ],
+            "Resource": "arn:aws:ssm:eu-west-1:*:parameter/my-service/dev/*"
+        },
+        {
+            "Sid": "KMSDecryptParametersWithKey",
+            "Effect": "Allow",
+            "Action": [
+                "kms:GetPublicKey",
+                "kms:Decrypt",
+                "kms:GenerateDataKey",
+                "kms:DescribeKey"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+</code></pre>
+
+<p>In the ECS Task Definition the role arn is specified as <code>"executionRoleArn"</code> in:</p>
+
+<pre><code class="json">{
+  "family": "my-dev-service",
+  "executionRoleArn":"arn:aws:iam::000000000000:role/ecs-exec-role",
+  "taskRoleArn":"arn:aws:iam::000000000000:role/ecs-task-role",
+  "containerDefinitions": []
+}
+</code></pre>
+
+<h2>ECS Task Role</h2>
+
+<p>The ECS Task Role is used by the service that is deployed to ECS, so this will be your application requiring access to SQS as an example</p>
+
+<p>Same as before, we set the trusted identity in the IAM Role to be ecs:</p>
+
+<pre><code class="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+</code></pre>
+
+<p>So only the ECS tasks using the role is allowed to assume credentials from the IAM Role, and the policy associated to the role, can look something like this:</p>
+
+<pre><code class="json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowDevSQS",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:GetQueueUrl",
+                "sqs:ReceiveMessage",
+                "sqs:SendMessage",
+                "sqs:ChangeMessageVisibility"
+            ],
+            "Resource": [
+                "arn:aws:sqs:eu-west-1:000000000000:dev-pending-queue",
+                "arn:aws:sqs:eu-west-1:000000000000:dev-confirmed-queue"
+            ]
+        }
+    ]
+}
+</code></pre>
+
+<p>The role arn will be specified in <code>"taskRoleArn"</code> from the following in the ECS Task Definition:</p>
+
+<pre><code class="json">{
+  "family": "my-dev-service",
+  "executionRoleArn":"arn:aws:iam::000000000000:role/ecs-exec-role",
+  "taskRoleArn":"arn:aws:iam::000000000000:role/ecs-task-role",
+  "containerDefinitions": []
+}
+</code></pre>
+
+<h2>Application Code</h2>
+
+<p>In your application you don’t need to reference any aws access keys as the role will assume credentials for you by the SDK, with python a short example will be:</p>
+
+<pre><code class="python">import boto3
+sqs = boto3.Session(region_name='eu-west-1').client('sqs')
+</code></pre>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
+  
+</feed>

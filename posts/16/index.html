@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="From a previous post, we went through the setup of building a Serverless URL Shortener with API Gateway, Lambda, and DynamoDB on AWS. Today we will &hellip;">
+  <meta name="description" content="Today we will be looking into Hetzner&rsquo;s Cloud Storage Volumes and how you can resize volumes on the fly! What is Hetzner&rsquo;s Cloud Storage &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,306 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/12/19/resizing-hetzner-cloud-block-storage-volumes-on-the-fly/">Resizing Hetzner Cloud Block Storage Volumes on the Fly</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-12-19T00:59:11-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>19</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>12:59 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/50203557-96a01100-036a-11e9-8fd5-2953497f92d8.png" alt="" /></p>
+
+<p>Today we will be looking into Hetzner&rsquo;s Cloud Storage Volumes and how you can resize volumes on the fly!</p>
+
+<h2>What is Hetzner&rsquo;s Cloud Storage Volumes</h2>
+
+<p><a href="https://www.hetzner.com/cloud">Hetzner Cloud</a> offers a fast, flexible, and cost-effective SSD based Block Storage which can be attach to your Hetzner Cloud Server. At this point in time its available in the Nuremberg and Helsinki regions.</p>
+
+<h2>Resizing of Volumes</h2>
+
+<p>Volumes can be resized up to 10TB and the console allows you to resize in 1GB increments. You are allowed to increase, but cannot decrease.</p>
+
+<h2>Demo through Cloud Volumes</h2>
+
+<p>Let&rsquo;s run through a demo, where we will do the following:</p>
+
+<ul>
+<li>Provision a Server</li>
+<li>Provision a Volume (XFS Filesystem / EXT4 is also optional)</li>
+<li>Inspect the Volume, do some performance testing</li>
+<li>Resize the Volume via Hetzner Cloud Console</li>
+<li>Grow the XFS Filesystem</li>
+</ul>
+
+
+<p>After provisioning a server, which takes less than a minute, you should see that the server is created:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202325-6f474500-0366-11e9-8e7d-e96f0c78beba.png" alt="" /></p>
+
+<p>SSH into your server. At this moment, we have not provisioned any volumes, so only the root partition should be mounted. Look at the block allocation:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>sda      8:0    <span class="m">0</span> 19.1G  <span class="m">0</span> disk
+</span><span class='line'>--sda1   8:1    <span class="m">0</span> 19.1G  <span class="m">0</span> part /
+</span><span class='line'>sr0     11:0    <span class="m">1</span> 1024M  <span class="m">0</span> rom
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look at the fstab:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>cat /etc/fstab
+</span><span class='line'><span class="c"># &lt;file system&gt; &lt;mount point&gt;   &lt;type&gt;  &lt;options&gt;       &lt;dump&gt;  &lt;pass&gt;</span>
+</span><span class='line'><span class="nv">UUID</span><span class="o">=</span>2f54e8e6-ff9c-497a-88ea-ce159f6cd283 /               ext4    discard,errors<span class="o">=</span>remount-ro <span class="m">0</span>       1
+</span><span class='line'>/dev/fd0        /media/floppy0  auto    rw,user,noauto,exec,utf8 <span class="m">0</span>       0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And have a look at the mounted disks layout:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
+</span><span class='line'>tmpfs           195M  652K  194M   1% /run
+</span><span class='line'>/dev/sda1        19G  1.6G   17G   9% /
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
+</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
+</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now, time to provision a Volume. Head over to the Volumes section:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202468-dfee6180-0366-11e9-8e48-aaadeb707938.png" alt="" /></p>
+
+<p>I&rsquo;m going ahead with creating a volume with 10GB of space and assign it to my server, and yeah that&rsquo;s right, 10GB of storage is 0,40 EUR per month, epic value for money!</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202502-fd233000-0366-11e9-9c71-475966488ca1.png" alt="" /></p>
+
+<p>After you volume is created, you should see similar output below:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50202614-5a1ee600-0367-11e9-97ab-8352d5b6f064.png" alt="" /></p>
+
+<p>Head back to your server, and have a look at the output when running the similar commands from earlier:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>sda      8:0    <span class="m">0</span> 19.1G  <span class="m">0</span> disk
+</span><span class='line'>--sda1   8:1    <span class="m">0</span> 19.1G  <span class="m">0</span> part /
+</span><span class='line'>sdb      8:16   <span class="m">0</span>   10G  <span class="m">0</span> disk /mnt/HC_Volume_1497823
+</span><span class='line'>sr0     11:0    <span class="m">1</span> 1024M  <span class="m">0</span> rom
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The fstab config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/fstab
+</span><span class='line'><span class="c"># &lt;file system&gt; &lt;mount point&gt;   &lt;type&gt;  &lt;options&gt;       &lt;dump&gt;  &lt;pass&gt;</span>
+</span><span class='line'><span class="nv">UUID</span><span class="o">=</span>2f54e8e6-ff9c-497a-88ea-ce159f6cd283 /               ext4    discard,errors<span class="o">=</span>remount-ro <span class="m">0</span>       1
+</span><span class='line'>/dev/fd0        /media/floppy0  auto    rw,user,noauto,exec,utf8 <span class="m">0</span>       0
+</span><span class='line'>/dev/disk/by-id/scsi-0HC_Volume_1497823 /mnt/HC_Volume_1497823 xfs discard,nofail,defaults <span class="m">0</span> 0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The disk layout:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
+</span><span class='line'>tmpfs           195M  660K  194M   1% /run
+</span><span class='line'>/dev/sda1        19G  1.6G   17G   9% /
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
+</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
+</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
+</span><span class='line'>/dev/sdb         10G   43M   10G   1% /mnt/HC_Volume_1497823
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can see from the output above how easy it is to provision a volume to your Hetzner Cloud Server. And everything gets done for you, the disk is mounted and the <code>/etc/fstab</code> configuration is populated for you.</p>
+
+<p>Time for some performance testing on the volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>dd <span class="nv">bs</span><span class="o">=</span>2M <span class="nv">count</span><span class="o">=</span><span class="m">256</span> <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>/mnt/HC_Volume_1497823/test.dd
+</span><span class='line'>256+0 records in
+</span><span class='line'>256+0 records out
+</span><span class='line'><span class="m">536870912</span> bytes <span class="o">(</span><span class="m">537</span> MB, <span class="m">512</span> MiB<span class="o">)</span> copied, 0.911306 s, <span class="m">589</span> MB/s
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Pretty neat right? :D</p>
+
+<p>Let&rsquo;s resize the volume via the Hetzner Cloud Console to 20GB and resize the filesystem. From the Console, head over to the volumes section, select the more options and select resize:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/50203010-bcc4b180-0368-11e9-86e8-653490ad6870.png" alt="" /></p>
+
+<p>After the volume has been resized, head back to your server and resize the filesystem. As we are using XFS Filesystem, we will use <code>xfs_growfs</code> :</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>xfs_growfs /dev/sdb
+</span><span class='line'>meta-data<span class="o">=</span>/dev/sdb               <span class="nv">isize</span><span class="o">=</span><span class="m">512</span>    <span class="nv">agcount</span><span class="o">=</span>4, <span class="nv">agsize</span><span class="o">=</span><span class="m">655360</span> <span class="nv">blks</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sectsz</span><span class="o">=</span><span class="m">512</span>   <span class="nv">attr</span><span class="o">=</span>2, <span class="nv">projid32bit</span><span class="o">=</span><span class="nv">1</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">crc</span><span class="o">=</span><span class="m">1</span>        <span class="nv">finobt</span><span class="o">=</span><span class="m">1</span> <span class="nv">spinodes</span><span class="o">=</span><span class="m">0</span> <span class="nv">rmapbt</span><span class="o">=</span><span class="nv">0</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">reflink</span><span class="o">=</span>0
+</span><span class='line'><span class="nv">data</span>     <span class="o">=</span>                       <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>2621440, <span class="nv">imaxpct</span><span class="o">=</span><span class="nv">25</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sunit</span><span class="o">=</span><span class="m">0</span>      <span class="nv">swidth</span><span class="o">=</span><span class="m">0</span> blks
+</span><span class='line'><span class="nv">naming</span>   <span class="o">=</span>version <span class="m">2</span>              <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   ascii-ci<span class="o">=</span><span class="m">0</span> <span class="nv">ftype</span><span class="o">=</span>1
+</span><span class='line'><span class="nv">log</span>      <span class="o">=</span>internal               <span class="nv">bsize</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>2560, <span class="nv">version</span><span class="o">=</span><span class="nv">2</span>
+</span><span class='line'>         <span class="o">=</span>                       <span class="nv">sectsz</span><span class="o">=</span><span class="m">512</span>   <span class="nv">sunit</span><span class="o">=</span><span class="m">0</span> blks, lazy-count<span class="o">=</span>1
+</span><span class='line'><span class="nv">realtime</span> <span class="o">=</span>none                   <span class="nv">extsz</span><span class="o">=</span><span class="m">4096</span>   <span class="nv">blocks</span><span class="o">=</span>0, <span class="nv">rtextents</span><span class="o">=</span>0
+</span><span class='line'>data blocks changed from <span class="m">2621440</span> to 5242880
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look at the disk layout and see that the filesystem was resized on the fly. If you have applications writing/reading to and from that volume, its better to unmount it first.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>udev            959M     <span class="m">0</span>  959M   0% /dev
+</span><span class='line'>tmpfs           195M  660K  194M   1% /run
+</span><span class='line'>/dev/sda1        19G  2.1G   16G  12% /
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /dev/shm
+</span><span class='line'>tmpfs           5.0M     <span class="m">0</span>  5.0M   0% /run/lock
+</span><span class='line'>tmpfs           973M     <span class="m">0</span>  973M   0% /sys/fs/cgroup
+</span><span class='line'>tmpfs           195M     <span class="m">0</span>  195M   0% /run/user/0
+</span><span class='line'>/dev/sdb         20G  565M   20G   3% /mnt/HC_Volume_1497823
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I must admit, I am really stoked with Hetzner&rsquo;s offerings and their performance. I&rsquo;ve been hosting servers with them for the past 5 months and so far they really impressed me.</p>
+
+<p>Have a look at <a href="https://www.hetzner.com/cloud">Hetzner Cloud&rsquo;s</a> offerings, they have great prices as you can start off with a server from as little as 2.49 EUR per month, which gives you 1vCPU, 2GB of RAM, 20GB disk Space and 20TB of traffic. I mean, thats awesome value for money. They also offer Floating IP&rsquo;s, Backups, etc.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://www.hetzner.com/cloud">Hetzner Cloud&rsquo;s</a></li>
+<li><a href="https://wiki.hetzner.de/index.php/CloudServer/en#What_are_the_Hetzner_Cloud_Volumes.3F">More info on Hetzner Volumes</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>Please feel free to show support by, <strong>sharing</strong> this post, making a <strong>donation</strong>, <strong>subscribing</strong> or <strong>reach out to me</strong> if you want me to demo and write up on any specific tech topic.</p>
+
+<center>
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick" />
+<input type="hidden" name="hosted_button_id" value="W7CBGYTCWGANQ" />
+<input type="image" src="https://user-images.githubusercontent.com/567298/49853901-461c3700-fdf1-11e8-9d80-8a424a3173af.png" border="0" name="submit" title="PayPal - The safer, easier way to pay online!" alt="Donate with PayPal button" />
+</form>
+</center>
+
+
+<p><br></p>
+
+<p>Ad space:</p>
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+
+
+<p><p></p>
+
+<p>Thanks for reading!</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2077,214 +2377,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/11/21/golang-building-a-basic-web-server-in-go/">Golang: Building a Basic Web Server in Go</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-11-21T00:57:54-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>21</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>12:57 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/golang-web-server.png" alt="" /></p>
-
-<p>Continuing with our <a href="https://blog.ruanbekker.com/blog/categories/golang-tutorial/">#golang-tutorial</a> blog series, in this post we will setup a Basic HTTP Server in Go.</p>
-
-<h2>Our Web Server:</h2>
-
-<p>Our Web Server will respond on 2 Request Paths:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>- / -&gt; returns "Hello, Wolrd!"
-</span><span class='line'>- /cheers -&gt; returns "Goodbye!"</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Application Code:</h2>
-
-<p>If you have not setup your golang environment, you can do so by visiting <a href="https://medium.com/@AkyunaAkish/setting-up-a-golang-development-environment-mac-os-x-d58e5a7ea24f">@AkyunaAkish&rsquo;s Post on Setting up a Golang Development Enviornment on MacOSX</a>.</p>
-
-<p>Create the <code>server.go</code> or any filename of your choice. Note: I created 2 ways of returning the content of http response for demonstration</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-</pre></td><td class='code'><pre><code class='go'><span class='line'><span class="kn">package</span> <span class="nx">main</span>
-</span><span class='line'>
-</span><span class='line'><span class="kn">import</span> <span class="p">(</span>
-</span><span class='line'>  <span class="s">&quot;io&quot;</span>
-</span><span class='line'>        <span class="s">&quot;log&quot;</span>
-</span><span class='line'>  <span class="s">&quot;net/http&quot;</span>
-</span><span class='line'><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">hello</span><span class="p">(</span><span class="nx">w</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">Header</span><span class="p">().</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;Content-Type&quot;</span><span class="p">,</span> <span class="s">&quot;text/plain; charset=utf-8&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">WriteHeader</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;Hello, World!&quot;</span> <span class="o">+</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hello function handler was executed&quot;</span><span class="p">)</span>
-</span><span class='line'><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">goodbye</span><span class="p">(</span><span class="nx">w</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">Header</span><span class="p">().</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;Content-Type&quot;</span><span class="p">,</span> <span class="s">&quot;text/plain; charset=utf-8&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">w</span><span class="p">.</span><span class="nx">WriteHeader</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">io</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span> <span class="s">&quot;Cheers!&quot;</span> <span class="o">+</span> <span class="s">&quot;\n&quot;</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;goodbye function handler was executed&quot;</span><span class="p">)</span>
-</span><span class='line'><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="kd">func</span> <span class="nx">main</span><span class="p">()</span> <span class="p">{</span>
-</span><span class='line'>  <span class="nx">http</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span> <span class="nx">hello</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">http</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;/cheers&quot;</span><span class="p">,</span> <span class="nx">goodbye</span><span class="p">)</span>
-</span><span class='line'>  <span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8000&quot;</span><span class="p">,</span> <span class="kc">nil</span><span class="p">)</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Explanation of what we are doing:</p>
-
-<ul>
-<li>Programs runs in the package <code>main</code></li>
-<li>We are importing 3 packages: <code>io</code>, <code>log</code> and <code>net/http</code></li>
-<li>HandleFunc registers the handler function for the given pattern in the DefaultServeMux, in this case the HandleFunc registers <code>/</code> to the <code>hello</code> handler function and <code>/cheers</code> to the goodbye handler function.</li>
-<li>In our 2 handler functions, we have two arguments:
-
-<ul>
-<li>The first one is <code>http.ResponseWriter</code> and its corresponding response stream, which is actually an interface type.</li>
-<li>The second is <code>*http.Request</code> and its corresponding HTTP request. <code>io.WriteString</code> is a helper function to let you write a string into a given writable stream, this is named the <code>io.Writer</code> interface in Golang.</li>
-</ul>
-</li>
-<li>ListenAndServe starts an HTTP server with a given address and handler. The handler is usually nil, which means to use DefaultServeMux</li>
-<li>The logging is not a requirement, but used it for debugging/verbosity</li>
-</ul>
-
-
-<h2>Running our Server:</h2>
-
-<p>Run the http server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>go run server.go
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Client Side Requests:</h2>
-
-<p>Run client side http requests to your golang web server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i http://localhost:8000/
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
-</span><span class='line'>Date: Wed, <span class="m">21</span> Nov <span class="m">2018</span> 21:33:42 GMT
-</span><span class='line'>Content-Length: 14
-</span><span class='line'>
-</span><span class='line'>Hello, World!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And another request to <code>/cheers</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl -i http://localhost:8000/cheers
-</span><span class='line'>HTTP/1.1 <span class="m">200</span> OK
-</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
-</span><span class='line'>Date: Wed, <span class="m">21</span> Nov <span class="m">2018</span> 21:29:46 GMT
-</span><span class='line'>Content-Length: 8
-</span><span class='line'>
-</span><span class='line'>Cheers!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Server Side Output:</h2>
-
-<p>As we used the log package, the logging gets returned to stdout:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>go run server.go
-</span><span class='line'>2018/11/21 23:29:36 hello <span class="k">function</span> handler was executed
-</span><span class='line'>2018/11/21 23:29:46 goodbye <span class="k">function</span> handler was executed
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://golang.org/doc/code.html">https://golang.org/doc/code.html</a></li>
-<li><a href="https://gowalker.org/net/http#HandleFunc">https://gowalker.org/net/http#HandleFunc</a></li>
-<li><a href="https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring">https://stackoverflow.com/questions/37863374/whats-the-difference-between-responsewriter-write-and-io-writestring</a></li>
-<li><a href="https://www.alexedwards.net/blog/golang-response-snippets">https://www.alexedwards.net/blog/golang-response-snippets</a></li>
-</ul>
-
-
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-
-
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/17">&larr; Older</a>
@@ -2335,6 +2427,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/07/31/basic-logging-with-python/">Basic Logging With Python</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/07/31/difference-with-ecs-task-and-execution-iam-roles-on-aws/">Difference With ECS Task and Execution IAM Roles on AWS</a>
       </li>
     
@@ -2348,10 +2444,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a>
       </li>
     
   </ul>

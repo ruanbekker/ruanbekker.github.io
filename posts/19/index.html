@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="So let&rsquo;s take this scenario: Your database is getting hammered with requests and building up some load over time and we would like to place a &hellip;">
+  <meta name="description" content="While testing DynamoDB for a specific use case I picked up at times where a GetItem will incur about 150ms in RequestLatency on the Max Statistic. &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,298 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/09/05/investigating-high-request-latencies-on-amazon-dynamodb/">Investigating High Request Latencies on Amazon DynamoDB</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-09-05T18:03:09-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>5</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>6:03 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>While testing DynamoDB for a specific use case I picked up at times where a GetItem will incur about 150ms in RequestLatency on the Max Statistic. This made me want to understand the behavior that I&rsquo;m observing.</p>
+
+<p>I will go through my steps drilling down on pointers where latency can be reduced.</p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>DynamoDB Performance Testing Overview</h2>
+
+<p>Tests:</p>
+
+<ul>
+<li>Create 2 Tables with 10 WCU / 10 RCU, one encrypted, one non-encrypted</li>
+<li>Seed both tables with 10 items, 18KB per item</li>
+<li>Do 4 tests:
+
+<ul>
+<li>Encrypted: Consistent Reads</li>
+<li>Encrypted: Eventual Consistent Reads</li>
+<li>Non-Encrypted: Consistent Reads</li>
+<li>Non-Encrypted: Eventual Consistent Reads</li>
+</ul>
+</li>
+</ul>
+
+
+<h2>Seed the Table(s):</h2>
+
+<p>Seed the Table with 10 items, 18KB per item:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>from boto3 import Session as boto3_session
+</span><span class='line'>from time import sleep, strftime
+</span><span class='line'>from random import sample
+</span><span class='line'>
+</span><span class='line'># session ids that will be fetched in a random.choice order
+</span><span class='line'>session_ids = [
+</span><span class='line'>    '77c81e29-c86a-411e-a5b3-9a8fb3b2595f',
+</span><span class='line'>    'b9a2b8ee-17ab-423c-8dbc-91020cd66097',
+</span><span class='line'>    'cbe01734-c506-4998-8727-45f1aa0de7e3',
+</span><span class='line'>    'e789f69b-420b-4e6d-9095-cd4482820454',
+</span><span class='line'>    'c808a4e6-311e-48d2-b3fd-e9b0602a16ac',
+</span><span class='line'>    '2ddf0416-6206-4c95-b6e5-d88b5325a7b1',
+</span><span class='line'>    'e8157439-95f4-49a9-91e3-d1afc60a812f',
+</span><span class='line'>    'f032115b-b04f-423c-9dfe-e004445b771b',
+</span><span class='line'>    'dd6904c5-b65b-4da4-b0b2-f9e1c5895086',
+</span><span class='line'>    '075e59be-9114-447b-8187-a0acf1b2f127'
+</span><span class='line'>]
+</span><span class='line'>
+</span><span class='line'>generated_string = 'DHUijK8WK03hU0OF3UusjI0hhNd0hLRg03Vh430hJdUh9JsFi2hwO0s00FwO3wwI90Ju28UH94UUHU90fj9S99IfhVu89fU3o0OF04D8ljKNLsK83HJsLK8hUfsffURuuJfgR984h98jjF3sjsL0I3W0g039FJ8I0gh0IPI0Wisd8hhUg3308W3iVOJ34uO9OfhFJ900uL30oFu9JkwjfFUR4008OFkiO8H49DD4ONkKu0hUuiL0hR3NLNjh9uu0J0h09hH33gKf9980JhVL9483Ngh0h0fII4IOUOhHuIWodJlF90wuuK8uF84J4uRL00i30IO0d8g0UhIHo0I90D8U0Jwh0u08f9R9r9j00ujsOKJ3HU0hI90hrR8Sjs9jwhj0WFWrfo9g3j09IUu0ufjU83uHWK89i3r4Of8N00KN04O3I9DF09hfUOSdjHhs8I30hPkV0iRUhk9UN0J9983i9UIWioNFSUSWP0903U04RS84f0UI80j3U9I0wUFd90u9JJ9kJk9Hff43ul99hhhU0wdwIHusuh0HoV9Jh4I3U3hj4KH40NLH8L008N9FU8hjsWUjwUIO9N8FUs9fhkfV8NjF8g0OKU9UuS8I44009J8UJu99NVDhjH9S9wDO00fKh3uJgu3JosJD899jPR4L8839Duj9J0SjjLI90Uhhhh4hIsN8uIrjhJjIoi80084wf9KH0LiuNwPhOFOFhIO0o80UF0s308shwIj9iOJhkRUOI3J8fPUJhfN8uJhj8LU0804Ji803OwOHWgU90NU8N3hFF0fJ8008hh98jU9JJ0OFwfJ92JR909909Uh8sFf9P9lUgIH9IOI93rsIJlHKNH0hf099h9Nl98IskhV0hIN8oUo0JhfDs4JlhFl0I99jRhO80J9JoPjN008F03H94U9PHrPuOsPV0FIogD40Js94LIw3JwRP8S3LFk09uj8WFWUJ0iRJjhLh9UoOIjP403kji9hsswRfwNh940jwHwKLIsRL8suouIl9IiH99h0j04h0H989O0uLKhJSjN0D39jffOO88K8hKu8R3V9VRU3Hug09WF0ssJhofU4fW8Fj08KKs2IjVI0i3NjfD0uPFLsO2IIFJdH90KJNR8uR0h90H3J9UFR0890OJI88jfs4Kgf99w800JUHIlh9rs98k3u8249ghju9UFuO8Iks0OOfKO00w94KL980Fw88UiO9IfFh903OIF8dIO3IN99hJh4ufFO3hNUS2i9P9rKlIVl00WH3I3hKP9Rs0u09HNhNHUVhd98IL9fhu0DUhgH0OrJIPsJ0d8fIj9uJOF090R9O8JokI00U9jOLH9h8Us9ifiIhw00g4HKiK09oK8Ij09IUh9US3h8F9FhN39Kd09r99R0dI30huhfR0jL0Hs8u898ji8WjNORuiJKf39kJ099V99h300gJFwl0gUs0j0h0I0wI4Uh9o0l0hNIKjNO02JIj0jJj90iIR0uLhJH09L9H9h4SVsF89hiJV8hh8fhu394uIshIkLH8JKI9JFhsiOJ4s9gk0hu9kfOh8HP9jo4hN0k8JfogI48hr0FwfRjU0SijwNh8VF9J9jUk80J92H93F8h0S29j392RiSuNoh9i00HhFL8I9jN08OHhj0IIh0RKIJ8N0j03uHd0fDUhJ090033FH9luhjugfRhUL8JwH0if8f0hH9h8hfOjiVL8giJSsWgkh9UhOwhjOLhiUL8IjF3JsUJ3HFDh9KKF9Fuh8FDju3uwNFJhPH29shJjjJUOr0f9P94Ff8NIDHOR09WKhUI9hUURhN8FwJP990of9dVsH8W8h889j9g800I8wJjKPR9fu04uINkujF94f9w0O939f0I0ORL94f00O0ujDrIUI0D8rUK9fu4I9lFwogio9WLj0flf8SV0w8F0OUJNVhjWO0KI2RIjh49h3I9NUiIhHUsgDkhhhsJJj9iH8KjI0h0fkUfUsIujOVrLjUi8098Rjih943380D9wss9Kugdh3SH400N888h0j9IPg0Fu8joJ9Lf4U2oJJN833JJ8Fu94kfwR3Oh0iuIH2SFFIh3J93Jj03J39hKI9D8Ouhh0ih8IJsI000I8NRhkI80hkfgjJN0N9hhr09wULF3is0uJ9jV0POIdIO0gu808KH3FF8O2P39r9003dPOIJ9iK3lNI30h0wJN0II4803KNjf9uW9490j080I009H0R9uJ33ggVhlk9j0Hs09uIfdJ009oU9hiiRLi0s8fhFN83d303hhF0N9l0h9F3SF9998gddu0iK9RuiS4ow8Ssg9hi0JNKffOj33Iuh98IHO8sjNRusK0ushWN0JsKO43fd98F490NJg0iU8hhUUFPOJNjg4HO3hh00P0ihUI9wgw9JO0hr0NhOr0wF890U8FK44hhOVN89Kh99IFS90UOI0UIJ8UwjKj9i48jj0sU00ho39RrUIfIuOK8h0O0h0RP8dJ0SOI9sON9l0wl9jo38LOFIURuk0KJiu9L9uI9J3LfdhODujHoW0DIOD3RLUI8Ih0VIFhu80LOO9FJ0hJI89jhfF00HIJuh9gKR8UNfhV8wiI0sIN40iN0fOKIRukDO48JRIIFO0g3IR9fHFhi4uFIN9393JH89g0OVhi8lONuJ8UkW0K098J8INUh9uOjKuJu88gjsWDFJjOLf0OFww93FjiJSH90F0ujPOhwO2oPUNUOkj0uH9j409jh3hJhf0rV8JfwI3PhIIOukffuhDhU2ujh80IJLU0IIuU0wF3g8iu9ik09jF09fhO90449H8uIFLOjFR9RiI84f88oug4jJ3gIhHfKHi2S0u9JFUNS0U4OsOlUIdI3JrikU80h93iRL8fu3ffuIH0U8ulo29Owh39us9I9900DjJwg90rR8JhHhw4ODuRrL8Lgg34jsN00OJhRuJJJuHjSFS0Nh8hjIfsi90494i0Low0u3w83D4j0RRuNI8JL2hKNRIRJ0dNhL83uwL9hfFIdFJO0wJF90OIP0O2Ig94Ww8NKH09w9DO3090OJ89DOo0h0L8s0f888fUdhfPWr090oI3UwNjNKfNUUW3hHifDS4Ji9IHK000hh88u09OufIKI3l0098hO0030O0I8W980lRI0J94JW9j9lRJOh4uNiJP0fhUf9h02uFoFjIOU88i4hj48W99fUjko0L8FSJ8fjf99I2oi4J0d0jPjJj9Lo8fjh0K8u9JsU3f8FUh8F3k8HFU900wU8U9Rhwfsw0U90oF84008Uf98wfRJ003w2uUhhlW0L0Vh9H9OuoIUj08L898KU9388UUh0093g3fFJU8kF3j0WFoFhL90N9KI9838IKfr9djgK08ghVFW098N89hJJ0JU3fhh0jU0F83dhgV8lVLh020L3L2VWOD3ldL080hh8JiuhUjFN9uIjwIFk2FhP8K99Joi9s093034hU3r4r0FO0j3IIK903ff08kU988ohru4whO4uRh8Iuj9oIuhFJIJwhugLF8KW0j9hwsKf3wH0J83RjN3LhKINJK9DSUFJNU083sF03KfRhI830lj9h90i4FiJW9NRhi0suh990jJOR9woIUU99HK29R8H0J9VJh9LRf40Fshukj990IFgf902uiH009FKFJKNOU0o4fI9WhVV0ulVh3ROfiHf9FJLwI30d2ii0OOWhDwR00NN2juf8U90IPWfJ0JOFh00wsh8gg99l083lNJNuF039JFssPh09DO0O2UV9FO0guK0oLKrjklj909u880gN9iWDKl40uOhu8o0r9hwIoKN0rOk0h3S3SUhuw0F0Hrh9fIjVFjVVUNJ8VjkhU0Us0f009U8URhj4Iw89O9sod39NFhw9hHUUhfd3uR0hfhhhP9f00JVLI3O90JjORH0FFs2J8if288jd0h8hFf0j89KRNh9kN080lhURiJ0jFPjW498LuhJh9OgK0wNJ803f9hfV0O989Jhk8wf0UrKFuU9hf9LF0DdOuHI4I800j4wD0w899jF9kJ8f0u0P4iPWf8u8I9hF9Is8gHJ9hIDfI00Jd99OKsIO30UdI88800N993JsJF089OswgFiwhu9sj880l9RkwHJw0K9ULLw80h080J49o00U0Osks89N2lwIL08u0kOg800h9NWHjjgF8Lj3kKlOfRh9h0L990N8lSfLu92hjhR9hkIf093sl9uJf0s9I0IPF3Sh9IK08U9dO3S80dJI94LlsVJ0hNVuh8R909h3I8fuh408R3o89h0uW9J0sHw0RF8iD0I9OU2hH9fPS9fjPP4fUgPhi0J9jJOOu8h9Du0L0998U98UsRs99jsID408URP09jk9fiJLiiL89IhV9Ks94U2fULHr00D809JjVi94u4FI2N0INhJHu903988U98hUsRg08F08UjfJF0Uk0fhHI89oRhl9N0ufoO3Is9hhju3rIgRJ0OkPFLOh9i0JfJhOhhuuNIhI8003uL9ljH39L9h2L4SJ0Hi8uKh398K9gh9H0SI9WJK98hUjj09J00DL9URNJNihI39H0sKu00fj880HIUwFI44iNL9UshH99jwI8lH39H9NWRO9LUURK8uoS80J893lr8P399OJjJ24wV409IjN9u0I4s8IJfhfh49udF9hlj00uIsUhfNdFIkK9h999UJi8Hh0lKL04hh308UVl0J4O9g48fHh4Of909Il09higwR9I9WUR28V8OIk9K088hiih204I9o9K89dIijL000HN0RKrS94IOwWdSW8s0wiJ0JlRjVIId988Wu93Kk3u0fw8930808HsisF3LUPdNrL9LP9IJPOL083Id8wJ9h0oHJUoW0JJ38f8u3ws43JRr9Oj9OKf8oJ0ohiF898UjDuLhj0LW9U8hN2j0I2iJO038u49Phs9RUj883HOfWIO480wRUh000fj0HNh4VL9Jjh0W2FJdJJfJOR099g3gk0oI0R0Og9jU0jgiOOfOIjdULJIfI94HN9gJo0I9909O83UOJS0rJ8J0L09d9og8w090DUhfKhPshRKIIIf90Vf8Sf8I0K40us8LFj88W0Fh23922O80JNsJoKwLSwhKhW4Ir8Pi8JNhi9KUIifs88UN3j0HiH0L9NjDPsIL00s8jJh9890dUWNj9NsIhh9J9o8g00dk4s8hJH8IjhFg348W9uOgO9h9RlhHFi0WJhwdiPfKgJuuuh0hOi3Jd8hF008hjJ9j90WJhhiUWJhuOjDwHPsUw4L8wUKU0Sh8wh9h02h8KiU09j800PNu08dhlSuIN0oi9uJD38w9IR0hhdLHhJo2wJWI0RhHIhi0J4dFi3ugV0F498hhLsI0Ui0Od8jKSRghU2wP9H99J30Wj0hj8IJF8hU09FSrF0FWrjhf0Luo0I9j8V3JfuKR880j0Ofi9Su8uUj98hIuOJid3h0FwJJFhoUI909SWjoF9I90H90LowN00sU929JsjFdij0gh0NrJHHhRs9hh880FIL93h9J0038PoIh83N00J8PjUJf0899Fhi309l98IJiSISPRFL0HK8ji0k0LUjwgJ00hu48FoIPW0hHu0HDJjK40uhUOLIU8H8hN9IUf2gSNU8NNOlg8LwOw0uRjJHhSPO8NFf84Hh893hD932LV90300FUuJKh8F08uOhwK3LI9V00hI9hlRs8WL8J9IhJrDNWwHVKifUh0fNLU8h99Rhh3hs9whgJh2Jf8UhIuJLksodj0UlIuJwJ904jDjW9s0i9S90i8NK03i299w3dw3fFjHI0ssN4009KiUSKNf9hNUhKDi80i9OL0fKK8hIJgJO2ULJOgfN8h0iIIhwJJ0uf99uKIO9j80f9RuRIHIoU3PhIW3K40Jud8h902w03h09UhIO3OwJIIgHujf488HgFOhdhiis8OLf0kIJJWHJojV4Rh08ODOO8FLg9fUf98jJJ9484L8hji9J3f9ROWFiO409hP00090WU9ww9Ih3H4KDjHF8UuwWOOw00OOig3IIJfI0k0Oi098UifRPJJ4D99us9FDIgRijI9UfR84wU0F9V0hIhI8rs9KrRh0jRF9uUw8K4HhSh8UIUPsWJ0of8SsVuL900H8o0g884ukJLOfu00hl080RuhUOu83OPKH909DDf8iuurLL94h9989lOJhr8JUJL0hhjIshf09U090IFUj0880f0UJP83ojNS08880dw32040sifJl39r82w8P9h40r8OUO0WhIFljwh8KuNJf94KhI8800u9j0j40jhiRN0f9493h8hIJ9D8RhOKVHUj99ONIHROFihIRwHUhi0F9903Nf0fN0O4ROo3udf8i3hIi0F9UI8L88993hwI0UI9i8i9f89IIdhR8ffF9hIh93hhjFf8DKD0UI0j9LPIu8Nr04008990jflO3ldsFo0skhK0JjVOw8O8409sFuFJf08h0KIujrJ928i2RNHfjO88008089HON2dJu9N90hfFh9hK9UP0h088hO8f09S8Uhjo0U8g88JgFI8VIJ0UJi00F3guP9L9l8uVH0V4iih8k0fJ8OKjIO9F3JjR9ro0h9Iij09irVj0If8jU9HIuS89khJ9RUUjrh9oF8L0oNu9094FN8kh08O88jh8sFIf4I4F8FKliVh0DN09FhJuhwiu9uU9Fi8HNhjff9h80F9VK0h00NLjWdj9RJ8hJ80rKhU8Jf08ur00l888u4JOHKPOui98hUJ8PhNOh0990iu9K03IIOHROPUJwS00wuO8iuIOU90D49hS88Ld39KiNI48SRw09j9FV4u0wi0Wfj4shR3HolP9f0Jlu0IRNi8Dr308f8jhudhh49hF0II38RR80rRh9hUuh0K9IuW0jOHNkIhs88fHgu00su8Jf4UHIj9I400F09fUJo3r3SNJ038JjDLhjfUN9JlUj9UVKS0J80893ugjOUhUJ9wuDsNVi9huDRhfJlVK0KR9I998ihfsWOfULOFUhOFU3H0O0I2P4rFu9D9F9gkh8Ogj80K8s938HhKJg08HJRhKPI48hu9ODUH93VD0uk9FH0V04h89jig0fOIHOjhh0d4FIh9UIUH9UfUhi98Kl9UugwUs4JuOI402IL3VJWgO0hf00g9sHH329KsSuJr902O0Phh9S0U0j0RiKhfLhs038LNOR8sh0k8lhRj0h4FN39oJ8NWlhsWJ00hf090Ihj9RNuI0J0o9uKO89h040KjJS9osjs9KJIuKr0wi3UuD2U9r990Dih99j09fj9k9jl3Su0JfkJi3JJhJh9KOUhi0WVSlUiKJSju0fLFDh99OFuJi0uHj0uUKj0fOHHfu0f00LO0082K90hR04J90hOLIhd8uh9O3LJH8s89hiL9O09jL9999f3h4NhR88U0ri9R08sKKLh0U8Lw9hUHIfi0000R90hsKHJN0wUlfgFjfhHIDU0P320NFO0ihOrO9JIVUU8000rr00UriNus84hj0OgU0dF3OHJuFD8hIuL00sJ880Vf938j09J00Hj9dR8L88I0ji9WOs99FIuh980083IVsUfdIS9rO8hhLhOsL080hO8fwjOI8gF3Ff0Lhu0JJhF8fS0DwOwKs9NoNJ3P0hhO834g4NS0h98w3i9uhj9990080LfrUo808h0R0DFhFIjw3RjfgU98i894r8R9uF9f8i90g3ifjL8uIw0JWiO09O04u8Nh0iOOV8j0I0I099909VwhJJNUFKrjdh0KhJ99HuJLo3W0N8UUI4Ishj3N9jIfS9S9FJs04fIrsl9uw99fhjRo8jO09U8JwjjjROFf0Ni8u0lU0o0u9O0V0N0w9j84W94jFh09Fhh4Oi9UHF40jU0furFsIJJfI8hO9LFUoLF4j08889V3N9FhUifjuUNRu38jJHj83huNLH80whhIKsF0JFU8I0fIij9Ph0R8fhUhN2h03hu4rKV9L0wOh3fhjU0O09R0gWJu4F0hRuVsgINsDHjWuW89098f90ljHUwUON3Kwo9fWU000fFN89RJuNJKhI003F9DSNOP09hu3oIJJNg2u880J0wh0PIsPH09P843rgIhFIIOk9i04U3hIgIIuIIs8ir892HFO2djLH9899hI93I0NO0i0JljH2RgU8h3D0ui9OfHgRRW3r0J888WINhLSUh83DKN3L3099wR9HHFUIuK9394Kl0VUJh0NJUOg0JwH98Ih8duK00iuhhUhkwoJfiL0hONf9U9uI0HU8U89NPF9HIhOf02fgoNh00R9r8ff38IswL40Hi08h98h8uJuug8Sl4IhrwfOHsi9HI8Idh8I4FNo9KIL902oUfHgVl0HI9N909SgkFDhh0JgK0lgf9F9J3009du03jfRiIw0i998O8lJ0gJ0wkRjSsJwg9lI8088FrR9wFFi3jsFNh9w0OjFJ298k04Uhu9NF9DJ08h9Us8g0hsRFWO9909hUjj9w98UNONOou9028809hIPo8fDL38sJhw8V0IwUJ4w9Hk9Hj9JoiFo89ijiL90guu3J2K0KNsNUfrOPJKuh0KH098SO0PUUs0hRNLs0u3O0j3O8uIuIsI94O0hHjVfu0oilFiJSN0Jf9890ShFJr2uds0H43D88O9IP0h98IJJOPh3ru0300L009hRhLdsOVs0hH0SO0fFiDF890o8hfg4JOj4089U0RfV3f9HjdsD808VOF0O8LwfF8ruJ80i8O0P4h8RhIOh9wjK9Nf3F298N0HIdUNNr9dkO29DOw8NhoH0SR9H2kPfhR0jP9su00L9OFkOs4jIh839Fh9I9JuOwR9iJ09SIIjI09fj0390h2U9O8UkNjdjF890hkJ908808K4UoP9uFRWL02LfHw0R4ffNIPJ0909i8u9fhkJshjh98JJN00hOjhj0Fu43VI8suH8UkwhOd243UN9J00h0hKwhfFFO8P9dN09W9hRI2IIjjJf942LRhD2UOg2fDsfuOUFF2OgluuW49j09L3gUN80h2hIjs9s8UuR0hohj99hgK0LVwO9FhNH000jLhV98sINhf89HiwK8h99KL04uUIjJuh9903sJK9Kk99D00jhIIugJ4JF8W0f999I9iFD9k0N0OI9F00OL9P03gJ8wI3L3FKW0F0I98hhsdoDS08jJ3I9LR4kLFkHhLFF9s8I09j8JDRLNhUfg0UfJsKV00J9f9KLR3soP8jRodJ9gO0h00hUu3Ojf8Dh83LHN90ws00u4u8usu8S990oLj0I3O80NFRJ0h08hjOfJu3l993Nh09hU3w98h00P9HJ9hIihouh32r98Jhh9JuOok0900Uh9fo8Rh889809wUh8Ls0i98VhHu0lU90V9JghLJW8FJUJUhiujdokhPfu8OJJ82ffrhfi9Nhijw9uwUhh92uN48FKUjNg0VRjF08IOiJUr08Fr08UuIIwDKuNP0j98SuJLdfIuOUJd80D94LlRUlN9KHRihFwI0ud900h80L8lIj9RJ0DNlwflhw9hJlK9hh9N8diDhOU0osO30VRh0L00dS98LS8KfH9NhdH0888uUIWhK80O8d8hR000sJJPNHhUfsu0ish3fU2w9UF200UJOiPJr9O0KhWSjj4RIjl0jVI9030O0hjFl99uh89W04UfO89U0iu9jODho03s9809R0Ph9loh9808V9R09fUKJj0k9R0UH9J2hjLUflf9uojLRNVOuKO0FhjIL9I93h9fUfuFJihfiFNuFdJRuU0shJh003w0ugo0Hh0RI2iD4IW000gs99h08I9PFS990S4w0HKuIW8K9909sI9lHUUL9UiiN9SOjFfkoLI89gIHiHj8hIJ8OJhij9h9OJIf0IrL89djJ0SIo9339H0iFR909II09lFK9uFIU99jfsI08ffR08s8jjIHfhfPu9909HI80889OUIO804uDW034O9d803I8Fl2ssFR0wi999S9U0k9I049douUIdIPu030FN8KS9RhIuUhV90uJl8uUIHfP9Rshj08HuISF3kj0Uh89fHuhuh89jHUfOf0w0Sk23J089s8080JkWPuuR98wUhU003k0IhwDKLh99ghL4I0VRj4ijOg8fJrLJJ9iIfH82F009UHh39h0Fjj0Ijh08498k9s3swFUF94hIO409Ni08Lwi3jh88F2hs9s48Rg03u9I9sUhuIkiL8wFudUOffS9ShJN83JjJ0ih9l80UJh0ROwH9kHhPPsr0i90fIJNN0sDISw0PshOjdFujo930RSIU04u988LhJwrU0H089Sjw9083088Oho99980FLiOIUduuuj04hJN0h4hJru9J0FDO89IuWUJ0FFghIhorJVPIgJh89WuV8iOIIhwj00U9w2I0Pr9IFj9S9UgLF9JHJ8H0KHj09jh8ir90hUi8J30PgFoiwhJK9j4HOVJf3fH39ho33IJPJj0i94L9j8NJOiD4w2R3i9LFLN9RO4u88f0s9O0LjO0Jl9Pol0Uih8wDijkJHHhN308dw99h9U3H38IK0LO0L8iFOFI0394i0hw9ruF0989h0090w8j9Fu0h9hSVUVH8hw33900UJJI0fhJFKi49u9so09NuFI0fIwDs0uJ8j0hu0ODUhhURKuFLjUN8D49j0rWsh0DkSjfuU90kJsjV90dO9Jf3K8gwF34JOj8hiF0HJ0hU0II0092hjUI40IJIK9I8UPIoI80sLUHRif4jJ0JI9SIhiHjV8hFFsfUIjOJL3jUI04rd04JS0O9FJI8hfFIJj09kSui9w843l88h398OfJKFwoj0JlhO8iii93hhk8KU0VifUhh8KKIOhUINiURHHFOS9RKk8K0f00i8h9NOJk0kjJF00V09hwuI4JKR2R80s0K0Lf809huu9o9UNh0oshh9hP9hJOI9K0NI004jww9D3uu9wrfwuijfJU0urN038sh49JOwOi90IIUlhfSJU3i099h0R3IsjU3OuKKH9IhI0ufKhJ98HFFh00hI999JRIFwO998hDif9KUU0RfIRjwu0L8IJIJj8i009H90Iw9wsjjdOsohFO0FIJi49943KoRJ9W9rO0uUlguwH4jLFJH9kuk8sL43PjF8989K8wdWHs0U0Idwh09N0h2IFhJR0ud0D90r8jOj9OFf92UDkLH4IK88ho2iw0hkwjN89IHPiFUNRjfHhJ0NRH998h90Rf3hjwWu9jr08U92i30FfNUPk8iJfj9L9K0990O4UhfIjFJgV989LgH8V989sDd8i9u00jU0hhUIDuI8h8U9fd3hUhI9J9kFw800RkLu39OO9F30uhWF8IfhUFLR99ohrhh8h9OwUi9V3ih90L0JKDVJhOR89Ju0KhduUgNII9RN98h0OF0HfhuI9I3KI0k9WI4K8OsV9IhhIFDjhPK0u099hJKuLu84K8hfR0FOUNl0W4I93I9l9VNfDJulj90JUjJ9JL9hR9LI2JVVK9H99hJF89R0kuj3u9090iIF99NIfh0F4UFiwkFHU0S0h80OFioPJ3Ks04HhO9hjsh0oNPuR8LUU08gHu8K20PR9u0Ihj8F9fL3J98L9Jh8320SUI39889uLu8iF0sfIH0i0098l0i9u39IP3020h0FHFO8LIji38oL228842hR4shOU8duu9jdKOIUJ4i09Ohh04uH0sUjI0JH90S8S00w4JDLh0o04O9I30w0k0jj0k00sIh90kId88U0iHlkO80sj9I08LN9Jgj83R4J0h00P9wJ9Ri90fOih9h4kufiiRhFL38Dwh3sO090KOJ802RIhhUh00VK9f8f2Dl00fiF9KPRwwr9hK988KL0Ff98J9Nuu8Nrihf9LFOKu0jLj09JdhsSKHr0URofjUJUKw0JNiJ0ROiJJO9839O4WFhfhoDfIU0j0Ndui008939fIV2SN00J00FJV80VF20LwJNd38jUD0I00hL8F0jf9Ils84KswFUHO0998hu409Jd0Ljjl00Ok8O08jO3hUHKPi89I3J9989998jsrfLu8IhJ0N98hR909OO9UIW3PfU8fK9hhIssI90IINRHhOUh0iJ8j9isJJf0hh89HLfWiNj9h3W3s3urU3oi39hshw08fSL0ih839L4h22oPjUkUl9F03h900FhjViV8u8IH0R9F9kI8iJO9Okw9W0k8329r8JjOh0fKOjOjIU8sKL88h8urjIgrSF9O9hI8340KfI9wJkH0uFhdO9O0u9OU0Jr0IhR3hFJRR8uJ9hhfK98OuJJFS8sNJ90308l3gi8N9uOh9SOUfdU38FIg9393P9VwLN4lhiuFKHRUrsFNfII0oO0OJLDK09wSI3JOrUJ08hfk3UU8u9OiP2Us9P08idOFFODWOH8uikfs80O993j9uL9SNVL9J0F9hsOIuV40R80j0L9d04hh04N8gf0I9R2K3I0ws400uN98089FK8jFW2hLuOf9I999f4RUhi3L0D90JfS0lu8w0800huhSN9VFjHkIuHPFUj0hKhOgiUwSNFN0ouiI80F49h403HRUulLD02J9Wu883302UFjV39Wr9NihJ3FUN8h40K9fLJJjL989wNIH394NF8fhNjsJJfoNLr8udIj8h29UuRLHHhHJUIVJ0Ns943D8Ps8hOhjr00OVjFsj08RFkUj49099UhfKu9sHuLN0oFIhV8i99JJSfH0fs03uwwwS0f90JL0rJ39J9KWjJ9F0I0KNOjhhj4H0IKFFo8r0O0sFN0sOF4uLd9WHih8OuO0o00gffNsU39880NfI09H898U8NUW8ls0ISJ0UD00i0NL990fJuJJP9h0ghIUKIgwIIwh8I8j8FK0w003Hff00F999u98Ou9UI3JhdH9LO2V8dfJso089OHu24W3IFUihViUJOjhiwS98ijhVJIhjL0u30K98FJu0N3sh9uk0RVi23iI0Jjih8fHVl098i8hU899R99Pd8I0S8IDJSIJ8IuurfiW28833040huLj4jiI008huI00SlJ0fUhklF99Hrk2LRIKR2RfhOf8K8fK40Hh98H0wRO8O4L0UPLK4F9wO99OjNL43jf0hD9suuj9uUN9uUuUwWUj009ksUf9L00S930fUU8kR4NUdh38J0H89sf9fLr0LFgJfu0UWJRUjUUH033h0IwK8U8lR0Ul09hLOHOuwg8Rw8Ji9HgKUuHjwuRhIf0h9hKi9f0LHI8IwWNhJOOS9RhOLk9uf29U4KUIRw9JR998wRU43u0i89LifFP8L3P9h338h8Jg48FUu9diUO0PjusJiRIFkhUOV9PF9R3u0g99j9ODFiKK0jO30IROu4O9I3sjku0838W0FgFNDUJ9shu9rW8RgRi00Of9O8hg0P3j8gSK9RS0f9Ui9UshH9uJI89FofIFrjfRhIR90I0fVUh0J00I0FgufJHOdJ9ufhfk9u88IOKKOuLS9kRLfuWl0LIhRI90JJPjh00DsUhlfwUs0iJi8RFRJ9i0g999O09J09KUoJ4whh8i4u9sFu8IO8909Kfgs9j0Oj9O0k8F0Rji9u9o9Lj9j3i98iDlHjIl098IU9N0JkWUh9f0dKdfI40FjjF0Uiwu09JjjUNiFLhssJHVOsws89RS3LI0RROIUIJLwI0U44jUsrJlHjLH043j90hlLlwh0H9lLjUjL98f8L0dfJ9U2FHURH0RJ9KOw3UjF33J0LIJLH8r9h090fOROOwPHHjiiLI0sOR98K0UuUUIKJ0wh00g0JSJW0RiR898Wf8LsWUJ9Luu98Kg40fjUU00899FIJfIUh0880JUOIFWs98Uwu0iu09wFsDORgS0J0uH2I0JF099IIFKFuwdds9U88IUjsUju4hkf8N8N9R9OSuIiuOH9r9lu090jL000VI39fiF9I89f89luD0F980DSO08ihDwj9u0WN9hjSiWHUOorFL034jO8ilOK8kll4L900fRhh9h90hu9O9fuIVN8jw8shsiru9hgf99Vi08jSUW9U088w03FwRu334gO00uPu9gf0f3UlWg090jwSUVHoFO9jNKr8FH0Rsifk8J9djhO9009hIH3f483DHKJIKiHs2sU0JOj9K00hju034NjiIOhsN9sNJjuhhwOHu899lfHNKVgSKO3f8IsfgUkfjr04uh080L3HIKVfIg80H00N0huj9R9OHVRK0LIdjRULu80hU4UJ300OsUIfhUN9IUR8sF0k0fuOP8LhHhLj0W8FUUH0U0u0sh0i0lINfFIUoR3rIw8UJjwJ8Jl3RIl8938j099800WKluuJ9Nh0DI00o480R98JhH89dhFu0IILhsU3i0Jiou0UORjh9OfOHh8r9gLhsU9or3FUksI89FFO0NOwhUKKh3fi8f84RI09jFFhFjO4R0UFuIKg8D03i403Ooi30j40IJ0NU0OLN8wD00u0w3I9O02hhjjirH0j8JJIVN0f29O3HUDjuh3K0ujku0020ikhD8J3W9O9KhUh83R09gLJ9uD99DFhL90rK0FsI0h89w0JDUuflUU40wIo30F8HOgsFRhu80IJh0FdI0U3O883l0wR9IhRV4d99HhO9FhS03dH9902wwD8slV4iNfHHshJN09LIf9f9UF9D8KJ3Hfi3w9K80ffu2FJIKK3u9OiJI90hLLuj3JhiJ0fiJhIhON0foRUO8hhU03RU9LjfFujDN4UVOJ3IKHfo8r0uN9sw3Iuj8D8230VUF82NI39JJ9ofKOu9hjPo4USUOds8joUf8OI8UV0FI9F88Ndrl48f024lLJ3FfjL0KUNfIfONS8j0Rr30H8f2HIoKs8fw94fh8UljhD8Jhr08FRfihh8WVOLIU34sFk9dkN8NV4HWF2h9uhFu03sgKV0j08FiFhI0jrUFf9OJ0huRFU9o99RHhR8Nj0O08h0099Uj0J88oOjwfhUwNijw84ONhhIOsNj99hWh9jPNOK989fOI8oUK2933j38NshRIldUPh9i9S0KOs9OJh4UI400jiiflFu0hiDJ80lwgfdjWkoR9lRhh3su90IK9P0lh0IS3L900dod9ro8099J8sKhrU8UJOs8I03kgHOJIIjhr9HLDOd9999uOh0Ig0fsHk0J8F89J8whh9DJ9NOf3JJILh2kj090P00UKIIuw9P040rUJUU9JihfJHhJ4RU93F02FH9V0Jr933j94JLs9jk9I2ih9RJ4Ig9W0jjIFhhFhkU2LoKH40J8hu0809wwShSK9juI048Nh3rihw8039wFKiPI880usoj84wuL889fJI9uhOFK8l0huhju4Fh9JhLVk38KjJfu0L0h3FNKius90Ff0oji8sUffN9L9sR8RPfIiFPu93jLr889FVHWw0HuuhsdJuJ04U38u80FluILh43UikhUwgh3JKI9R9N0908hHLIJsHSUOI9h8O09ikFIwsKDufW4OIhJ0JNNwj89fIihwO09f3h9U30FK8WHJw9R8fr9IIf0iFN890IU8gh8UNo88u0LI2UHN0U0fUf00V88wiKIFi0U9343WdI0388g02hFI0hwJfHfwsrOHHFIh9sUhhrNK9hjhl0Pj0NIhfjF9J9hihfl9H8DHJuuhIWf0HFLoUN8F3w0IRh3w8N2f03JUN3KRH99849hh34H3hIIw9iD3Hk38ksRRO0ufj3d9wjPh0h9Ui0JkOSJRKjW0FI9i29s8hFIk8SK99H8dWw89UiU0iUR0NK0uk4H9iO98L9ORhR8FPOVfFiIjU8d8VhD9w8sU20LW9NI8jWjUjhwDrhNJF8k3ihjFlU039KLJrN098i8I0UFgIJ09gO9oUNhI0l9iwIlO9UJJ43h4r0OS83uFr03hIjdiP0HJw9hU9dulKO0SFIOJKKOJJ0F98988Ifu8jo9P08S0D0OIl9JJ94Hkh900I9juouUJHNhsjjJK9SWS8FR08rUDK9hPU4OJIFhd3LURhfjufhw9I8LId9JihhV9u00J00R9ki9Dh0899ho9i90HO8rFw0UhJfu8ofoo9lOO0JN0IN0WID2i2R43LI3IfFNj09389hRU0VKLu880uog8Hh98O002sUFN9Uh99j9or8r02OS809909NWroRjKhl9f9IL8490I9kHF0f9u9JO83LJ0h8008j4S0wf9SJ99KhjF0W9DOk0goKhu90HLiJF90kUKgO99JLJ0hh90h0Dfou29kiwVI0h0uHR0H0s98Oh0H9lr9s490JHf9N4089Lih9O0Hhw20khSKKw900F3H0h3iJINU3w9WN08wRd0jRN9UWfO909J00O0ju9FIs99RJ9L300O09g99k8H9UswuWis3H094j9Nd8N8kdoh8rfKL8Io800OSiWIRrH9lR9s8Is40RFI9uF00ur8oou4flN3wd0iw0u0h0L0N9sVw0FULiui9IjI98W4kjlPjo0O0h0OK8Hi33iIju9Ruf309do8SL4dr9FIui0L3Jh88JS3F0JJg999oShNI0fouIN0r9h8HN82Fdu48sNN8449w04hIV0Ur09IJg9RhRUU9rO9080JIP048hwfJsIJ0Hs09l8hh2ff9WifR9luNi4Jj3KdfNR0F4wDuK33u8i2hh3R480H009UsiuUL4N0grf4HJsdU0LP0I0fw9O00O00kO8OIFJ3DhN9u98RH8wh9RPghOoOu9V28JiFdWhF3s0UuJd089fH289L93u8000UoIWKigVhI0g383JU9rl9N43hdJ9NkO8j0lu0hVV90LHSjUF0jj0uh0Ku808Oj20g9NF20w08u4ND0F8D8IVPshHh99932Jo9J880J0SjLwuJHDI9Ju8INRr0H9jK9OU39hsJh3ifh8hUfh0Ihh0FWoHd0OVwHh9gR800f90sf0jVh0I98lFL0OLKhRPhI08jPh40swJiU04j0F3o8JK08ND9048oU9IwOI9h9j8s90f3RPdRi0OdhsUJ3900hFi4owikK8hRUhK8Dh0JlJUILu89f8jO90jDINNW3h9g9UIFLh0IFK4PJ0808hd0l309uDsPgUuHjhlkF00F39WjL02S840Ou3KO3ihNJKoiOOlIWJ9Oo08ufs0s9jSw83L0LVwr9VK0I8wH8F9hjIOJ3V0Fik34w28IFVJwF03W988RNfF9sf0IU0H8Uwhw00F3Ihujhd0UF3I9090s809RrhdfRJNwUrOU0hfR9909ShJ3JhVsUhwJRH0jh3JF2883s80O80Oo3dhj8IJIHFWh00Ff900fWhLhHJj93J8j09J9O0S080uhK80uIN003IfK8RI00fUu8h8jF9s0N80883hH9k89O8j8IFHhSIrVILIOuwgJ0f0h0iou9H089U8290hh8i9I9o900wjsf89O0KU9w3J9020KJiJ0jVI398fJHuJJ4O4O0S9U0hkfJr9FU9f8I0Hhw990Ps4KgO3jPs8sjhF99PJuI08FIWu8fh0jPs03HjfSIK9dL0I8l0fr0N8Fh93u3F9I9skufuh80098gS008u90hiL0uUuII4Rd88JO8gLdsUKw9F9uwiljruLJ0jhiJi4j4F8U88irFjFRJUUhhFhsf0WFu0r40FLhUu9IFWhKHU0P9ji093s0Hj9HiUo00UhfO39N0jShUP900uUdj8i08g0IhIIFijN9DUH3NUHIRLiS9L3ufuU9r0i90VDoL03ODi2lu9hfNl34jFRLKk8JDw83LIh0l902h90LOf80gfK88D9I9fuJLJ9Uu09H3sN0wOhF8kh3IL8hujw9U9F8JdhP9f0j03KUNiVU8IUR8wfhwNd0RIs8J8hrJ0lh8uS0IoOH0ffjR8SUu8H2U00829J0FhRu90h8Olf889Okhr9g9030Nh00grWho93JwuFSoJ9iJRfu8D9hK2JJukURPK29NfhDIHOu28hFjJOSN4NLHgV0Hsu0W0K9jLhfHfFOi0I49u3Ps9d00Kujh8N2hNhLlJNwLwSH098hu0PIFf0j2FLs0I9sNF0HiRi8oUjFjiI8fKNWsUuJO0hIOiuKwhNNj9VOr9P2U8UuuFJ0HwKHjr90PihHWjrRh982fhLR0KFwOj092FdDNiNKhi0j8'
+</span><span class='line'>
+</span><span class='line'># instantiating dynamodb client
+</span><span class='line'>session = boto3_session(region_name='eu-west-1', profile_name='perf')
+</span><span class='line'>dynamodb = session.client('dynamodb')
+</span><span class='line'>
+</span><span class='line'>timestamp = strftime("%Y-%m-%dT-%H:%M")
+</span><span class='line'>results = open('dynamodb-put-results_{}.txt'.format(timestamp), 'a')
+</span><span class='line'>count = 0
+</span><span class='line'>
+</span><span class='line'>for sid in session_ids:
+</span><span class='line'>    count += 1
+</span><span class='line'>    gen_data = ''.join(sample(generated_string, len(generated_string)))
+</span><span class='line'>    sleep(1)
+</span><span class='line'>
+</span><span class='line'>    response = dynamodb.put_item(
+</span><span class='line'>        TableName='ddb-perf-testing',
+</span><span class='line'>        Item={
+</span><span class='line'>            'session_id': {'S': sid },
+</span><span class='line'>            'data': {'S': gen_data },
+</span><span class='line'>            'item_num': {'S': str(count) }
+</span><span class='line'>        }
+</span><span class='line'>    )
+</span><span class='line'>
+</span><span class='line'>    results.write('Call Number: {call_num} \n'.format(call_num=count))
+</span><span class='line'>    results.write('Call ResponseMetadata: {metadata} \n\n'.format(metadata=response['ResponseMetadata']))
+</span><span class='line'>
+</span><span class='line'>results.close()</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Read from the Table(s):</h2>
+
+<ul>
+<li>Read 18KB per second for 3 Hours:</li>
+</ul>
+
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>from boto3 import Session as boto3_session
+</span><span class='line'>from time import sleep, strftime
+</span><span class='line'>from random import choice
+</span><span class='line'>
+</span><span class='line'># delay between each iteration
+</span><span class='line'>iteration_delay = 1
+</span><span class='line'>
+</span><span class='line'># iterations number - 3 hours
+</span><span class='line'>iterations = 10800
+</span><span class='line'>
+</span><span class='line'># session ids that will be fetched in a random.choice order
+</span><span class='line'>session_ids = [
+</span><span class='line'>    '77c81e29-c86a-411e-a5b3-9a8fb3b2595f',
+</span><span class='line'>    'b9a2b8ee-17ab-423c-8dbc-91020cd66097',
+</span><span class='line'>    'cbe01734-c506-4998-8727-45f1aa0de7e3',
+</span><span class='line'>    'e789f69b-420b-4e6d-9095-cd4482820454',
+</span><span class='line'>    'c808a4e6-311e-48d2-b3fd-e9b0602a16ac',
+</span><span class='line'>    '2ddf0416-6206-4c95-b6e5-d88b5325a7b1',
+</span><span class='line'>    'e8157439-95f4-49a9-91e3-d1afc60a812f',
+</span><span class='line'>    'f032115b-b04f-423c-9dfe-e004445b771b',
+</span><span class='line'>    'dd6904c5-b65b-4da4-b0b2-f9e1c5895086',
+</span><span class='line'>    '075e59be-9114-447b-8187-a0acf1b2f127'
+</span><span class='line'>]
+</span><span class='line'>
+</span><span class='line'># instantiating dynamodb client
+</span><span class='line'>session = boto3_session(region_name='eu-west-1', profile_name='perf')
+</span><span class='line'>dynamodb = session.client('dynamodb')
+</span><span class='line'>dynamodb-table = 'ddb-perf-testing'
+</span><span class='line'>
+</span><span class='line'>timestamp = strftime("%Y-%m-%dT-%H:%M")
+</span><span class='line'>results = open('dynamodb-results_{}.txt'.format(timestamp), 'a')
+</span><span class='line'>
+</span><span class='line'>for iteration in range(iterations):
+</span><span class='line'>    count = iteration + 1
+</span><span class='line'>    print(count)
+</span><span class='line'>    sleep(iteration_delay)
+</span><span class='line'>
+</span><span class='line'>    response = dynamodb.get_item(
+</span><span class='line'>        TableName=dynamodb-table,
+</span><span class='line'>        Key={'session_id': {'S': choice(session_ids)}},
+</span><span class='line'>        ConsistentRead=False
+</span><span class='line'>    )
+</span><span class='line'>
+</span><span class='line'>    results.write('Call Number: {cur_iter}/{max_iter} \n'.format(cur_iter=count, max_iter=iterations))
+</span><span class='line'>    results.write('Call Item Response =&gt; Key: {attr_id}, Key Number:{attr_num} \n'.format(attr_id=response['Item']['session_id']['S'], attr_num=response['Item']['item_num']['S']))
+</span><span class='line'>    results.write('Call ResponseMetadata: {metadata} \n\n'.format(metadata=response['ResponseMetadata']))
+</span><span class='line'>
+</span><span class='line'>results.close()</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Results</h2>
+
+<p><img src="https://cdn.pbrd.co/images/Hp8NsH8.png" alt="" /></p>
+
+<h2>Notes from AWS Support:</h2>
+
+<p>Reasons for High Latencies:</p>
+
+<ul>
+<li>RequestLatency is a Server Side Metric</li>
+<li>Long requests could relate to metadata lookups</li>
+<li>Executing Relative Low Amount of Requests there is Frequent Metadata Lookups; This may cause a spike in latency</li>
+<li>Consistent Requests can have higher average latency then Eventual Consistent Reads</li>
+<li>Requests in general can encounter higher then normal latency at times, due to network issue, storage node issue, metadata issue.</li>
+<li>The p90 should still be single digit</li>
+<li>Using Encryption has to interact with KMS API as well (mechanisms in place to deal with KMS integration though to still offer p90 under 10 ms)</li>
+<li>DAX: Strongly consistent reads will be passed on to DynamoDB and not handled by the cache</li>
+<li>1 RCU reading in Eventual Consistent manner can read 8 kb</li>
+<li>Consistent read costs double an eventual consistent read</li>
+<li>DDB not 100% of requests will be under 10 ms</li>
+</ul>
+
+
+<p>Resources:
+- <a href="https://aws.amazon.com/blogs/developer/tuning-the-aws-sdk-for-java-to-improve-resiliency/">https://aws.amazon.com/blogs/developer/tuning-the-aws-sdk-for-java-to-improve-resiliency/</a>
+- <a href="https://aws.amazon.com/blogs/developer/enabling-metrics-with-the-aws-sdk-for-java/">https://aws.amazon.com/blogs/developer/enabling-metrics-with-the-aws-sdk-for-java/</a>
+- <a href="https://en.wikipedia.org/wiki/Eventual_consistency">https://en.wikipedia.org/wiki/Eventual_consistency</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2690,401 +2982,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/08/09/ruby-tutorial-series-setup-and-variables/">Ruby Tutorial Series Setup and Variables</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-08-09T21:11:52-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>9</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>9:11 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/ruby-variables-logo.png" alt="" /></p>
-
-<p>In this post we will setup our Ruby environment, then start printing out values to the console and will also be touching on variables.</p>
-
-<h2>Ruby Environment:</h2>
-
-<p>I have a Docker image built on Alpine, the resources can be found via:</p>
-
-<ul>
-<li><a href="https://hub.docker.com/r/rbekker87/alpine-ruby">DockerHub</a></li>
-<li><a href="https://github.com/ruanbekker/dockerhub-sources/blob/master/alpine-ruby/Dockerfile">GitHub</a></li>
-</ul>
-
-
-<p>To setup a Ruby environment on your workstation, I would recommend using <a href="https://github.com/rbenv/rbenv">https://github.com/rbenv/rbenv</a>.</p>
-
-<h2>Drop into a Ruby Shell:</h2>
-
-<p>I will be using Docker to drop into a ruby container:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -it rbekker87/alpine-ruby:2.5 sh
-</span><span class='line'>
-</span><span class='line'>       ______       _____
-</span><span class='line'>______ ___  /__________<span class="o">(</span>_<span class="o">)</span>___________
-</span><span class='line'>_  __ <span class="sb">`</span>/_  /___  __ <span class="se">\_</span>  /__  __ <span class="se">\ </span> _ <span class="se">\</span>
-</span><span class='line'>/ /_/ /_  / __  /_/ /  / _  / / /  __/
-</span><span class='line'><span class="se">\_</span>_,_/ /_/  _  .___//_/  /_/ /_/<span class="se">\_</span>__/
-</span><span class='line'>            /_/
-</span><span class='line'>
-</span><span class='line'>Alpine Build:
-</span><span class='line'>Container Hostname: 8a4dfc590dd0
-</span><span class='line'>Checkout my Docker Blogs:
-</span><span class='line'>- https://sysadmins.co.za/tag/docker
-</span><span class='line'>- http://blog.ruanbekker.com/blog/categories/docker
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>irb
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:001:0&gt;
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you have the <code>irb</code> output, you should be good to go.</p>
-
-<h2>Strings and Integers</h2>
-
-<p>You will find when you enter a string, which is represented as one or more characters enclosed within quotation marks:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:001:0&gt; <span class="s2">&quot;hello&quot;</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;hello&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The integers will be without the quotation marks, when we introduce anything within quotation marks, ruby will read it as a string. So for a integer, lets provide ruby with a number and the number will be returned to the shell:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:002:0&gt; <span class="nv">1</span>
-</span><span class='line'><span class="o">=</span>&gt; 1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Using mathematical symbols like the <code>+</code> will either sum the two values when they are integers, or concatenate when they are strings.</p>
-
-<p>Let&rsquo;s start with strings: we will add the string <code>hello</code> and <code>world</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:003:0&gt; <span class="s2">&quot;hello&quot;</span> + <span class="s2">&quot;world&quot;</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;helloworld&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now let&rsquo;s add two numbers together, <code>10</code> and <code>20</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:004:0&gt; <span class="m">10</span> + <span class="nv">20</span>
-</span><span class='line'><span class="o">=</span>&gt; 30
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see, it did a calculation on the two numbers as they were treated as integeres. But what happens when we add them as strings?</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:005:0&gt; <span class="s2">&quot;10&quot;</span> + <span class="s2">&quot;20&quot;</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;1020&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Adding them as strings, will concatenate them.</p>
-
-<h2>String Methods</h2>
-
-<p>Ruby&rsquo;s strings has many built in methods, which makes it convenient manipulating data, let me go through a couple that I am working with:</p>
-
-<p>Getting the length of the string:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:006:0&gt; <span class="s2">&quot;hello&quot;</span>.length
-</span><span class='line'>5
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Is the string empty?</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:007:0&gt; <span class="s2">&quot;hello&quot;</span>.empty?
-</span><span class='line'><span class="o">=</span>&gt; <span class="nb">false</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Getting the index position of 0 of the string:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:008:0&gt; <span class="s2">&quot;hello&quot;</span><span class="o">[</span>0<span class="o">]</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;h&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Getting a array of your string:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:009:0&gt; <span class="s2">&quot;hello&quot;</span>.chars
-</span><span class='line'><span class="o">=</span>&gt; <span class="o">[</span><span class="s2">&quot;h&quot;</span>, <span class="s2">&quot;e&quot;</span>, <span class="s2">&quot;l&quot;</span>, <span class="s2">&quot;l&quot;</span>, <span class="s2">&quot;o&quot;</span><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Returning your string in Uppercase:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:010:0&gt; <span class="s2">&quot;hello&quot;</span>.upcase
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;HELLO&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Returning your string in Lowercase:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:011:0&gt; <span class="s2">&quot;HELLO&quot;</span>.downcase
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;hello&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Capitalize your String:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:012:0&gt; <span class="s2">&quot;hello&quot;</span>.capitalize
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;Hello&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Swap the case of your string:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:013:0&gt; <span class="s2">&quot;Hello&quot;</span>.swapcase
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;hELLO&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Variables</h2>
-
-<p>Let&rsquo;s define variables to the static content that we used above.</p>
-
-<p>Let&rsquo;s define our key: <code>word</code> to the value: of <code>hello, world</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:019:0&gt; <span class="nv">word</span> <span class="o">=</span> <span class="s2">&quot;hello, world&quot;</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;hello, world&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Accessing the variables value:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:020:0&gt; <span class="nv">word</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;hello, world&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can also use <code>puts</code>, which stands for <code>put string</code>, which prints out the value to the terminal:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:021:0&gt; puts word
-</span><span class='line'>hello, world
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can also, format our variable so that we can add something like a exclamation mark:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:022:0&gt; puts <span class="s2">&quot;#{word}!&quot;</span>
-</span><span class='line'>hello, world!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s do the same with integers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:023:0&gt; <span class="nv">num_1</span> <span class="o">=</span> <span class="nv">10</span>
-</span><span class='line'><span class="o">=</span>&gt; 10
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:024:0&gt; <span class="nv">num_2</span> <span class="o">=</span> <span class="nv">20</span>
-</span><span class='line'><span class="o">=</span>&gt; 20
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when we calculate the numbers using variables, you will find the expected result of 30:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:025:0&gt; num_1 + <span class="nv">num_2</span>
-</span><span class='line'><span class="o">=</span>&gt; 30
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>or:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:026:0&gt; num_1 + num_2
-</span><span class='line'>puts <span class="s2">&quot;#{num_1 + num_2}&quot;</span>
-</span><span class='line'>30
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Variables are Mutable:</h2>
-
-<p>Remember that variables are mutable, so they can be changed after they have been set, lets take age for example:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:027:0&gt; <span class="nv">age</span> <span class="o">=</span> 20
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:028:0&gt; puts age
-</span><span class='line'>20
-</span><span class='line'>
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:029:0&gt; <span class="nv">age</span> <span class="o">=</span> 22
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:030:0&gt; puts age
-</span><span class='line'>22
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Strings and Integers:</h2>
-
-<p>What happens when we add strings and integers together in one line:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:038:0&gt; <span class="nv">name</span> <span class="o">=</span> <span class="s2">&quot;ruan&quot;</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;ruan&quot;</span>
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:039:0&gt; <span class="nv">id</span> <span class="o">=</span> <span class="nv">120398</span>
-</span><span class='line'><span class="o">=</span>&gt; 120398
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:040:0&gt; puts <span class="s2">&quot;#{name + id}&quot;</span>
-</span><span class='line'>Traceback <span class="o">(</span>most recent call last<span class="o">)</span>:
-</span><span class='line'>        3: from /usr/bin/irb:11:in <span class="sb">`</span>&lt;main&gt;<span class="s1">&#39;</span>
-</span><span class='line'><span class="s1">        2: from (irb):40</span>
-</span><span class='line'><span class="s1">        1: from (irb):40:in `+&#39;</span>
-</span><span class='line'>TypeError <span class="o">(</span>no implicit conversion of Integer into String<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That is because we cant concatenate strings with integers, so we will need to convert the integer to a string, we do that with the <code>to_s</code> method:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:041:0&gt; puts <span class="s2">&quot;#{name + id.to_s}&quot;</span>
-</span><span class='line'>ruan120398
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And if we want to define that to a variable:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:042:0&gt; <span class="nv">userid</span> <span class="o">=</span> <span class="s2">&quot;#{name + id.to_s}&quot;</span>
-</span><span class='line'>irb<span class="o">(</span>main<span class="o">)</span>:043:0&gt; <span class="nv">userid</span>
-</span><span class='line'><span class="o">=</span>&gt; <span class="s2">&quot;ruan120398&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Working with rb files:</h2>
-
-<p>We can add this together in a file with a <code>.rb</code> extension and call the file as an argument with ruby, as a script:</p>
-
-<p>Create the file, in my case <code>test.rb</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>vim test.rb
-</span></code></pre></td></tr></table></div></figure>
-
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="n">user</span> <span class="o">=</span> <span class="s2">&quot;ruan&quot;</span>
-</span><span class='line'><span class="n">idnumber</span> <span class="o">=</span> <span class="mi">23049823</span>
-</span><span class='line'><span class="n">userid</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="si">#{</span><span class="n">user</span> <span class="o">+</span> <span class="n">idnumber</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="nb">puts</span> <span class="s2">&quot;</span><span class="si">#{</span><span class="n">userid</span><span class="si">}</span><span class="s2">&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Running the ruby file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ruby test.rb
-</span><span class='line'>ruan23049823
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.digitalocean.com/community/tutorials/how-to-work-with-string-methods-in-ruby">1</a></li>
-<li><a href="https://learnrubythehardway.org/book/ex3.html">2</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/20">&larr; Older</a>
@@ -3135,6 +3032,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/08/01/task-runner-with-yaml-config-written-in-go/">Task Runner With YAML Config Written in Go</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/07/31/basic-logging-with-python/">Basic Logging With Python</a>
       </li>
     
@@ -3148,10 +3049,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/05/03/setup-a-crypto-digibyte-full-node-on-linux/">Setup a Crypto Digibyte Full Node on Linux</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a>
       </li>
     
   </ul>

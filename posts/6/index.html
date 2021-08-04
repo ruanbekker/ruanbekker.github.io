@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial we will setup a site to site ipsec vpn with strongswan and we will enable each server to discover the other vpn server via dynamic &hellip;">
+  <meta name="description" content="In this post we will setup a nginx log exporter for prometeus to get metrics of our nginx web server, such as number of requests per method, status &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,470 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/04/25/nginx-metrics-on-prometheus-with-the-nginx-log-exporter/">Nginx Metrics on Prometheus With the Nginx Log Exporter</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-04-25T01:42:35+02:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>25</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>1:42 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post we will setup a nginx log exporter for prometeus to get metrics of our nginx web server, such as number of requests per method, status code, processed bytes etc. Then we will configure prometheus to scrape our nginx metric endpoint and also create a basic dashbaord to visualize our data.</p>
+
+<p>If you follow along on this tutorial, it assumes that you have <a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Prometheus</a> and <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana</a> up and running. But if not the embedded links will take you to the blog posts to set it up.</p>
+
+<h2>Nginx Webserver</h2>
+
+<p>Install nginx:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update
+</span><span class='line'>$ apt install nginx -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure your nginx server&rsquo;s log format to match the nginx log exporter&rsquo;s expected format, we will name it custom:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>  log_format custom   '$remote_addr - $remote_user [$time_local] '
+</span><span class='line'>                      '"$request" $status $body_bytes_sent '
+</span><span class='line'>                      '"$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Edit your main nginx config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/nginx/nginx.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This is how my complete config looks like:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>user www-data;
+</span><span class='line'>worker_processes auto;
+</span><span class='line'>pid /run/nginx.pid;
+</span><span class='line'># remote the escape char if you are going to use this config
+</span><span class='line'>include /etc/nginx/modules-enabled/\*.conf;
+</span><span class='line'>
+</span><span class='line'>events {
+</span><span class='line'>  worker_connections 768;
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>http {
+</span><span class='line'>
+</span><span class='line'>  # basic config
+</span><span class='line'>  sendfile on;
+</span><span class='line'>  tcp_nopush on;
+</span><span class='line'>  tcp_nodelay on;
+</span><span class='line'>  keepalive_timeout 65;
+</span><span class='line'>  types_hash_max_size 2048;
+</span><span class='line'>  include /etc/nginx/mime.types;
+</span><span class='line'>  default_type application/octet-stream;
+</span><span class='line'>
+</span><span class='line'>  # ssl config
+</span><span class='line'>  ssl_protocols TLSv1 TLSv1.1 TLSv1.2; 
+</span><span class='line'>  ssl_prefer_server_ciphers on;
+</span><span class='line'>
+</span><span class='line'>  # logging config
+</span><span class='line'>  log_format custom   '$remote_addr - $remote_user [$time_local] '
+</span><span class='line'>                      '"$request" $status $body_bytes_sent '
+</span><span class='line'>                      '"$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
+</span><span class='line'>
+</span><span class='line'>  access_log /var/log/nginx/access.log custom;
+</span><span class='line'>  error_log /var/log/nginx/error.log;
+</span><span class='line'>
+</span><span class='line'>  # gzip
+</span><span class='line'>  gzip on;
+</span><span class='line'>
+</span><span class='line'>  # virtual host config
+</span><span class='line'>  include /etc/nginx/conf.d/myapp.conf;
+</span><span class='line'>
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I will delete the default host config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ rm -rf /etc/nginx/sites-enabled/default</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And then create my <code>/etc/nginx/conf.d/myapp.conf</code> as referenced in my main config, with the following:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>server {
+</span><span class='line'>
+</span><span class='line'>  listen 80 default_server;
+</span><span class='line'>  # remove the escape char if you are going to use this config
+</span><span class='line'>  server_name \_;
+</span><span class='line'>
+</span><span class='line'>  root /var/www/html;
+</span><span class='line'>  index index.html index.htm index.nginx-debian.html;
+</span><span class='line'>
+</span><span class='line'>  location / {
+</span><span class='line'>    try_files $uri $uri/ =404;
+</span><span class='line'>  }
+</span><span class='line'>
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you make a GET request to your server, you should see something like this in your access log:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>10x.1x.2x.1x - - [25/Apr/2020:00:31:11 +0000] "GET / HTTP/1.1" 200 396 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1 Safari/605.1.15" "-"</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Nginx Log Exporter</h2>
+
+<p>Head over to the <a href="https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases">prometheus-nginxlog-exporter releases</a> page and get the latest version, in the time of writing it is v1.4.0:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v1.4.0/prometheus-nginxlog-exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Make it executable and move it to your path:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x prometheus-nginxlog-exporter
+</span><span class='line'>$ mv prometheus-nginxlog-exporter /usr/bin/prometheus-nginxlog-exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the directory where we will place our config for our exporter:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /etc/prometheus</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the config file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/prometheus/nginxlog_exporter.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can follow the instructions from <a href="https://github.com/martin-helmich/prometheus-nginxlog-exporter">github.com/prometheus-nginxlog-exporter</a> for more information on configuration, but I will be using the following config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>listen:
+</span><span class='line'>  port: 4040
+</span><span class='line'>  address: "0.0.0.0"
+</span><span class='line'>
+</span><span class='line'>consul:
+</span><span class='line'>  enable: false
+</span><span class='line'>
+</span><span class='line'>namespaces:
+</span><span class='line'>  - name: myapp
+</span><span class='line'>    format: "$remote_addr - $remote_user [$time_local] \"$request\" $status $body_bytes_sent \"$http_referer\" \"$http_user_agent\" \"$http_x_forwarded_for\""
+</span><span class='line'>    source:
+</span><span class='line'>      files:
+</span><span class='line'>        - /var/log/nginx/access.log
+</span><span class='line'>    labels:
+</span><span class='line'>      service: "myapp"
+</span><span class='line'>      environment: "production"
+</span><span class='line'>      hostname: "myapp.example.com"
+</span><span class='line'>    histogram_buckets: [.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the systemd unit file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/systemd/system/nginxlog_exporter.service</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And my configuration that I will be using:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>[Unit]
+</span><span class='line'>Description=Prometheus Log Exporter
+</span><span class='line'>Wants=network-online.target
+</span><span class='line'>After=network-online.target
+</span><span class='line'>
+</span><span class='line'>[Service]
+</span><span class='line'>User=root
+</span><span class='line'>Group=root
+</span><span class='line'>Type=simple
+</span><span class='line'>ExecStart=/usr/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus/nginxlog_exporter.yml
+</span><span class='line'>
+</span><span class='line'>[Install]
+</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload systemd and enable the service on boot:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl daemon-reload
+</span><span class='line'>$ systemctl enable nginxlog_exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart the service:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart nginxlog_exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure that the service is running:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl status nginxlog_exporter
+</span><span class='line'>
+</span><span class='line'>● nginxlog_exporter.service - Prometheus Log Exporter
+</span><span class='line'>   Loaded: loaded (/etc/systemd/system/nginxlog_exporter.service; disabled; vendor preset: enabled)
+</span><span class='line'>   Active: active (running) since Sat 2020-04-25 00:50:06 UTC; 5s ago
+</span><span class='line'> Main PID: 4561 (prometheus-ngin)
+</span><span class='line'>    Tasks: 7 (limit: 2317)
+</span><span class='line'>   CGroup: /system.slice/nginxlog_exporter.service
+</span><span class='line'>           └─4561 /usr/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus/nginxlog_exporter.yml
+</span><span class='line'>
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter systemd[1]: Started Prometheus Log Exporter.
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: loading configuration file /etc/prometheus/nginxlog_exporter.yml
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: using configuration {Listen:{Port:4040 Address:0.0.0.0} Consul:{Enable:false Address: Datacenter: Scheme: Toke
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: starting listener for namespace myapp
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: running HTTP server on address 0.0.0.0:4040
+</span><span class='line'>Apr 25 00:50:06 nginx-log-exporter prometheus-nginxlog-exporter[4561]: 2020/04/25 00:50:06 Seeked /var/log/nginx/access.log - &{Offset:0 Whence:2}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test the exporter</h2>
+
+<p>Make a couple of requests against your webserver:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ for each in {1..10}; do curl http://78.141.211.49 ; done</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So prometheus will now scrape the exporter http endpoint (<code>:4040/metrics</code>) and push the returned values into prometheus. But to get a feel on how the metrics look like, make a request to the metrics endpoint:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://localhost:4040/metrics
+</span><span class='line'>...
+</span><span class='line'># HELP myapp_http_response_count_total Amount of processed HTTP requests
+</span><span class='line'># TYPE myapp_http_response_count_total counter
+</span><span class='line'>myapp_http_response_count_total{environment="production",hostname="myapp.example.com",method="GET",service="myapp",status="200"} 10
+</span><span class='line'>myapp_http_response_count_total{environment="production",hostname="myapp.example.com",method="POST",service="myapp",status="404"} 1
+</span><span class='line'># HELP myapp_http_response_size_bytes Total amount of transferred bytes
+</span><span class='line'># TYPE myapp_http_response_size_bytes counter
+</span><span class='line'>myapp_http_response_size_bytes{environment="production",hostname="myapp.example.com",method="GET",service="myapp",status="200"} 6120
+</span><span class='line'>myapp_http_response_size_bytes{environment="production",hostname="myapp.example.com",method="POST",service="myapp",status="404"} 152
+</span><span class='line'># HELP myapp_parse_errors_total Total number of log file lines that could not be parsed
+</span><span class='line'># TYPE myapp_parse_errors_total counter
+</span><span class='line'>myapp_parse_errors_total 0
+</span><span class='line'>...</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see we are getting metrics such as response count total, response size, errors, etc.</p>
+
+<h2>Configure Prometheus</h2>
+
+<p>Let&rsquo;s configure prometheus to scrape this endpoint. Head over to your prometheus instance, and edit your prometheus config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /etc/prometheus/prometheus.yml</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note that in my config I have 2 endpoints that I am scraping, the prometheus endpoint which exists and I will be adding the nginx endpoint, so in full, this is how my config will look like:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>global:
+</span><span class='line'>  scrape_interval: 15s
+</span><span class='line'>
+</span><span class='line'>scrape_configs:
+</span><span class='line'>  - job_name: 'prometheus'
+</span><span class='line'>    scrape_interval: 5s
+</span><span class='line'>    static_configs:
+</span><span class='line'>      - targets: ['localhost:9090']
+</span><span class='line'>
+</span><span class='line'>  - job_name: 'nginx'
+</span><span class='line'>    scrape_interval: 15s
+</span><span class='line'>    static_configs:
+</span><span class='line'>      - targets: ['ip.of.nginx.exporter:4040']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart prometheus:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart prometheus</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To verify that the exporter is working as expected, head over to your prometheus ui on port 9090, and query <code>up{}</code> to see if your exporters are returning 1:</p>
+
+<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/80267654-7b51be00-86a2-11ea-98e2-a48a5c2a1e4f.png"></p>
+
+<p>We can then query prometheus with <code>myapp_http_response_count_total{service="myapp"}</code> to see the response counts:</p>
+
+<p><img width="1273" alt="image" src="https://user-images.githubusercontent.com/567298/80267823-590c7000-86a3-11ea-9098-28e37e7941d7.png"></p>
+
+<h2>Dashboarding in Grafana</h2>
+
+<p>If you don&rsquo;t have Grafana installed, you can look at my <a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana Installation</a> post to get that up and running.</p>
+
+<p>If you have not created the Prometheus datasource, on Grafana, head over to the configuration section on your left, select Datasources, add a Prometheus datasource and add the following (this is assuming grafana runs on the prometheus node - which is fine for testing):</p>
+
+<p><img width="592" alt="image" src="https://user-images.githubusercontent.com/567298/80267986-48a8c500-86a4-11ea-9046-3fba601d41cf.png"></p>
+
+<p>Create a new dashboard and add a new panel:</p>
+
+<p><img width="605" alt="image" src="https://user-images.githubusercontent.com/567298/80267884-b3a5cc00-86a3-11ea-8624-797e5310de80.png"></p>
+
+<p>Let&rsquo;s query our data to show us HTTP Method and Status code per 30s: <code>rate(myapp_http_response_count_total{service="myapp"}[$__interval])</code></p>
+
+<p><img width="1271" alt="image" src="https://user-images.githubusercontent.com/567298/80269073-e607f700-86ac-11ea-8d42-4814084dfb4a.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Hope you found this helpful, if you haven&rsquo;t seen my other posts on Prometheus, have a look at the following:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Prometheus</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Setup Grafana</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Setup Node Exporter</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Setup Blackbox Exporter</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Setup Alertmanager</a></li>
+<li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Setup Pushgateway</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2849,198 +3313,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/02/01/setup-thanos-on-docker-a-highly-available-prometheus/">Setup Thanos on Docker: A Highly Available Prometheus</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-02-01T01:28:12+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>1</span><span class='date-suffix'>st</span>, <span class='date-year'>2020</span></span> <span class='time'>1:28 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Today we will look at Thanos, a open source, highly available prometheus setup with long term storage capabilites, that we will run on docker to simplify the setup.</p>
-
-<p>Note that running this proof of concept does not make it highly available as we will run everything on one host, but it will give you a feel what Thanos is about. In a future post, I will setup Thanos in a multi node environment.</p>
-
-<h2>Prometheus</h2>
-
-<p>If you are not familiar with <a href="https://prometheus.io">Prometheus</a>, then have a look at their documentation, but in short, prometheus is a open source monitoring system and time series database developed by soundcloud.</p>
-
-<p>Prometheus is a monitoring system includes a rich, multidimensional data model, a concise and powerful query language called PromQL, an efficient embedded timeseries database, and over 150 integrations with third-party systems.</p>
-
-<h2>Thanos</h2>
-
-<p>Thanos is a highly available prometheus setup with long term storage capabilities.</p>
-
-<p>Thanos allows you to ship your data to S3/Minio for long storage capabilites, so you could for example only store your &ldquo;live&rdquo; data on prometheus for 2 weeks, then everything older than that gets sent to object storage such as amazon s3 or minio. This helps your prometheus instance not to be flooded with data or prevents you from running out of storage space. The nice thing is, when you query for data older than 2 weeks, it will fetch the data from object storage.</p>
-
-<p>Thanos has a global query view, which essentially means you can query your prometheus metrics from one endpoint backed by multiple prometheus servers or cluster.</p>
-
-<p>You can still use the same tools such as Grafana as it utilizes the same Prometheus Query API.</p>
-
-<p>Thanos provides downsampling and compaction, so that you downsample your historical data for massive query speedup when querying large time ranges.</p>
-
-<h2>Thanos Components</h2>
-
-<p>Thanos is a clustered system of components which can be categorized as follows:</p>
-
-<ul>
-<li><p>Metric sources</p>
-
-<ul>
-<li>Thanos provides two components that act as data sources: Prometheus Sidecar and Rule Nodes</li>
-<li>Sidecar implements gRPC service on top of Prometheus</li>
-<li>Rule Node directly implements it on top of the Prometheus storage engine it is running</li>
-<li>Data sources that persist their data for long term storage, do so via the Prometheus 2.0 storage engine</li>
-<li>Storage engine periodically produces immutable blocks of data for a fixed time range</li>
-<li>A blocks top-level directory includes chunks, index and meta.json files</li>
-<li>Chunk files hold a few hundred MB worth of chunks each</li>
-<li>The index file holds all information needed to lookup specific series by their labels and the positions of their chunks.</li>
-<li>The <code>meta.json</code> file holds metadata about block like stats, time range, and compaction level</li>
-</ul>
-</li>
-<li><p>Stores</p>
-
-<ul>
-<li>A Store Node acts as a Gateway to block data that is stored in an object storage bucket</li>
-<li>It implements the same gRPC API as Data Sources to provide access to all metric data found in the bucket</li>
-<li>Continuously synchronizes which blocks exist in the bucket and translates requests for metric data into object storage requests</li>
-<li>Implements various strategies to minimize the number of requests to the object storage</li>
-<li>Prometheus 2.0 storage layout is optimized for minimal read amplification</li>
-<li>At this time of writing, only index data is cached</li>
-<li>Stores and Data Sources are the same, store nodes and data sources expose the same gRPC Store API</li>
-<li>Store API allows to look up data by a set of label matchers and a time range</li>
-<li>It then returns compressed chunks of samples as they are found in the block data</li>
-<li>So it&rsquo;s purely a data retrieval API and does not provide complex query execution</li>
-</ul>
-</li>
-<li><p>Query Layer</p>
-
-<ul>
-<li>Queriers are stateless and horizontally scalable instances that implement PromQL on top of the Store APIs exposed in the cluster</li>
-<li>Queriers participate in the cluster to be able to resiliently discover all data sources and store nodes</li>
-<li>Rule nodes in return can discover query nodes to evaluate recording and alerting rules</li>
-<li>Based on the metadata of store and source nodes, they attempt to minimize the request fanout to fetch data for a particular query</li>
-<li>The only scalable components of Thanos is the query nodes as none of the Thanos components provide sharding</li>
-<li>Scaling of storage capacity is ensured by relying on an external object storage system</li>
-<li>Store, rule, and compactor nodes are all expected to scale significantly within a single instance or high availability pair</li>
-</ul>
-</li>
-</ul>
-
-
-<p>The information from above was retrieved from their <a href="https://thanos.io/design.md/">website</a>, feel free to check them out if you want to read more on the concepts of thanos.</p>
-
-<p>The Architecture Overview of Thanos looks like this:</p>
-
-<p><img src="https://github.com/thanos-io/thanos/blob/master/docs/img/arch.jpg?raw=true" alt="" /></p>
-
-<h2>What are we doing today</h2>
-
-<p>We will setup a Thanos Cluster with Minio, Node-Exporter, Grafana on Docker. Our Thanos setup will consist of 3 prometheus containers, each one running with a sidecar container, a store container, 2 query containers, then we have the remotewrite and receive containers which node-exporter will use to ship its metrics to.</p>
-
-<p>The minio container will be used as our long-term storage and the mc container will be used to initialize the storage bucket which is used by thanos.</p>
-
-<h2>Deploy the Cluster</h2>
-
-<p>Below is the docker-compose.yml and the script to generate the configs for thanos:</p>
-
-<script src="https://gist.github.com/ruanbekker/acd1b17d3aea4c71031e72dfc8ebbb4d.js"></script>
-
-
-<p>Once you have saved the compose as <code>docker-compose.yml</code> and the script as <code>configs.sh</code> you can create the configs:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ bash configs.sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The script from above creates the data directory and place all the configs that thanos will use in there. Next deploy the thanos cluster:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose -f docker-compose.yml up</span></code></pre></td></tr></table></div></figure>
-
-
-<p>It should look something like this:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose -f docker-compose.yml up
-</span><span class='line'>Starting node-exporter ... done
-</span><span class='line'>Starting minio         ... done
-</span><span class='line'>Starting grafana        ... done
-</span><span class='line'>Starting prometheus0    ... done
-</span><span class='line'>Starting prometheus1     ... done
-</span><span class='line'>Starting thanos-receive  ... done
-</span><span class='line'>Starting thanos-store    ... done
-</span><span class='line'>Starting prometheus2     ... done
-</span><span class='line'>Starting mc             ... done
-</span><span class='line'>Starting thanos-sidecar0 ... done
-</span><span class='line'>Starting thanos-sidecar1     ... done
-</span><span class='line'>Starting thanos-sidecar2     ... done
-</span><span class='line'>Starting thanos-remote-write ... done
-</span><span class='line'>Starting thanos-query1       ... done
-</span><span class='line'>Starting thanos-query0       ... done
-</span><span class='line'>Attaching to node-exporter, minio, grafana, mc, prometheus0, prometheus1, thanos-store, prometheus2, thanos-receive, thanos-sidecar0, thanos-sidecar1, thanos-sidecar2, thanos-remote-write, thanos-query0, thanos-query1</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Access the Query UI, which looks identical to the Prometheus UI:
-- <a href="http://localhost:10904/graph">http://localhost:10904/graph</a></p>
-
-<p>It will look more or less like this:</p>
-
-<p><img width="1280" alt="image" src="https://user-images.githubusercontent.com/567298/73583506-4e26b280-449b-11ea-96ca-9b0cefec0acd.png"></p>
-
-<p>When we access minio on:
-- <a href="http://localhost:9000/minio">http://localhost:9000/minio</a></p>
-
-<p>And under the thanos bucket you will see the objects being persisted:</p>
-
-<p><img width="1278" alt="image" src="https://user-images.githubusercontent.com/567298/73583542-7ca48d80-449b-11ea-955c-7b1e766229a3.png"></p>
-
-<p>When we access grafana on:
-- <a href="http://localhost:3000/">http://localhost:3000/</a></p>
-
-<p>Select datasources, add a prometheus datasource and select the endpoint: <code>http://query0:10904</code>, which should look like this:</p>
-
-<p><img width="618" alt="image" src="https://user-images.githubusercontent.com/567298/73583601-d73de980-449b-11ea-9a71-c94e8184336f.png"></p>
-
-<p>When we create a dashboard, you can test a query with <code>thanos_sidecar_prometheus_up</code> and it should look something like this:</p>
-
-<p><img width="1279" alt="image" src="https://user-images.githubusercontent.com/567298/73583684-49aec980-449c-11ea-97bd-35145ff8330c.png"></p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -3091,6 +3363,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/08/04/how-to-specify-wallet-name-in-bitcoin-core-walletnotify/">How to Specify Wallet Name in Bitcoin Core Walletnotify</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/08/02/aws-ec2-linux-warning-setlocale-lc-ctype-cannot-change-locale-utf-8/">AWS EC2 Linux - Warning: Setlocale: LC_CTYPE: Cannot Change Locale UTF-8</a>
       </li>
     
@@ -3104,10 +3380,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/07/31/difference-with-ecs-task-and-execution-iam-roles-on-aws/">Difference With ECS Task and Execution IAM Roles on AWS</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/07/12/install-java-11-and-maven-on-ubuntu-linux/">Install Java 11 and Maven on Ubuntu Linux</a>
       </li>
     
   </ul>

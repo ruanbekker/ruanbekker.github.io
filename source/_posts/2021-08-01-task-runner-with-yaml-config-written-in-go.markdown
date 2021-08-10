@@ -53,15 +53,39 @@ For more information check the installation page:
 
 Task uses a default config file: `Taskfile.yml` in the current working directory where you can provide context on what your tasks should do.
 
-For a basic hello-world example, this task `helloworld` will echo out `hello, world!`:
+To generate a `Taskfile.yml` with example config, task gives us a `--init` flag to generate a sample.
+
+For a basic hello-world example, our task `helloworld` will echo out `hello, world!`. To generate the sample code, run:
+
+```bash
+task --init
+```
+
+Then update the config, to the following:
 
 ```yaml
 version: '3'
 
 tasks:
   helloworld:
+    desc: prints out hello world message
     cmds:
       - echo "hello, world!"
+```
+
+To demonstrate what the config means:
+
+* `tasks`: refers to the list of tasks
+* `helloworld`: is the task name
+* `desc`: describes the task, useful for listing tasks
+* `cmds`: the commands that the task will execute 
+
+To list all our tasks for our taskfile:
+
+```bash
+$ task --list
+task: Available tasks for this project:
+* helloworld: 	prints out hello world message
 ```
 
 Which we call using the application `task` with the argument of the task name:
@@ -69,6 +93,26 @@ Which we call using the application `task` with the argument of the task name:
 ```bash
 $ task helloworld
 task: [helloworld] echo "hello, world!"
+hello, world!
+```
+
+We can also reduce the output verbosity using `silent`:
+
+```yaml
+version: '3'
+
+tasks:
+  helloworld:
+    desc: prints out hello world message
+    cmds:
+      - echo "hello, world!"
+    silent: true
+```
+
+Which will result in:
+
+```bash
+$ task helloworld
 hello, world!
 ```
 
@@ -169,6 +213,29 @@ Then you should see your environment variables referenced from the `.env` file:
 $ task helloworld
 task: [helloworld] echo "hello, $WORD!"
 hello, world!
+```
+
+We can also reference config using `vars`:
+
+```yaml
+version: '3'
+
+vars:
+  GREETING: Hello, World!
+
+tasks:
+  default:
+    desc: prints out a message
+    cmds:
+      - echo "{{.GREETING}}"
+```
+
+In this case our task name is `default`, therefore we can only run `task` without any arguments, as default with be the default task:
+
+```
+$ task
+task: [default] echo "Hello, World!"
+Hello, World!
 ```
 
 To run both tasks with one command, you can specify dependencies, so if we define a task with zero commands but just dependencies, it will call those tasks and execute them:

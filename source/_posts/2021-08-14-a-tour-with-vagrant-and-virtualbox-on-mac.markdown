@@ -190,7 +190,9 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-To reload the VM with our changes, we need to use:
+To reload the VM with our changes, we use `vagrant provision` to update our VM when changes to provisioners are made, and `vagrant reload` when we have config changes such as `config.vm.network`, but to restart the VM and forcing provisioners to run, we can use the following: 
+
+Thanks [@joshva_jebaraj](https://twitter.com/joshva_jebaraj)
 
 ```bash
 $ vagrant reload --provision

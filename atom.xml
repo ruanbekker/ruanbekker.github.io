@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-10-07T19:28:59-04:00</updated>
+  <updated>2021-10-10T17:01:38-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,185 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup TLS and Basic Authentication on Node Exporter for Prometheus]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/10/10/setup-basic-authentication-on-node-exporter-and-prometheus/"/>
+    <updated>2021-10-10T16:50:17-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/10/10/setup-basic-authentication-on-node-exporter-and-prometheus</id>
+    <content type="html"><![CDATA[<p>I had a public VPS server that I wanted to scrape node-exporter metrics from, but my Prometheus instance was behind a Dynamic IP address, so to allow only my prometheus instance to scrape my Node Exporter instance, was a bit difficult, since the IP keep changing and I had to update my iptables firewall rules.</p>
+
+<p>In this tutorial I will show you how to setup TLS and Basic Authentication on Node Exporter, and how to configure prometheus to pass the auhtentication to successfully scrape the node exporter metrics endpoint.</p>
+
+<h2>Install Node Exporter</h2>
+
+<p>On the node-exporter host, set the environment variables for the version, user and directory path where node exporter will be installed::</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ NODE_EXPORTER_VERSION</span><span class="o">=</span><span class="s2">&quot;1.1.2&quot;</span>
+</span><span class='line'><span class="nv">$ NODE_EXPORTER_USER</span><span class="o">=</span><span class="s2">&quot;node_exporter&quot;</span>
+</span><span class='line'><span class="nv">$ BIN_DIRECTORY</span><span class="o">=</span><span class="s2">&quot;/usr/local/bin&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Download and place the node-exporter binary in place:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget https://github.com/prometheus/node_exporter/releases/download/v<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>/node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64.tar.gz
+</span><span class='line'><span class="nv">$ </span>tar -xf node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64.tar.gz
+</span><span class='line'><span class="nv">$ </span>cp node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64/node_exporter <span class="k">${</span><span class="nv">BIN_DIRECTORY</span><span class="k">}</span>/
+</span><span class='line'><span class="nv">$ </span>chown <span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span>:<span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span> <span class="k">${</span><span class="nv">BIN_DIRECTORY</span><span class="k">}</span>/node_exporter
+</span><span class='line'><span class="nv">$ </span>rm -rf node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64*
+</span><span class='line'><span class="nv">$ </span>mkdir /etc/node-exporter
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configuration</h2>
+
+<p>Create a self-signed cert for node-exporter:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>openssl req -new -newkey rsa:2048 -days <span class="m">365</span> -nodes -x509 -keyout node_exporter.key -out node_exporter.crt -subj <span class="s2">&quot;/C=ZA/ST=CT/L=SA/O=VPN/CN=localhost&quot;</span> -addext <span class="s2">&quot;subjectAltName = DNS:localhost&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Move the certs into the directory we created:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mv node_exporter.* /etc/node-exporter/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Install htpasswd so that we can generate a password hash with bcrypt, which will prompt you for a password that we are setting for the prometheus user::</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install apache2-utils
+</span><span class='line'><span class="nv">$ </span>htpasswd -nBC <span class="m">10</span> <span class="s2">&quot;&quot;</span> <span class="p">|</span> tr -d <span class="s1">&#39;:\n&#39;</span><span class="p">;</span> <span class="nb">echo</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now populate the config for node-exporter:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/node-exporter/config.yml
+</span><span class='line'>tls_server_config:
+</span><span class='line'>  cert_file: node_exporter.crt
+</span><span class='line'>  key_file: node_exporter.key
+</span><span class='line'>basic_auth_users:
+</span><span class='line'>  prometheus: &lt;the-output-value-of-htpasswd&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Change the ownership of the node exporter directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chown -R <span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span>:<span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span> /etc/node-exporter
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the systemd unit file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; /etc/systemd/system/node_exporter.service <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'><span class="s">[Unit]</span>
+</span><span class='line'><span class="s">Description=Node Exporter</span>
+</span><span class='line'><span class="s">Wants=network-online.target</span>
+</span><span class='line'><span class="s">After=network-online.target</span>
+</span><span class='line'><span class="s">StartLimitIntervalSec=500</span>
+</span><span class='line'><span class="s">StartLimitBurst=5</span>
+</span><span class='line'><span class="s">[Service]</span>
+</span><span class='line'><span class="s">User=${NODE_EXPORTER_USER}</span>
+</span><span class='line'><span class="s">Group=${NODE_EXPORTER_USER}</span>
+</span><span class='line'><span class="s">Type=simple</span>
+</span><span class='line'><span class="s">Restart=on-failure</span>
+</span><span class='line'><span class="s">RestartSec=5s</span>
+</span><span class='line'><span class="s">ExecStart=${BIN_DIRECTORY}/node_exporter --web.config=/etc/node-exporter/config.yml</span>
+</span><span class='line'><span class="s">[Install]</span>
+</span><span class='line'><span class="s">WantedBy=multi-user.target</span>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload systemd and start node-exporter</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl daemon-reload
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>node_exporter
+</span><span class='line'><span class="nv">$ </span>systemctl restart node_exporter
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Prometheus Config</h2>
+
+<p>Copy the <code>/etc/node-exporter/node_exporter.crt</code> from the node-exporter node to prometheus-node, then in the <code>/etc/prometheus/prometheus.yml</code> config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">scrape_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">job_name</span><span class="p-Indicator">:</span> <span class="s">&#39;node-exporter-tls&#39;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">scheme</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">https</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">basic_auth</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">username</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">prometheus</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">password</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">&lt;the-plain-text-password&gt;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">tls_config</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">ca_file</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">node_exporter.crt</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">insecure_skip_verify</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">static_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">targets</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;node-exporter-ip:9100&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">instance</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">friendly-instance-name</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After you restart prometheus, you should see the metrics in prometheus' tsdb of the node exporter target that we are scraping.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install Concourse CI v7.4 on Ubuntu Linux]]></title>
@@ -4858,241 +5037,6 @@
 
 
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[HTTPS for Local Development With MiniCA]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/12/23/https-for-local-development-with-minica/"/>
-    <updated>2020-12-23T03:11:08-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/12/23/https-for-local-development-with-minica</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will use <a href="https://github.com/jsha/minica">minica</a> to enable us to run our web applications over HTTPS for local development.</p>
-
-<p>To read more about about <a href="https://github.com/jsha/minica">minica</a> check out their website.</p>
-
-<h2>Generate Certificates</h2>
-
-<p>You can use their binary from their github page or use my docker image to generate the certificates to a <code>./certs</code> directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker run --user "$(id -u):$(id -g)" -it -v $PWD/certs:/output ruanbekker/minica --domains 192.168.0.20.nip.io</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In the case from above, we are generating certificates for the FQDN <code>192.168.0.20.nip.io</code>. You will find the generated certificates under <code>./certs/</code>.</p>
-
-<h2>Application Stack</h2>
-
-<p>We will use docker to create a nginx webserver to serve our content via https using the generated vertificates.</p>
-
-<p>Our <code>docker-compose.yml</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>version: '3.7'
-</span><span class='line'>services:
-</span><span class='line'>  nginx:
-</span><span class='line'>    image: nginx
-</span><span class='line'>    container_name: nginx
-</span><span class='line'>    ports:
-</span><span class='line'>      - 80:80
-</span><span class='line'>      - 443:443
-</span><span class='line'>    volumes:
-</span><span class='line'>      - ~/personal/docker-minica-nginx/nginx.conf:/etc/nginx/nginx.conf
-</span><span class='line'>      - ~/personal/docker-minica-nginx/ssl.conf:/etc/nginx/conf.d/ssl.conf
-</span><span class='line'>      - ~/personal/docker-minica-nginx/certs/192.168.0.6.nip.io:/etc/nginx/certs
-</span><span class='line'>      - ~/personal/docker-minica-nginx/html/index.html:/usr/share/nginx/html/index.html</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>nginx.conf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>user  nginx;
-</span><span class='line'>worker_processes  1;
-</span><span class='line'>error_log  /var/log/nginx/error.log warn;
-</span><span class='line'>pid        /var/run/nginx.pid;
-</span><span class='line'>
-</span><span class='line'>events {
-</span><span class='line'>    worker_connections  1024;
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>http {
-</span><span class='line'>    include       /etc/nginx/mime.types;
-</span><span class='line'>    default_type  application/octet-stream;
-</span><span class='line'>
-</span><span class='line'>    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-</span><span class='line'>                      '$status $body_bytes_sent "$http_referer" '
-</span><span class='line'>                      '"$http_user_agent" "$http_x_forwarded_for"';
-</span><span class='line'>
-</span><span class='line'>    access_log  /var/log/nginx/access.log  main;
-</span><span class='line'>
-</span><span class='line'>    sendfile        on;
-</span><span class='line'>    keepalive_timeout  65;
-</span><span class='line'>    include /etc/nginx/conf.d/ssl.conf;
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>ssl.conf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>server {
-</span><span class='line'>    listen 80;
-</span><span class='line'>    server_name 192.168.0.6.nip.io;
-</span><span class='line'>    return 301 https://$host$request_uri;
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>server {
-</span><span class='line'>    listen 443 ssl;
-</span><span class='line'>    server_name 192.168.0.6.nip.io;
-</span><span class='line'>
-</span><span class='line'>    ssl_certificate /etc/nginx/certs/cert.pem;
-</span><span class='line'>    ssl_certificate_key /etc/nginx/certs/key.pem;
-</span><span class='line'>
-</span><span class='line'>    location / {
-</span><span class='line'>        root   /usr/share/nginx/html;
-</span><span class='line'>        index  index.html;
-</span><span class='line'>    }
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>html/index.html</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&lt;!DOCTYPE html&gt;
-</span><span class='line'>&lt;html lang="en-us"&gt;
-</span><span class='line'>&lt;head&gt;
-</span><span class='line'>    &lt;meta charset="utf-8"&gt;
-</span><span class='line'>    &lt;link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous"&gt;
-</span><span class='line'>    &lt;script src="https://code.jquery.com/jquery-3.1.1.min.js" crossorigin="anonymous"&gt;&lt;/script&gt;
-</span><span class='line'>    &lt;title&gt;Sample Page&lt;/title&gt;
-</span><span class='line'>&lt;/head&gt;
-</span><span class='line'>&lt;body&gt;
-</span><span class='line'>    &lt;div class="container-fluid"&gt;
-</span><span class='line'>        &lt;div class="row"&gt;
-</span><span class='line'>            &lt;div class="bitProcessor"&gt;&lt;/div&gt;
-</span><span class='line'>            &lt;div class="col-md-12" style="background-color: white; position: absolute; top: 40%;width: 80%;left: 10%;"&gt;
-</span><span class='line'>                &lt;center&gt;
-</span><span class='line'>                    &lt;h1&gt;Hello, World!&lt;/h1&gt;
-</span><span class='line'>                  &lt;p&gt;This is sample text.&lt;/p&gt;
-</span><span class='line'>                &lt;/center&gt;
-</span><span class='line'>            &lt;/div&gt;
-</span><span class='line'>        &lt;/div&gt;
-</span><span class='line'>    &lt;/div&gt;
-</span><span class='line'>&lt;/body&gt;
-</span><span class='line'>&lt;/html&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Import Certificates</h2>
-
-<p>We have a certificate <code>./certs/minica.pem</code> which we need to import and trust on our local workstation, I am using a Mac so it will be Keychain Access.</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/101961866-5a2ee500-3c13-11eb-9f89-03fa1bd4670d.png" alt="image" /></p>
-
-<p>Once you open Keychain Access, select &ldquo;file&rdquo;, &ldquo;import items&rdquo; and browse and import <code>./certs/minica.pem</code>, once you are done search for minica:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/101962064-d4f80000-3c13-11eb-9479-c043ba3ced2c.png" alt="image" /></p>
-
-<p>Select the item, file -> get info, expand trust, change &ldquo;when using this certificate&rdquo; to Always trust and close.</p>
-
-<p>You will now see the root ca is trusted:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/101962197-2dc79880-3c14-11eb-8d26-49874c9703fa.png" alt="image" /></p>
-
-<h2>Boot the Application Stack</h2>
-
-<p>As we have <code>docker-compose.yml</code> in our current working directory, we can use docker-compose to boot our application:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up
-</span><span class='line'>Creating network "docker-minica-nginx_default" with the default driver
-</span><span class='line'>Creating nginx ... done
-</span><span class='line'>Attaching to nginx</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when we browse to <code>https://192.168.0.6.nip.io</code> we will see:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/101962367-a9c1e080-3c14-11eb-898b-688b50c1b9db.png" alt="image" /></p>
-
-<p>And when we inspect the certificate, we can see its valid:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/101962411-c78f4580-3c14-11eb-80cd-cf8e449eca95.png" alt="image" /></p>
-
-<h2>Thank You</h2>
-
-<p>Thank you for reading.</p>
 ]]></content>
   </entry>
   

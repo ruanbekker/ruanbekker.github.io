@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Theres a utility called sshuttle which allows you to VPN via a SSH connection, which is really handy when you quickly want to be able to reach a &hellip;">
+  <meta name="description" content="In this post I will demonstrate how you can use ansible to automate the task of adding one or more ssh public keys to multiple servers &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,232 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/10/26/upload-public-ssh-keys-using-ansible/">Upload Public SSH Keys Using Ansible</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-10-26T07:44:25+00:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>26</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>7:44 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post I will demonstrate how you can use ansible to automate the task of adding one or more ssh public keys to multiple servers authorized_keys file.</p>
+
+<p>This will be focused in a scenario where you have 5 new ssh keys that we would want to copy to our bastion hosts authorized_keys file</p>
+
+<h2>The User Accounts</h2>
+
+<p>We have our bastion server named <code>bastion.mydomain.com</code> where would like to create the following accounts: <code>john, bob, sarah, sam, adam</code> and also upload their personal ssh public keys to those accounts so that they can logon with their ssh private keys.</p>
+
+<p>On my local directory, I have their ssh public keys as:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>~/workspace/sshkeys/john.pub
+</span><span class='line'>~/workspace/sshkeys/bob.pub
+</span><span class='line'>~/workspace/sshkeys/sarah.pub
+</span><span class='line'>~/workspace/sshkeys/sam.pub
+</span><span class='line'>~/workspace/sshkeys/adam.pub</span></code></pre></td></tr></table></div></figure>
+
+
+<p>They will be referenced in our playbook as <code>key: ".pub') }}"</code> but if they were on github we can reference them as <code>key: https://github.com/.keys</code>, more info on that can be found on the <a href="https://docs.ansible.com/ansible/2.4/authorized_key_module.html">authorized_key_module</a> documentation.</p>
+
+<h2>The Target Server</h2>
+
+<p>Our inventory for the target server only includes one host, but we can add as many as we want, but our inventory will look like this:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat inventory.ini
+</span><span class='line'>[bastion]
+</span><span class='line'>bastion-host ansible_host=34.x.x.x ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/ansible.pem ansible_python_interpreter=/usr/bin/python3
+</span><span class='line'>[bastion:vars]
+</span><span class='line'>ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test if the target server is reachable using the user <code>ubuntu</code> using our admin accounts ssh key <code>ansible.pem</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible -i inventory.ini -m ping bastion
+</span><span class='line'>bastion | SUCCESS =&gt; {
+</span><span class='line'>    "changed": false,
+</span><span class='line'>    "ping": "pong"
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Our Playbook</h2>
+
+<p>In this playbook, we will reference the users that we want to create and it will loop through those users, creating them on the target server and also use those names to match to the files on our laptop to match the ssh public keys:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat playbook.yml
+</span><span class='line'>---
+</span><span class='line'>- hosts: bastion
+</span><span class='line'>  become: yes
+</span><span class='line'>  become_user: root
+</span><span class='line'>  become_method: sudo
+</span><span class='line'>  tasks:
+</span><span class='line'>    - name: create local user account on the target server
+</span><span class='line'>      user:
+</span><span class='line'>        name: ''
+</span><span class='line'>        comment: ''
+</span><span class='line'>        shell: /bin/bash
+</span><span class='line'>        append: yes
+</span><span class='line'>        groups: sudo
+</span><span class='line'>        generate_ssh_key: yes
+</span><span class='line'>        ssh_key_type: rsa
+</span><span class='line'>      with_items:
+</span><span class='line'>        - john
+</span><span class='line'>        - bob
+</span><span class='line'>        - sarah
+</span><span class='line'>        - sam
+</span><span class='line'>        - adam
+</span><span class='line'>
+</span><span class='line'>    - name: upload ssh public key to users authorized keys file
+</span><span class='line'>      authorized_key:
+</span><span class='line'>        user: ''
+</span><span class='line'>        state: present
+</span><span class='line'>        manage_dir: yes
+</span><span class='line'>        key: ".pub') }}"
+</span><span class='line'>      with_items:
+</span><span class='line'>        - john
+</span><span class='line'>        - bob
+</span><span class='line'>        - sarah
+</span><span class='line'>        - sam
+</span><span class='line'>        - adam</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy</h2>
+
+<p>Run the playbook:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ansible-playbook -i inventory.ini ssh-setup.yml
+</span><span class='line'>
+</span><span class='line'>PLAY [bastion]
+</span><span class='line'>
+</span><span class='line'>TASK [Gathering Facts]
+</span><span class='line'>ok: [bastion-host]
+</span><span class='line'>
+</span><span class='line'>TASK [create local user account on the target server]
+</span><span class='line'>changed: [bastion-host] =&gt; (item=john)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=bob)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=sarah)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=sam)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=adam)
+</span><span class='line'>
+</span><span class='line'>TASK [upload ssh public key to users authorized keys file]
+</span><span class='line'>changed: [bastion-host] =&gt; (item=john)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=bob)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=sarah)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=sam)
+</span><span class='line'>changed: [bastion-host] =&gt; (item=adam)
+</span><span class='line'>
+</span><span class='line'>PLAY RECAP
+</span><span class='line'>bastion-host                   : ok=6    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now when we ask one of the users, adam for example, to authenticate with:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh -i ~/.ssh/path_to_his_private_key.pem adamin@bastion.mydomain.com</span></code></pre></td></tr></table></div></figure>
+
+
+<p>They should have access to the server.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, for more information on this module check out their documentation:</p>
+
+<ul>
+<li><a href="https://docs.ansible.com/ansible/2.4/authorized_key_module.html">https://docs.ansible.com/ansible/2.4/authorized_key_module.html</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2348,343 +2574,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/06/14/setup-a-hugo-blog-with-the-kiera-theme/">Setup a Hugo Blog With the Kiera Theme</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-06-14T15:23:51+02:00'><span class='date'><span class='date-month'>Jun</span> <span class='date-day'>14</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>3:23 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://img.sysadmins.co.za/wngib2.png" alt="hugo-blog-kiera-theme" /></p>
-
-<p>In this tutorial we will setup a Hugo Blog with the Kiera theme on Linux and will be using Ubuntu for this demonstration, but since Hugo runs on Go, you can run this on Windows, Linux or Mac.</p>
-
-<h2>Dependencies</h2>
-
-<p>We require git to download the theme from github, so first update your package managers indexes, and install git:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt install git -y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Install golang (optional):</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ VERSION=1.14.4
-</span><span class='line'>$ wget "https://dl.google.com/go/go${VERSION}.linux-amd64.tar.gz"
-</span><span class='line'>$ tar -xf go$VERSION.linux-amd64.tar.gz -C /usr/local
-</span><span class='line'>$ echo 'export HUGO_HOME=/usr/local/hugo' &gt;&gt; ~/.profile
-</span><span class='line'>$ echo 'export PATH=$PATH:$HUGO_HOME/bin' &gt;&gt; ~/.profile</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we source our profile, we sound be able to get the go version:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ source ~/.profile
-</span><span class='line'>$ go version
-</span><span class='line'>go version go1.14.4 linux/amd64</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now to install Hugo:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /usr/local/hugo/bin
-</span><span class='line'>$ wget https://github.com/gohugoio/hugo/releases/download/v0.72.0/hugo_0.72.0_Linux-64bit.tar.gz
-</span><span class='line'>$ tar -xf hugo_0.72.0_Linux-64bit.tar.gz -C /usr/local/hugo/bin
-</span><span class='line'>$ echo 'export HUGO_HOME=/usr/local/hugo' &gt;&gt; ~/.profile
-</span><span class='line'>$ echo 'export PATH=$PATH:$HUGO_HOME/bin' &gt;&gt; ~/.profile</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After sourcing the profile we should see the hugo version:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ source ~/.profile
-</span><span class='line'>$ hugo version
-</span><span class='line'>Hugo Static Site Generator v0.72.0-8A7EF3CF linux/amd64 BuildDate: 2020-05-31T12:07:45Z</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the Hugo Workspace</h2>
-
-<p>Create the directory where we will host our blogs and change into that directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p ~/websites 
-</span><span class='line'>$ cd ~/websites</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create your site with hugo:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ hugo new site awesome-blog
-</span><span class='line'>Congratulations! Your new Hugo site is created in /home/ubuntu/websites/awesome-blog.
-</span><span class='line'>Visit https://gohugo.io/ for quickstart guide and full documentation.</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Change into the directory that was created:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cd awesome-blog/</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Themes</h2>
-
-<p>Hugo has a <a href="https://themes.gohugo.io/">extensive list of themes</a>, but for this demonstration we will use <a href="https://themes.gohugo.io/hugo-kiera/">kiera</a>.</p>
-
-<p>Download the theme to the themes directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/avianto/hugo-kiera themes/kiera</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s run the server and see how it looks like out of the box:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ hugo server --theme=kiera --bind=0.0.0.0 --environment development</span></code></pre></td></tr></table></div></figure>
-
-
-<p>By default hugo uses the port 1313, so accessing Hugo should look like this:</p>
-
-<p><img src="https://img.sysadmins.co.za/iwqtmt.png" alt="" /></p>
-
-<h2>Customize Hugo</h2>
-
-<p>So let&rsquo;s customize Hugo a bit by adding some content such as a navbar and social icons:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ./config.yml
-</span><span class='line'>baseurl = "http://192.168.64.17/"
-</span><span class='line'>title = "My Hugo Blog"
-</span><span class='line'>copyright = "Copyright &copy; 2020 - Ruan Bekker"
-</span><span class='line'>canonifyurls = true
-</span><span class='line'>theme = "kiera"
-</span><span class='line'>
-</span><span class='line'>paginate = 3
-</span><span class='line'>
-</span><span class='line'>summaryLength = 30
-</span><span class='line'>enableEmoji = true
-</span><span class='line'>pygmentsCodeFences = true
-</span><span class='line'>
-</span><span class='line'>[author]
-</span><span class='line'>    name = "Ruan Bekker"
-</span><span class='line'>    github = "ruanbekker"
-</span><span class='line'>    gitlab = "rbekker87"
-</span><span class='line'>    linkedin = "ruanbekker"
-</span><span class='line'>    facebook = ""
-</span><span class='line'>    twitter = "ruanbekker"
-</span><span class='line'>    instagram = ""
-</span><span class='line'>
-</span><span class='line'>[params]
-</span><span class='line'>    tagline = "A Hugo theme for creative and technical writing"
-</span><span class='line'>
-</span><span class='line'>[menu]
-</span><span class='line'>
-</span><span class='line'>  [[menu.main]]
-</span><span class='line'>    identifier = "about"
-</span><span class='line'>    name = "about hugo"
-</span><span class='line'>    pre = "&lt;i class='fa fa-heart'&gt;&lt;/i&gt;"
-</span><span class='line'>    url = "/about/"
-</span><span class='line'>    weight = -110
-</span><span class='line'>
-</span><span class='line'>  [[menu.main]]
-</span><span class='line'>    name = "getting started"
-</span><span class='line'>    post = "&lt;span class='alert'&gt;New!&lt;/span&gt;"
-</span><span class='line'>    pre = "&lt;i class='fa fa-road'&gt;&lt;/i&gt;"
-</span><span class='line'>    url = "/getting-started/"
-</span><span class='line'>    weight = -100</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After config has been applied to <code>./config.yml</code> and we start our server up again:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ hugo server --theme=kiera --bind=0.0.0.0 --environment development</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We should see this:</p>
-
-<p><img src="https://img.sysadmins.co.za/3dw9e9.png" alt="" /></p>
-
-<h2>Create your First Post</h2>
-
-<p>Creating the first post:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ hugo new posts/my-first-post.md
-</span><span class='line'>/home/ubuntu/websites/awesome-blog/content/posts/my-first-post.md created</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let&rsquo;s add some sample data to our markdown file that hugo created:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>+++
-</span><span class='line'>title = "My First Post"
-</span><span class='line'>date = 2020-06-14T15:47:17+02:00
-</span><span class='line'>draft = false
-</span><span class='line'>tags = ["hugo", "kiera"]
-</span><span class='line'>categories = ["hugo-blog"]
-</span><span class='line'>+++
-</span><span class='line'>
-</span><span class='line'>-&gt; markdown content here &lt;-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When starting the server up again and viewing the home page:</p>
-
-<p><img src="https://img.sysadmins.co.za/srklwj.png" alt="hugo-blog-with-home-page" /></p>
-
-<p>And selecting the post:</p>
-
-<p><img src="https://img.sysadmins.co.za/v95p79.png" alt="" /></p>
-
-<p>Code snippets:</p>
-
-<p><img src="https://img.sysadmins.co.za/0xufiy.png" alt="code" /></p>
-
-<p>Tables, lists and images:</p>
-
-<p><img src="https://img.sysadmins.co.za/c317ij.png" alt="hugo-blog" /></p>
-
-<h2>Creating Pages</h2>
-
-<p>For the pages section (about, getting-started), we first create the directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir content/getting-started</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then create the page under the directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ hugo new content/getting-started/index.md
-</span><span class='line'>content/getting-started/index.md created</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The content:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat content/getting-started/index.md
-</span><span class='line'>---
-</span><span class='line'>title: "Getting Started"
-</span><span class='line'>date: 2020-06-14T16:11:07+02:00
-</span><span class='line'>draft: false
-</span><span class='line'>---
-</span><span class='line'>
-</span><span class='line'>This is a getting started page</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we start up our server again and select the &ldquo;getting-started&rdquo; from the navbar on our home page:</p>
-
-<p><img src="https://img.sysadmins.co.za/rod8eo.png" alt="getting-started-page" /></p>
-
-<h2>Production Mode</h2>
-
-<p>You can set the flags in your main config as well, but running the server in production mode:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ hugo server \
-</span><span class='line'>  --baseURL "http://192.168.64.17/" \
-</span><span class='line'>  --themesDir=themes --theme=kiera \
-</span><span class='line'>  --bind=0.0.0.0 --port=1313 --appendPort=true \
-</span><span class='line'>  --buildDrafts --watch --environment production</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thanks</h2>
-
-<p>Thanks for reading, feel free to reach out to me on <a href="https://twitter.com/ruanbekker">@ruanbekker</a></p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/5">&larr; Older</a>
@@ -2735,6 +2624,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/11/03/setup-traefik-version-2-on-docker/">Setup Traefik Version 2 on Docker</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/10/11/install-nodejs-on-linux-using-nvm/">Install Nodejs on Linux Using NVM</a>
       </li>
     
@@ -2748,10 +2641,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/08/14/a-tour-with-vagrant-and-virtualbox-on-mac/">A Tour With Vagrant and Virtualbox on Mac</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/08/04/how-to-specify-wallet-name-in-bitcoin-core-walletnotify/">How to Specify Wallet Name in Bitcoin Core Walletnotify</a>
       </li>
     
   </ul>

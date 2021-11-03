@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we will install Nodejs using Node Version Manager (nvm), which allows you to install and use different versions of node via the command &hellip;">
+  <meta name="description" content="In this tutorial we will be setting up Traefik v2 as our reverse proxy with port 80 and 443 enabled, and then hook up a example application behind &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,335 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2021/11/03/setup-traefik-version-2-on-docker/">Setup Traefik Version 2 on Docker</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2021-11-03T01:20:27-04:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>3</span><span class='date-suffix'>rd</span>, <span class='date-year'>2021</span></span> <span class='time'>1:20 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial we will be setting up <a href="https://traefik.io">Traefik </a> v2 as our reverse proxy with port 80 and 443 enabled, and then hook up a example application behind the application load balancer, and route incoiming requests via host headers.</p>
+
+<h2>What is Traefik</h2>
+
+<p>Traefik is a modern HTTP reverse proxy and load balancer that makes deploying microservices super easy by making use of docker labels to route your traffic based on host headers, path prefixes etc. Please check out <a href="https://doc.traefik.io/traefik/">their website</a> to find out more about them.</p>
+
+<h2>Use Case</h2>
+
+<p>In our example we want to route traefik from <code>http://app.selfhosted.co.za</code> to hit our proxy on port 80, then we want traefik to redirect port 80 to the 443 port configured on the proxy which is configured with letsencrypt and reverse proxy the connection to our application.</p>
+
+<p>The application is being configured via docker labels, which we will get into later.</p>
+
+<h2>Our Environment</h2>
+
+<p>I will be using the domain <code>selfhosted.co.za</code>, so if you are following along, you can just replace this domain with yours.</p>
+
+<p>For this demonstration I have spun up a VM at <a href="https://civo.com">Civo</a> as you can see below:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125192278-5023a200-e247-11eb-97c6-cebd65f22f07.png" alt="image" /></p>
+
+<p>From the provided public IP address, we will be creating a DNS A record for our domain, and then create a wildcard entry to CNAME to our initial dns name:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125192297-6b8ead00-e247-11eb-9c01-740557838a12.png" alt="image" /></p>
+
+<p>You might not want to point all the subdomains to that entry, but to simplify things, every application that needs to be routed via traefik, I can manage from a traefik config level, since my dns is already pointing to the public ip where traefik is running on.</p>
+
+<p>So if I spin up a new container, lets say <code>bitwarden</code>, I can just set <code>bitwarden.selfhosted.co.za</code> in the labels of that container and due to the dns already pointing to traefik, traefik will route the connection to the correct container.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>In order to follow along you will need <a href="https://docs.docker.com/get-docker/">docker</a> and <a href="https://docs.docker.com/compose/install/">docker-compose</a> to be installed, and can be validated using:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>docker -v
+</span><span class='line'>Docker version 20.10.7, build f0df350
+</span><span class='line'>
+</span><span class='line'>docker-compose -v
+</span><span class='line'>docker-compose version 1.28.6, build 5db8d86f</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Traefik on Docker</h2>
+
+<p>We will have one <code>docker-compose.yml</code> file which has the proxy and the example application. Be sure to change the following to suite your environment:
+- <code>traefik.http.routers.api.rule=Host()'</code>
+- <code>--certificatesResolvers.letsencrypt.acme.email=youremail@yourdomain.net</code></p>
+
+<p>The compose:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.8&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">traefik</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">traefik:2.4</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">traefik</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">restart</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">unless-stopped</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./traefik/acme.json:/acme.json</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">docknet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.enable=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.api.rule=Host(`traefik.selfhosted.co.za`)&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.api.entrypoints=https&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.api.service=api@internal&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.api.tls=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.api.tls.certresolver=letsencrypt&#39;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">80:80</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">443:443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--api&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--providers.docker=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--providers.docker.exposedByDefault=false&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--entrypoints.http=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--entrypoints.http.address=:80&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--entrypoints.http.http.redirections.entrypoint.to=https&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--entrypoints.http.http.redirections.entrypoint.scheme=https&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--entrypoints.https=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--entrypoints.https.address=:443&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--certificatesResolvers.letsencrypt.acme.email=youremail@yourdomain.net&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--certificatesResolvers.letsencrypt.acme.storage=acme.json&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=http&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--log=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--log.level=INFO&#39;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="s">&quot;json-file&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">options</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">max-size</span><span class="p-Indicator">:</span> <span class="s">&quot;1m&quot;</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">webapp</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">traefik/whoami</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">restart</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">unless-stopped</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">docknet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.enable=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.rule=Host(`app.selfhosted.co.za`)&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.entrypoints=https&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.tls=true&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.tls.certresolver=letsencrypt&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.service=webappservice&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.services.webappservice.loadbalancer.server.port=80&#39;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="s">&quot;json-file&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">options</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">max-size</span><span class="p-Indicator">:</span> <span class="s">&quot;1m&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">docknet</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">docknet</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Prepare the <code>./traefik/acme.json</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">mkdir traefik</span>
+</span><span class='line'><span class="l-Scalar-Plain">touch traefik/acme.json</span>
+</span><span class='line'><span class="l-Scalar-Plain">chmod 600 traefik/acme.json</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see in order to wire a application onto the proxy we need the following labels:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.enable=true&#39;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.rule=Host(`app.selfhosted.co.za`)&#39;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.entrypoints=https&#39;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.tls=true&#39;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.tls.certresolver=letsencrypt&#39;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.routers.webapp.service=webappservice&#39;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;traefik.http.services.webappservice.loadbalancer.server.port=80&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now boot our stack using docker-compose:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker-compose up -d
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can follow the logs to ensure everything works as expected:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker-compose logs -f
+</span><span class='line'>Attaching to webapp, traefik
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Configuration loaded from flags.&quot;</span>
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Starting provider aggregator.ProviderAggregator {}&quot;</span>
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Starting provider *traefik.Provider {}&quot;</span>
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Starting provider *docker.Provider {\&quot;watch\&quot;:true,\&quot;endpoint\&quot;:\&quot;unix:///var/run/docker.so                                              ck\&quot;,\&quot;defaultRule\&quot;:\&quot;Host(``)\&quot;,\&quot;swarmModeRefreshSeconds\&quot;:\&quot;15s\&quot;}&quot;</span>
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Starting provider *acme.ChallengeTLSALPN {\&quot;Timeout\&quot;:4000000000}&quot;</span>
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Starting provider *acme.Provider {\&quot;email\&quot;:\&quot;youremail@domain.com\&quot;,\&quot;caServer\&quot;:\&quot;https://                                              acme-v02.api.letsencrypt.org/directory\&quot;,\&quot;storage\&quot;:\&quot;acme.json\&quot;,\&quot;keyType\&quot;:\&quot;RSA4096\&quot;,\&quot;httpChallenge\&quot;:{\&quot;entryPoint\&quot;:\&quot;http\&quot;},\&quot;ResolverNam                                              e\&quot;:\&quot;letsencrypt\&quot;,\&quot;store\&quot;:{},\&quot;TLSChallengeProvider\&quot;:{\&quot;Timeout\&quot;:4000000000},\&quot;HTTPChallengeProvider\&quot;:{}}&quot;</span>
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:22Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span><span class="s2">&quot;Testing certificate renew...&quot;</span> <span class="nv">providerName</span><span class="o">=</span>letsencrypt.acme
+</span><span class='line'>traefik    <span class="p">|</span> <span class="nb">time</span><span class="o">=</span><span class="s2">&quot;2021-07-11T11:02:24Z&quot;</span> <span class="nv">level</span><span class="o">=</span>info <span class="nv">msg</span><span class="o">=</span>Register... <span class="nv">providerName</span><span class="o">=</span>letsencrypt.acme
+</span><span class='line'>webapp     <span class="p">|</span> Starting up on port 80
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The certificate process might take anything from 5-30s in my experience.</p>
+
+<h2>Test the Application</h2>
+
+<p>Now that our <code>webapp</code> container is running, make a http request using curl against the configured host rule, which is <code>app.selfhosted.co.za</code> on <code>http</code> so that we can validate if traefik is doing a redirect to <code>https</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl -IL http://app.selfhosted.co.za:80
+</span><span class='line'>
+</span><span class='line'>HTTP/1.1 <span class="m">308</span> Permanent Redirect
+</span><span class='line'>Location: https://app.selfhosted.co.za/
+</span><span class='line'>Date: Sun, <span class="m">11</span> Jul <span class="m">2021</span> 11:05:47 GMT
+</span><span class='line'>Content-Length: 18
+</span><span class='line'>Content-Type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>
+</span><span class='line'>HTTP/2 200
+</span><span class='line'>content-type: text/plain<span class="p">;</span> <span class="nv">charset</span><span class="o">=</span>utf-8
+</span><span class='line'>date: Sun, <span class="m">11</span> Jul <span class="m">2021</span> 11:05:47 GMT
+</span><span class='line'>content-length: 343
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we access our <code>webapp</code> service in our web browser, we will see the following:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125192768-c1fceb00-e249-11eb-8b67-7347b4d16a8f.png" alt="image" /></p>
+
+<p>We can also validate that the certificate is valid:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125196546-a9490100-e25a-11eb-8e94-0d7af307d2fb.png" alt="image" /></p>
+
+<p>We can also access the traefik dashboard using the configured domain, in this case <code>traefik.selfhosted.co.za</code>, and you should see the pretty traefik dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125196448-4bb4b480-e25a-11eb-906b-a221d1415f38.png" alt="image" /></p>
+
+<h2>Future Posts</h2>
+
+<p>In future posts I will be using this post as the base setup on getting traefik up and running, and future posts that uses traefik will be tagged under <a href="https://containers.fan/tags/traefik/">#traefik</a>.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2728,137 +3057,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2021/07/12/install-java-11-and-maven-on-ubuntu-linux/">Install Java 11 and Maven on Ubuntu Linux</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2021-07-12T02:36:32-04:00'><span class='date'><span class='date-month'>Jul</span> <span class='date-day'>12</span><span class='date-suffix'>th</span>, <span class='date-year'>2021</span></span> <span class='time'>2:36 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this short tutorial I will show you how to prepare your environment for Java 11 and Maven on Ubuntu for Linux.</p>
-
-<h2>Install</h2>
-
-<p>Update your package manager and install OpenJDK 11:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>sudo apt update
-</span><span class='line'>sudo apt install openjdk-11-jdk -y
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify that Java is installed:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>java -version
-</span><span class='line'>openjdk version <span class="s2">&quot;11.0.11&quot;</span> 2021-04-20
-</span><span class='line'>OpenJDK Runtime Environment <span class="o">(</span>build 11.0.11+9-Ubuntu-0ubuntu2.20.04<span class="o">)</span>
-</span><span class='line'>OpenJDK 64-Bit Server VM <span class="o">(</span>build 11.0.11+9-Ubuntu-0ubuntu2.20.04, mixed mode, sharing<span class="o">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once Java is installed, we can install Maven, first switch to the root user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo su
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I will be using maven version <code>3.6.2</code>, so adjust accordingly:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ MAVEN_HOME</span><span class="o">=</span><span class="s2">&quot;/opt/maven&quot;</span>
-</span><span class='line'><span class="nv">$ MAVEN_VERSION</span><span class="o">=</span>3.6.3
-</span><span class='line'><span class="nv">$ MAVEN_CONFIG_HOME</span><span class="o">=</span><span class="s2">&quot;/root/.m2&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the directories, then download maven and extract:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir -p <span class="nv">$MAVEN_HOME</span>
-</span><span class='line'><span class="nv">$ </span>curl -LSso /var/tmp/apache-maven-<span class="nv">$MAVEN_VERSION</span>-bin.tar.gz https://apache.org/dist/maven/maven-3/<span class="nv">$MAVEN_VERSION</span>/binaries/apache-maven-<span class="nv">$MAVEN_VERSION</span>-bin.tar.gz
-</span><span class='line'><span class="nv">$ </span>tar xzvf /var/tmp/apache-maven-<span class="nv">$MAVEN_VERSION</span>-bin.tar.gz -C <span class="nv">$MAVEN_HOME</span> --strip-components<span class="o">=</span>1
-</span><span class='line'><span class="nv">$ </span>rm /var/tmp/apache-maven-<span class="nv">$MAVEN_VERSION</span>-bin.tar.gz
-</span><span class='line'><span class="nv">$ </span>update-alternatives --install /usr/bin/mvn mvn /opt/maven/bin/mvn 10000
-</span><span class='line'><span class="nv">$ </span>mkdir -p <span class="nv">$MAVEN_CONFIG_HOME</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Set the environment variables for maven:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/profile.d/custom.sh
-</span><span class='line'><span class="c">#!/bin/bash</span>
-</span><span class='line'><span class="nb">export </span><span class="nv">MAVEN_HOME</span><span class="o">=</span><span class="s2">&quot;/opt/maven&quot;</span>
-</span><span class='line'><span class="nb">export </span><span class="nv">MAVEN_VERSION</span><span class="o">=</span>3.6.3
-</span><span class='line'><span class="nb">export </span><span class="nv">MAVEN_CONFIG_HOME</span><span class="o">=</span><span class="s2">&quot;/root/.m2&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then make the file executable:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chmod +x /etc/profile.d/custom.sh
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify that maven is installed:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mvn -version
-</span><span class='line'>Apache Maven 3.6.3 <span class="o">(</span>cecedd343002696d0abb50b32b541b8a6ba2883f<span class="o">)</span>
-</span><span class='line'>Maven home: /opt/maven
-</span><span class='line'>Java version: 11.0.11, vendor: Ubuntu, runtime: /usr/lib/jvm/java-11-openjdk-amd64
-</span><span class='line'>Default locale: en, platform encoding: UTF-8
-</span><span class='line'>OS name: <span class="s2">&quot;linux&quot;</span>, version: <span class="s2">&quot;5.4.0-1041-aws&quot;</span>, arch: <span class="s2">&quot;amd64&quot;</span>, family: <span class="s2">&quot;unix&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/2">&larr; Older</a>
@@ -2907,6 +3105,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2021/11/03/setup-traefik-version-2-on-docker/">Setup Traefik Version 2 on Docker</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/10/11/install-nodejs-on-linux-using-nvm/">Install Nodejs on Linux Using NVM</a>
       </li>
     
@@ -2920,10 +3122,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/08/14/a-tour-with-vagrant-and-virtualbox-on-mac/">A Tour With Vagrant and Virtualbox on Mac</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/08/04/how-to-specify-wallet-name-in-bitcoin-core-walletnotify/">How to Specify Wallet Name in Bitcoin Core Walletnotify</a>
       </li>
     
   </ul>

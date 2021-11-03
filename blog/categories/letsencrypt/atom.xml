@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Letsencrypt | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/letsencrypt/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-10-11T19:18:07-04:00</updated>
+  <updated>2021-11-03T01:21:28-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,205 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Setup Traefik Version 2 on Docker]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/11/03/setup-traefik-version-2-on-docker/"/>
+    <updated>2021-11-03T01:20:27-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/11/03/setup-traefik-version-2-on-docker</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will be setting up <a href="https://traefik.io">Traefik </a> v2 as our reverse proxy with port 80 and 443 enabled, and then hook up a example application behind the application load balancer, and route incoiming requests via host headers.</p>
+
+<h2>What is Traefik</h2>
+
+<p>Traefik is a modern HTTP reverse proxy and load balancer that makes deploying microservices super easy by making use of docker labels to route your traffic based on host headers, path prefixes etc. Please check out <a href="https://doc.traefik.io/traefik/">their website</a> to find out more about them.</p>
+
+<h2>Use Case</h2>
+
+<p>In our example we want to route traefik from <code>http://app.selfhosted.co.za</code> to hit our proxy on port 80, then we want traefik to redirect port 80 to the 443 port configured on the proxy which is configured with letsencrypt and reverse proxy the connection to our application.</p>
+
+<p>The application is being configured via docker labels, which we will get into later.</p>
+
+<h2>Our Environment</h2>
+
+<p>I will be using the domain <code>selfhosted.co.za</code>, so if you are following along, you can just replace this domain with yours.</p>
+
+<p>For this demonstration I have spun up a VM at <a href="https://civo.com">Civo</a> as you can see below:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125192278-5023a200-e247-11eb-97c6-cebd65f22f07.png" alt="image" /></p>
+
+<p>From the provided public IP address, we will be creating a DNS A record for our domain, and then create a wildcard entry to CNAME to our initial dns name:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125192297-6b8ead00-e247-11eb-9c01-740557838a12.png" alt="image" /></p>
+
+<p>You might not want to point all the subdomains to that entry, but to simplify things, every application that needs to be routed via traefik, I can manage from a traefik config level, since my dns is already pointing to the public ip where traefik is running on.</p>
+
+<p>So if I spin up a new container, lets say <code>bitwarden</code>, I can just set <code>bitwarden.selfhosted.co.za</code> in the labels of that container and due to the dns already pointing to traefik, traefik will route the connection to the correct container.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>In order to follow along you will need <a href="https://docs.docker.com/get-docker/">docker</a> and <a href="https://docs.docker.com/compose/install/">docker-compose</a> to be installed, and can be validated using:</p>
+
+<pre><code>docker -v
+Docker version 20.10.7, build f0df350
+
+docker-compose -v
+docker-compose version 1.28.6, build 5db8d86f
+</code></pre>
+
+<h2>Traefik on Docker</h2>
+
+<p>We will have one <code>docker-compose.yml</code> file which has the proxy and the example application. Be sure to change the following to suite your environment:
+- <code>traefik.http.routers.api.rule=Host()'</code>
+- <code>--certificatesResolvers.letsencrypt.acme.email=youremail@yourdomain.net</code></p>
+
+<p>The compose:</p>
+
+<pre><code class="yaml">---
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:2.4
+    container_name: traefik
+    restart: unless-stopped
+    volumes:
+      - ./traefik/acme.json:/acme.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - docknet
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.api.rule=Host(`traefik.selfhosted.co.za`)'
+      - 'traefik.http.routers.api.entrypoints=https'
+      - 'traefik.http.routers.api.service=api@internal'
+      - 'traefik.http.routers.api.tls=true'
+      - 'traefik.http.routers.api.tls.certresolver=letsencrypt'
+    ports:
+      - 80:80
+      - 443:443
+    command:
+      - '--api'
+      - '--providers.docker=true'
+      - '--providers.docker.exposedByDefault=false'
+      - '--entrypoints.http=true'
+      - '--entrypoints.http.address=:80'
+      - '--entrypoints.http.http.redirections.entrypoint.to=https'
+      - '--entrypoints.http.http.redirections.entrypoint.scheme=https'
+      - '--entrypoints.https=true'
+      - '--entrypoints.https.address=:443'
+      - '--certificatesResolvers.letsencrypt.acme.email=youremail@yourdomain.net'
+      - '--certificatesResolvers.letsencrypt.acme.storage=acme.json'
+      - '--certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=http'
+      - '--log=true'
+      - '--log.level=INFO'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  webapp:
+    image: traefik/whoami
+    container_name: webapp
+    restart: unless-stopped
+    networks:
+      - docknet
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.webapp.rule=Host(`app.selfhosted.co.za`)'
+      - 'traefik.http.routers.webapp.entrypoints=https'
+      - 'traefik.http.routers.webapp.tls=true'
+      - 'traefik.http.routers.webapp.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.webapp.service=webappservice'
+      - 'traefik.http.services.webappservice.loadbalancer.server.port=80'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+networks:
+  docknet:
+    name: docknet
+</code></pre>
+
+<p>Prepare the <code>./traefik/acme.json</code> file:</p>
+
+<pre><code>mkdir traefik
+touch traefik/acme.json
+chmod 600 traefik/acme.json
+</code></pre>
+
+<p>As you can see in order to wire a application onto the proxy we need the following labels:</p>
+
+<pre><code class="yaml">      - 'traefik.enable=true'
+      - 'traefik.http.routers.webapp.rule=Host(`app.selfhosted.co.za`)'
+      - 'traefik.http.routers.webapp.entrypoints=https'
+      - 'traefik.http.routers.webapp.tls=true'
+      - 'traefik.http.routers.webapp.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.webapp.service=webappservice'
+      - 'traefik.http.services.webappservice.loadbalancer.server.port=80'
+</code></pre>
+
+<p>Now boot our stack using docker-compose:</p>
+
+<pre><code class="bash">docker-compose up -d
+</code></pre>
+
+<p>You can follow the logs to ensure everything works as expected:</p>
+
+<pre><code>docker-compose logs -f
+Attaching to webapp, traefik
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Configuration loaded from flags."
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider aggregator.ProviderAggregator {}"
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *traefik.Provider {}"
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *docker.Provider {\"watch\":true,\"endpoint\":\"unix:///var/run/docker.so                                              ck\",\"defaultRule\":\"Host(``)\",\"swarmModeRefreshSeconds\":\"15s\"}"
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *acme.ChallengeTLSALPN {\"Timeout\":4000000000}"
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *acme.Provider {\"email\":\"youremail@domain.com\",\"caServer\":\"https://                                              acme-v02.api.letsencrypt.org/directory\",\"storage\":\"acme.json\",\"keyType\":\"RSA4096\",\"httpChallenge\":{\"entryPoint\":\"http\"},\"ResolverNam                                              e\":\"letsencrypt\",\"store\":{},\"TLSChallengeProvider\":{\"Timeout\":4000000000},\"HTTPChallengeProvider\":{}}"
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Testing certificate renew..." providerName=letsencrypt.acme
+traefik    | time="2021-07-11T11:02:24Z" level=info msg=Register... providerName=letsencrypt.acme
+webapp     | Starting up on port 80
+</code></pre>
+
+<p>The certificate process might take anything from 5-30s in my experience.</p>
+
+<h2>Test the Application</h2>
+
+<p>Now that our <code>webapp</code> container is running, make a http request using curl against the configured host rule, which is <code>app.selfhosted.co.za</code> on <code>http</code> so that we can validate if traefik is doing a redirect to <code>https</code>:</p>
+
+<pre><code class="bash">curl -IL http://app.selfhosted.co.za:80
+
+HTTP/1.1 308 Permanent Redirect
+Location: https://app.selfhosted.co.za/
+Date: Sun, 11 Jul 2021 11:05:47 GMT
+Content-Length: 18
+Content-Type: text/plain; charset=utf-8
+
+HTTP/2 200
+content-type: text/plain; charset=utf-8
+date: Sun, 11 Jul 2021 11:05:47 GMT
+content-length: 343
+</code></pre>
+
+<p>If we access our <code>webapp</code> service in our web browser, we will see the following:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125192768-c1fceb00-e249-11eb-8b67-7347b4d16a8f.png" alt="image" /></p>
+
+<p>We can also validate that the certificate is valid:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125196546-a9490100-e25a-11eb-8e94-0d7af307d2fb.png" alt="image" /></p>
+
+<p>We can also access the traefik dashboard using the configured domain, in this case <code>traefik.selfhosted.co.za</code>, and you should see the pretty traefik dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/125196448-4bb4b480-e25a-11eb-906b-a221d1415f38.png" alt="image" /></p>
+
+<h2>Future Posts</h2>
+
+<p>In future posts I will be using this post as the base setup on getting traefik up and running, and future posts that uses traefik will be tagged under <a href="https://containers.fan/tags/traefik/">#traefik</a>.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>

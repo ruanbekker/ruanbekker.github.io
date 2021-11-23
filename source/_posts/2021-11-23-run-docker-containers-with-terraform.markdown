@@ -20,7 +20,7 @@ The source code for this post is available on my github repository, but the proj
 
 Our `providers.tf`:
 
-```hcl
+```
 terraform {
   required_providers {
     docker = {
@@ -42,7 +42,7 @@ provider "random" {}
 
 Our `variables.tf`:
 
-```hcl
+```
 variable "domain" {
   type    = string
   default = "localdns.xyz"
@@ -51,7 +51,7 @@ variable "domain" {
 
 Our `outputs.tf`:
 
-```hcl
+```
 output "nginx_container_name" {
   value = docker_container.nginx.name
 }
@@ -71,9 +71,7 @@ output "nginx_url" {
 
 Our `main.tf`:
 
-```hcl
-# https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container
-
+```
 resource "random_string" "nginx" {
   length  = 8
   upper   = false

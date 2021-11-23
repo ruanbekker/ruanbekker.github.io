@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Nginx | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/nginx/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-11-03T01:21:28-04:00</updated>
+  <updated>2021-11-23T11:33:39-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,642 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Run Docker Containers With Terraform]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform/"/>
+    <updated>2021-11-23T11:06:03-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform</id>
+    <content type="html"><![CDATA[<p>In this post I will demonstrate how to use the terraform <a href="https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container">docker_container</a> resource from the <a href="https://github.com/kreuzwerker/terraform-provider-docker">docker provider</a> to run two docker containers, traefik and nginx and use the random provider to generate a random url for us.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>You will require <a href="https://www.terraform.io/downloads.html">terraform</a> and <a href="https://docs.docker.com/get-docker/">docker</a> to be installed.</p>
+
+<h2>Project Structure</h2>
+
+<p>The source code for this post is available on my github repository, but the project structure will look like the following:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/143061769-c619e7eb-c5b1-42bc-9fa4-ed59c15448fa.png" alt="image" /></p>
+
+<p>Our <code>providers.tf</code>:</p>
+
+<pre><code class="hcl">terraform {
+  required_providers {
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "2.15.0"
+    }
+    random = {
+      version = "~&gt; 3.0"
+    }
+  }
+}
+
+provider "docker" {
+  host = "unix:///var/run/docker.sock"
+}
+
+provider "random" {}
+</code></pre>
+
+<p>Our <code>variables.tf</code>:</p>
+
+<pre><code class="hcl">variable "domain" {
+  type    = string
+  default = "localdns.xyz"
+}
+</code></pre>
+
+<p>Our <code>outputs.tf</code>:</p>
+
+<pre><code class="hcl">output "nginx_container_name" {
+  value = docker_container.nginx.name
+}
+
+output "traefik_container_name" {
+  value = docker_container.traefik.name
+}
+
+output "traefik_url" {
+  value = "http://traefik.${var.domain}/"
+}
+
+output "nginx_url" {
+  value = "http://www.${random_string.nginx.result}.${var.domain}/"
+}
+</code></pre>
+
+<p>Our <code>main.tf</code>:</p>
+
+<pre><code class="hcl"># https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container
+
+resource "random_string" "nginx" {
+  length  = 8
+  upper   = false
+  special = false
+}
+
+resource "docker_image" "nginx" {
+  name = "nginx:stable-alpine"
+}
+
+resource "docker_image" "traefik" {
+  name = "traefik:1.7.14"
+}
+
+resource "docker_network" "nginx" {
+  name   = "docknet"
+  driver = "bridge"
+}
+
+resource "docker_container" "traefik" {
+  name  = "traefik"
+  image = docker_image.traefik.name
+
+  networks_advanced {
+    name    = docker_network.nginx.name
+    aliases = ["docknet"]
+  }
+
+  restart = "unless-stopped"
+  destroy_grace_seconds = 30
+  must_run = true
+  memory = 256
+
+  volumes {
+    host_path      = "/var/run/docker.sock"
+    container_path = "/var/run/docker.sock"
+  }
+
+  command = [
+    "--api",
+    "--docker",
+    "--docker.watch",
+    "--entrypoints=Name:http Address::80",
+    "--logLevel=INFO"
+  ]
+
+  ports {
+    internal = 80
+    external = 80
+    ip       = "0.0.0.0"
+  }
+
+  labels {
+    label = "traefik.enable"
+    value = true
+  }
+
+  labels {
+    label = "traefik.docker.network"
+    value = "docknet"
+  }
+
+  labels {
+    label = "traefik.frontend.rule"
+    value = "Host:traefik.${var.domain}"
+  }
+
+  labels {
+    label = "traefik.port"
+    value = 8080
+  }
+
+}
+
+resource "docker_container" "nginx" {
+  name  = "nginx"
+  image = docker_image.nginx.name
+
+  networks_advanced {
+    name    = docker_network.nginx.name
+    aliases = ["docknet"]
+  }
+
+  restart = "unless-stopped"
+  destroy_grace_seconds = 30
+  must_run = true
+  memory = 256
+
+  volumes {
+    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
+    container_path = "/usr/share/nginx/html"
+  }
+
+  volumes {
+    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
+    container_path = "/etc/nginx/nginx.conf"
+  }
+
+  volumes {
+    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
+    container_path = "/etc/nginx/conf.d/app.conf"
+  }
+
+  env = [
+    "PUID=501",
+    "PGID=20"
+  ]
+
+  labels {
+    label = "traefik.enable"
+    value = true
+  }
+
+  labels {
+    label = "traefik.docker.network"
+    value = "docknet"
+  }
+
+  labels {
+    label = "traefik.frontend.rule"
+    value = "Host:www.${random_string.nginx.result}.${var.domain}"
+  }
+
+  labels {
+    label = "traefik.port"
+    value = 80
+  }
+
+  depends_on = [
+    docker_container.traefik,
+    random_string.nginx
+  ]
+
+}
+</code></pre>
+
+<p>Our <code>html/index.html</code>:</p>
+
+<pre><code class="html">&lt;!doctype html&gt;
+&lt;html lang="en"&gt;
+    &lt;head&gt;
+        &lt;meta charset="utf-8"&gt;
+        &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+
+        &lt;title&gt;Welcome&lt;/title&gt;
+
+        &lt;!-- Fonts --&gt;
+        &lt;link href="https://fonts.googleapis.com/css?family=Nunito:200,600" rel="stylesheet"&gt;
+
+        &lt;!-- Styles --&gt;
+        &lt;style&gt;
+            html, body {
+                background-color: #fff;
+                color: #636b6f;
+                font-family: 'Nunito', sans-serif;
+                font-weight: 200;
+                height: 100vh;
+                margin: 0;
+            }
+
+            .full-height {
+                height: 100vh;
+            }
+
+            .flex-center {
+                align-items: center;
+                display: flex;
+                justify-content: center;
+            }
+
+            .position-ref {
+                position: relative;
+            }
+
+            .top-right {
+                position: absolute;
+                right: 10px;
+                top: 18px;
+            }
+
+            .content {
+                text-align: center;
+            }
+
+            .title {
+                font-size: 84px;
+            }
+
+            .links &gt; a {
+                color: #636b6f;
+                padding: 0 25px;
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: .1rem;
+                text-decoration: none;
+                text-transform: uppercase;
+            }
+
+            .m-b-md {
+                margin-bottom: 30px;
+            }
+        &lt;/style&gt;
+    &lt;/head&gt;
+    &lt;body&gt;
+        &lt;div class="flex-center position-ref full-height"&gt;
+            &lt;div class="content"&gt;
+                &lt;div class="title m-b-md"&gt;
+                    Welcome
+                &lt;/div&gt;
+
+                &lt;div class="links"&gt;
+                    &lt;a href="https://ruan.dev" target="_blank"&gt;About Me&lt;/a&gt;
+                &lt;/div&gt;
+            &lt;/div&gt;
+        &lt;/div&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+
+<p>Our <code>configs/nginx.conf</code>:</p>
+
+<pre><code>user  nginx;
+worker_processes  auto;
+error_log  /var/log/nginx/error.log notice;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+    sendfile        on;
+    keepalive_timeout  65;
+
+    include /etc/nginx/conf.d/app.conf;
+}
+</code></pre>
+
+<p>And lastly, our <code>configs/app.conf</code>:</p>
+
+<pre><code>server {
+  listen 80;
+  server_name _;
+
+  location / {
+    root   /usr/share/nginx/html;
+    index  index.html;
+  }
+
+  location /healthz {
+    return 200 'up';
+  }
+}
+</code></pre>
+
+<h2>Deployment</h2>
+
+<p>Once everything is in place, or if you want to clone my repository, you can do that by:</p>
+
+<pre><code>git clone https://github.com/ruanbekker/terraform-docker-container-example
+cd terraform-docker-container-example
+</code></pre>
+
+<p>Then we can initialize terraform by fetching the required plugins:</p>
+
+<pre><code>terraform init
+</code></pre>
+
+<p>Once that completes we can run a plan:</p>
+
+<pre><code>terraform plan
+</code></pre>
+
+<p>And that should output something more or less like:</p>
+
+<pre><code>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with
+the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # docker_container.nginx will be created
+  + resource "docker_container" "nginx" {
+      + attach                = false
+      + bridge                = (known after apply)
+      + command               = (known after apply)
+      + container_logs        = (known after apply)
+      + destroy_grace_seconds = 30
+      + entrypoint            = (known after apply)
+      + env                   = [
+          + "PGID=20",
+          + "PUID=501",
+        ]
+      + exit_code             = (known after apply)
+      + gateway               = (known after apply)
+      + hostname              = (known after apply)
+      + id                    = (known after apply)
+      + image                 = "nginx:stable-alpine"
+      + init                  = (known after apply)
+      + ip_address            = (known after apply)
+      + ip_prefix_length      = (known after apply)
+      + ipc_mode              = (known after apply)
+      + log_driver            = "json-file"
+      + logs                  = false
+      + memory                = 256
+      + must_run              = true
+      + name                  = "nginx"
+      + network_data          = (known after apply)
+      + read_only             = false
+      + remove_volumes        = true
+      + restart               = "unless-stopped"
+      + rm                    = false
+      + security_opts         = (known after apply)
+      + shm_size              = (known after apply)
+      + start                 = true
+      + stdin_open            = false
+      + tty                   = false
+
+      + healthcheck {
+          + interval     = (known after apply)
+          + retries      = (known after apply)
+          + start_period = (known after apply)
+          + test         = (known after apply)
+          + timeout      = (known after apply)
+        }
+
+      + labels {
+          + label = "traefik.docker.network"
+          + value = "docknet"
+        }
+      + labels {
+          + label = "traefik.enable"
+          + value = "true"
+        }
+      + labels {
+          + label = "traefik.frontend.rule"
+          + value = (known after apply)
+        }
+      + labels {
+          + label = "traefik.port"
+          + value = "80"
+        }
+
+      + networks_advanced {
+          + aliases = [
+              + "docknet",
+            ]
+          + name    = "docknet"
+        }
+
+      + volumes {
+          + container_path = "/etc/nginx/conf.d/app.conf"
+          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
+        }
+      + volumes {
+          + container_path = "/etc/nginx/nginx.conf"
+          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
+        }
+      + volumes {
+          + container_path = "/usr/share/nginx/html"
+          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
+        }
+    }
+
+  # docker_container.traefik will be created
+  + resource "docker_container" "traefik" {
+      + attach                = false
+      + bridge                = (known after apply)
+      + command               = [
+          + "--api",
+          + "--docker",
+          + "--docker.watch",
+          + "--entrypoints=Name:http Address::80",
+          + "--logLevel=INFO",
+        ]
+      + container_logs        = (known after apply)
+      + destroy_grace_seconds = 30
+      + entrypoint            = (known after apply)
+      + env                   = (known after apply)
+      + exit_code             = (known after apply)
+      + gateway               = (known after apply)
+      + hostname              = (known after apply)
+      + id                    = (known after apply)
+      + image                 = "traefik:1.7.14"
+      + init                  = (known after apply)
+      + ip_address            = (known after apply)
+      + ip_prefix_length      = (known after apply)
+      + ipc_mode              = (known after apply)
+      + log_driver            = "json-file"
+      + logs                  = false
+      + memory                = 256
+      + must_run              = true
+      + name                  = "traefik"
+      + network_data          = (known after apply)
+      + read_only             = false
+      + remove_volumes        = true
+      + restart               = "unless-stopped"
+      + rm                    = false
+      + security_opts         = (known after apply)
+      + shm_size              = (known after apply)
+      + start                 = true
+      + stdin_open            = false
+      + tty                   = false
+
+      + healthcheck {
+          + interval     = (known after apply)
+          + retries      = (known after apply)
+          + start_period = (known after apply)
+          + test         = (known after apply)
+          + timeout      = (known after apply)
+        }
+
+      + labels {
+          + label = "traefik.docker.network"
+          + value = "docknet"
+        }
+      + labels {
+          + label = "traefik.enable"
+          + value = "true"
+        }
+      + labels {
+          + label = "traefik.frontend.rule"
+          + value = "Host:traefik.localdns.xyz"
+        }
+      + labels {
+          + label = "traefik.port"
+          + value = "8080"
+        }
+
+      + networks_advanced {
+          + aliases = [
+              + "docknet",
+            ]
+          + name    = "docknet"
+        }
+
+      + ports {
+          + external = 80
+          + internal = 80
+          + ip       = "0.0.0.0"
+          + protocol = "tcp"
+        }
+
+      + volumes {
+          + container_path = "/var/run/docker.sock"
+          + host_path      = "/var/run/docker.sock"
+        }
+    }
+
+  # docker_image.nginx will be created
+  + resource "docker_image" "nginx" {
+      + id          = (known after apply)
+      + latest      = (known after apply)
+      + name        = "nginx:stable-alpine"
+      + output      = (known after apply)
+      + repo_digest = (known after apply)
+    }
+
+  # docker_image.traefik will be created
+  + resource "docker_image" "traefik" {
+      + id          = (known after apply)
+      + latest      = (known after apply)
+      + name        = "traefik:1.7.14"
+      + output      = (known after apply)
+      + repo_digest = (known after apply)
+    }
+
+  # docker_network.nginx will be created
+  + resource "docker_network" "nginx" {
+      + driver      = "bridge"
+      + id          = (known after apply)
+      + internal    = (known after apply)
+      + ipam_driver = "default"
+      + name        = "docknet"
+      + options     = (known after apply)
+      + scope       = (known after apply)
+
+      + ipam_config {
+          + aux_address = (known after apply)
+          + gateway     = (known after apply)
+          + ip_range    = (known after apply)
+          + subnet      = (known after apply)
+        }
+    }
+
+  # random_string.nginx will be created
+  + resource "random_string" "nginx" {
+      + id          = (known after apply)
+      + length      = 8
+      + lower       = true
+      + min_lower   = 0
+      + min_numeric = 0
+      + min_special = 0
+      + min_upper   = 0
+      + number      = true
+      + result      = (known after apply)
+      + special     = false
+      + upper       = false
+    }
+
+Plan: 6 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + nginx_container_name   = "nginx"
+  + nginx_url              = (known after apply)
+  + traefik_container_name = "traefik"
+  + traefik_url            = "http://traefik.localdns.xyz/"
+</code></pre>
+
+<p>Which we can see will create 2 containers, traefik and then nginx, map the configs and html in place and also sets the traefik hostname in the labels for our respective containers so that we can reach them via the specific host headers.</p>
+
+<p>The we can deploy our containers:</p>
+
+<pre><code>terraform apply -auto-approve
+</code></pre>
+
+<p>Which will provide us the output detail defined from our <code>outputs.tf</code>:</p>
+
+<pre><code>Apply complete! Resources: 6 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+nginx_container_name = "nginx"
+nginx_url = "http://www.5igjdfq9.localdns.xyz/"
+traefik_container_name = "traefik"
+traefik_url = "http://traefik.localdns.xyz/"
+</code></pre>
+
+<h2>Access our Containers</h2>
+
+<p>We can access our Traefik Dashboard on <a href="http://traefik.localdns.xyz">http://traefik.localdns.xyz</a> and should look something like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/143064031-23e9dbe4-522b-4f11-96f9-f30a2104ee44.png" alt="image" /></p>
+
+<p>And when we access our Nginx container on <a href="http://www.5igjdfq9.localdns.xyz">http://www.5igjdfq9.localdns.xyz</a> it should look more or less like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/143064228-88107b75-31fc-41eb-aee0-f26ff976c42a.png" alt="image" /></p>
+
+<p>Running a <code>docker ps</code> will show our running containers:</p>
+
+<pre><code>docker ps
+CONTAINER ID   IMAGE                  COMMAND                  CREATED         STATUS                PORTS                NAMES
+e45158ae8cba   nginx:stable-alpine    "/docker-entrypoint   3 minutes ago   Up 3 minutes          80/tcp               nginx
+ebdbe42a0fcb   traefik:1.7.14         "/traefik --api       3 minutes ago   Up 3 minutes          0.0.0.0:80-&gt;80/tcp   traefik
+</code></pre>
+
+<h2>Cleanup</h2>
+
+<p>We can delete our containers by running:</p>
+
+<pre><code>terraform destroy -auto-approve
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Running Loki Behind Nginx Reverse Proxy]]></title>
@@ -1233,346 +1869,6 @@ scrape_configs:
 <li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Setup Blackbox Exporter</a></li>
 <li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Setup Alertmanager</a></li>
 <li><a href="https://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Setup Pushgateway</a></li>
-</ul>
-
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Secure Your Elasticsearch Cluster With Basic Auth Using Nginx and SSL From Letsencrypt]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx/"/>
-    <updated>2019-04-02T14:55:58-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/04/02/secure-your-elasticsearch-cluster-with-basic-auth-using-nginx</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will setup a reverse proxy using nginx to translate and load balance traffic through to our elasticsearch nodes. We will also protect our elasticsearch cluster with basic auth and use letsencrypt to retrieve free ssl certificates.</p>
-
-<p>We want to allow certain requests to be bypassed from authentication such as getting status from the cluster and certain requests we want to enforce authentication, such as indexing and deleting data.</p>
-
-<h2>Install Nginx:</h2>
-
-<p>Install nginx and the dependency package to create basic auth:</p>
-
-<pre><code class="bash">$ apt install nginx apache2-utils -y
-</code></pre>
-
-<h2>Configure Nginx for Reverse Proxy</h2>
-
-<p>We want to access our nginx proxy on port 80: <code>0.0.0.0:80</code> and the requests should be proxied through to elasticsearch private addresses: <code>10.0.0.10:9200</code> and <code>10.0.0.11:9200</code>. Traffic will be load balanced between our 2 nodes.</p>
-
-<p>Edit the main nginx configuration:</p>
-
-<pre><code>$ vim /etc/nginx/nginx.conf
-</code></pre>
-
-<p>and populate the information as shown below:</p>
-
-<pre><code>user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-
-events {
-    worker_connections 1024;
-    # multi_accept on;
-}
-
-http {
-
-    # basic Settings
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    # ssl settings
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
-    ssl_prefer_server_ciphers on;
-
-    # logging settings
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-
-    # gzip settings
-    gzip on;
-    gzip_disable "msie6";
-
-    # virtual host configs
-    include /etc/nginx/conf.d/*.conf;
-}
-</code></pre>
-
-<p>Next, edit the virtual host config:</p>
-
-<pre><code>$ vim /etc/nginx/conf.d/elasticsearch.conf
-</code></pre>
-
-<p>And populate the following config:</p>
-
-<pre><code># https://gist.github.com/sahilsk/b16cb51387847e6c3329
-
-upstream elasticsearch {
-    # define your es nodes
-    server 10.0.0.10:9200;
-    server 10.0.0.11:9200;
-    # persistent http connections
-    # https://www.elastic.co/blog/playing-http-tricks-nginx
-    keepalive 15;
-}
-
-server {
-  listen 80;
-  server_name elasticsearch.domain.com;
-
-  auth_basic "server auth";
-  auth_basic_user_file /etc/nginx/passwords;
-
-  location / {
-
-    # deny node shutdown api
-    if ($request_filename ~ "_shutdown") {
-      return 403;
-      break;
-    }
-
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_redirect off;
-  }
-
-  location = / {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_redirect off;
-    auth_basic "off";
-  }
-
-  location ~* ^(/_cluster/health|/_cat/health) {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_redirect off;
-    auth_basic "off";
-  }
-}
-</code></pre>
-
-<p>Set your username and password to protect your endpoint:</p>
-
-<pre><code class="bash">$ htpasswd -c /etc/nginx/passwords admin
-</code></pre>
-
-<p>Enable nginx on boot and restart the process:</p>
-
-<pre><code class="bash">$ systemctl enable nginx
-$ systemctl restart nginx
-</code></pre>
-
-<h2>Test it</h2>
-
-<p>Now make requests to elasticsearch via your nginx reverse proxy:</p>
-
-<pre><code class="bash">$ curl -H 'Content-Type: application/json' -u 'admin:admin' http://myproxy.domain.com/_cat/indices?v
-health status index       uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   first-index 1o6yM7tCSqagqoeihKM7_g   5   1          3            0     40.6kb         20.3kb
-</code></pre>
-
-<h2>Letsencrypt SSL Certificates</h2>
-
-<p>Add free SSL Certificates to your reverse proxy. Install certbot:</p>
-
-<pre><code class="bash">$ apt-get update
-$ apt-get install software-properties-common -y
-$ add-apt-repository universe
-$ add-apt-repository ppa:certbot/certbot
-$ apt-get update
-$ apt-get install certbot python-certbot-nginx -y
-</code></pre>
-
-<p>Request a Certificate for your domain:</p>
-
-<pre><code class="bash">$ certbot --manual certonly -d myproxy.domain.com -m my@email.com --preferred-challenges dns --agree-tos
-
-Obtaining a new certificate
-Performing the following challenges:
-dns-01 challenge for myproxy.domain.com
-</code></pre>
-
-<p>You will be prompted to make a dns change, since we requested the dns challenge. While this screen is here, we can go our dns provider and make the TXT record change as shown below:</p>
-
-<pre><code>Please deploy a DNS TXT record under the name
-_acme-challenge.myproxy.domain.com with the following value:
-
-xLP4y_YJvdAK7_aZMJ50gkudTDeIC3rX0x83aNJctGw
-
-Before continuing, verify the record is deployed.
-Press Enter to Continue
-Waiting for verification...
-Cleaning up challenges
-
-IMPORTANT NOTES:
- - Congratulations! Your certificate and chain have been saved at:
-   /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem
-   Your key file has been saved at:
-   /etc/letsencrypt/live/myproxy.domain.com/privkey.pem
-   Your cert will expire on 2019-07-01. To obtain a new or tweaked
-   version of this certificate in the future, simply run certbot
-   again. To non-interactively renew *all* of your certificates, run
-   "certbot renew"
- - If you like Certbot, please consider supporting our work by:
-
-   Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
-   Donating to EFF:                    https://eff.org/donate-le
-</code></pre>
-
-<h2>Update Nginx Config</h2>
-
-<p>Now that we have our ssl certificates, we need to update our nginx config to enable ssl, redirect http to https and point the ssl certificates and ssl private keys to the certificates that we retrieved from letsencrypt.</p>
-
-<p>Open up the virtual host nginx configuration:</p>
-
-<pre><code class="bash">$ vim /etc/nginx/conf.d/elasticsearch.conf
-</code></pre>
-
-<p>Update the config like the one below:</p>
-
-<pre><code>upstream elasticsearch {
-    server 10.0.0.10:9200;
-    server 10.0.0.11:9200;
-    keepalive 15;
-}
-
-server {
-  listen 80;
-  server_name myproxy.domain.com;
-  return 301 https://$host$request_uri;
-}
-
-server {
-  listen 443 ssl;
-  server_name myproxy.domain.com;
-
-  ssl_certificate /etc/letsencrypt/live/myproxy.domain.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/myproxy.domain.com/privkey.pem;
-
-  auth_basic "server auth";
-  auth_basic_user_file /etc/nginx/passwords;
-
-  location ^~ /.well-known/acme-challenge/ {
-    auth_basic off;
-  }
-
-  location / {
-
-    # deny node shutdown api
-    if ($request_filename ~ "_shutdown") {
-      return 403;
-      break;
-    }
-
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Host $http_host;
-    proxy_redirect off;
-  }
-
-  location = / {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Host $http_host;
-    proxy_redirect off;
-    auth_basic "off";
-  }
-
-  location ~* ^(/_cluster/health|/_cat/health) {
-    proxy_pass http://elasticsearch;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "Keep-Alive";
-    proxy_set_header Proxy-Connection "Keep-Alive";
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Host $http_host;
-    proxy_redirect off;
-    auth_basic "off";
-  }
-}
-</code></pre>
-
-<p>Restart the nginx process:</p>
-
-<pre><code class="bash">$ systemctl restart nginx
-</code></pre>
-
-<h2>Test the Nginx Proxy with SSL</h2>
-
-<p>Test the proxy with HTTP so that we can see that our nginx config redirects us to <a href="HTTPS:">HTTPS:</a></p>
-
-<pre><code class="bash">$ curl -iL -u 'admin:admin' http://myproxy.domain.com/_cat/nodes?v
-HTTP/1.1 301 Moved Permanently
-Server: nginx/1.14.0 (Ubuntu)
-Date: Tue, 02 Apr 2019 21:40:09 GMT
-Content-Type: text/html
-Content-Length: 194
-Connection: keep-alive
-Location: https://myproxy.domain.com/_cat/nodes?v
-
-HTTP/1.1 200 OK
-Server: nginx/1.14.0 (Ubuntu)
-Date: Tue, 02 Apr 2019 21:40:10 GMT
-Content-Type: text/plain; charset=UTF-8
-Content-Length: 276
-Connection: keep-alive
-
-ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-10.0.0.10               40          97   3    0.15    0.10     0.08 mdi       -      Lq9P7eP
-10.0.0.11               44          96   3    0.21    0.10     0.09 mdi       *      F5edOwK
-</code></pre>
-
-<p>Test the proxy with <a href="HTTPS:">HTTPS:</a></p>
-
-<pre><code class="bash">$ curl -i -u 'admin:admin' https://myproxy.domain.com/_cat/nodes?v
-HTTP/1.1 200 OK
-Server: nginx/1.14.0 (Ubuntu)
-Date: Tue, 02 Apr 2019 21:40:22 GMT
-Content-Type: text/plain; charset=UTF-8
-Content-Length: 276
-Connection: keep-alive
-
-ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-10.0.0.10               44          96   4    0.18    0.10     0.09 mdi       *      F5edOwK
-10.0.0.11               39          97   5    0.13    0.09     0.08 mdi       -      Lq9P7eP
-</code></pre>
-
-<p>Setup a cronjob to auto renew the certificates:</p>
-
-<pre><code class="bash">$ crontab -e
-</code></pre>
-
-<p>Populate the following line:</p>
-
-<pre><code class="bash">6 1,13 * * * /usr/bin/certbot renew --post-hook "systemctl restart nginx" --quiet
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html">https://certbot.eff.org/lets-encrypt/ubuntuxenial-nginx.html</a></li>
 </ul>
 
 ]]></content>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2021-11-03T01:21:28-04:00</updated>
+  <updated>2021-11-23T11:33:39-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,642 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Run Docker Containers With Terraform]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform/"/>
+    <updated>2021-11-23T11:06:03-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform</id>
+    <content type="html"><![CDATA[<p>In this post I will demonstrate how to use the terraform <a href="https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container">docker_container</a> resource from the <a href="https://github.com/kreuzwerker/terraform-provider-docker">docker provider</a> to run two docker containers, traefik and nginx and use the random provider to generate a random url for us.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>You will require <a href="https://www.terraform.io/downloads.html">terraform</a> and <a href="https://docs.docker.com/get-docker/">docker</a> to be installed.</p>
+
+<h2>Project Structure</h2>
+
+<p>The source code for this post is available on my github repository, but the project structure will look like the following:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/143061769-c619e7eb-c5b1-42bc-9fa4-ed59c15448fa.png" alt="image" /></p>
+
+<p>Our <code>providers.tf</code>:</p>
+
+<pre><code class="hcl">terraform {
+  required_providers {
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "2.15.0"
+    }
+    random = {
+      version = "~&gt; 3.0"
+    }
+  }
+}
+
+provider "docker" {
+  host = "unix:///var/run/docker.sock"
+}
+
+provider "random" {}
+</code></pre>
+
+<p>Our <code>variables.tf</code>:</p>
+
+<pre><code class="hcl">variable "domain" {
+  type    = string
+  default = "localdns.xyz"
+}
+</code></pre>
+
+<p>Our <code>outputs.tf</code>:</p>
+
+<pre><code class="hcl">output "nginx_container_name" {
+  value = docker_container.nginx.name
+}
+
+output "traefik_container_name" {
+  value = docker_container.traefik.name
+}
+
+output "traefik_url" {
+  value = "http://traefik.${var.domain}/"
+}
+
+output "nginx_url" {
+  value = "http://www.${random_string.nginx.result}.${var.domain}/"
+}
+</code></pre>
+
+<p>Our <code>main.tf</code>:</p>
+
+<pre><code class="hcl"># https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container
+
+resource "random_string" "nginx" {
+  length  = 8
+  upper   = false
+  special = false
+}
+
+resource "docker_image" "nginx" {
+  name = "nginx:stable-alpine"
+}
+
+resource "docker_image" "traefik" {
+  name = "traefik:1.7.14"
+}
+
+resource "docker_network" "nginx" {
+  name   = "docknet"
+  driver = "bridge"
+}
+
+resource "docker_container" "traefik" {
+  name  = "traefik"
+  image = docker_image.traefik.name
+
+  networks_advanced {
+    name    = docker_network.nginx.name
+    aliases = ["docknet"]
+  }
+
+  restart = "unless-stopped"
+  destroy_grace_seconds = 30
+  must_run = true
+  memory = 256
+
+  volumes {
+    host_path      = "/var/run/docker.sock"
+    container_path = "/var/run/docker.sock"
+  }
+
+  command = [
+    "--api",
+    "--docker",
+    "--docker.watch",
+    "--entrypoints=Name:http Address::80",
+    "--logLevel=INFO"
+  ]
+
+  ports {
+    internal = 80
+    external = 80
+    ip       = "0.0.0.0"
+  }
+
+  labels {
+    label = "traefik.enable"
+    value = true
+  }
+
+  labels {
+    label = "traefik.docker.network"
+    value = "docknet"
+  }
+
+  labels {
+    label = "traefik.frontend.rule"
+    value = "Host:traefik.${var.domain}"
+  }
+
+  labels {
+    label = "traefik.port"
+    value = 8080
+  }
+
+}
+
+resource "docker_container" "nginx" {
+  name  = "nginx"
+  image = docker_image.nginx.name
+
+  networks_advanced {
+    name    = docker_network.nginx.name
+    aliases = ["docknet"]
+  }
+
+  restart = "unless-stopped"
+  destroy_grace_seconds = 30
+  must_run = true
+  memory = 256
+
+  volumes {
+    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
+    container_path = "/usr/share/nginx/html"
+  }
+
+  volumes {
+    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
+    container_path = "/etc/nginx/nginx.conf"
+  }
+
+  volumes {
+    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
+    container_path = "/etc/nginx/conf.d/app.conf"
+  }
+
+  env = [
+    "PUID=501",
+    "PGID=20"
+  ]
+
+  labels {
+    label = "traefik.enable"
+    value = true
+  }
+
+  labels {
+    label = "traefik.docker.network"
+    value = "docknet"
+  }
+
+  labels {
+    label = "traefik.frontend.rule"
+    value = "Host:www.${random_string.nginx.result}.${var.domain}"
+  }
+
+  labels {
+    label = "traefik.port"
+    value = 80
+  }
+
+  depends_on = [
+    docker_container.traefik,
+    random_string.nginx
+  ]
+
+}
+</code></pre>
+
+<p>Our <code>html/index.html</code>:</p>
+
+<pre><code class="html">&lt;!doctype html&gt;
+&lt;html lang="en"&gt;
+    &lt;head&gt;
+        &lt;meta charset="utf-8"&gt;
+        &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+
+        &lt;title&gt;Welcome&lt;/title&gt;
+
+        &lt;!-- Fonts --&gt;
+        &lt;link href="https://fonts.googleapis.com/css?family=Nunito:200,600" rel="stylesheet"&gt;
+
+        &lt;!-- Styles --&gt;
+        &lt;style&gt;
+            html, body {
+                background-color: #fff;
+                color: #636b6f;
+                font-family: 'Nunito', sans-serif;
+                font-weight: 200;
+                height: 100vh;
+                margin: 0;
+            }
+
+            .full-height {
+                height: 100vh;
+            }
+
+            .flex-center {
+                align-items: center;
+                display: flex;
+                justify-content: center;
+            }
+
+            .position-ref {
+                position: relative;
+            }
+
+            .top-right {
+                position: absolute;
+                right: 10px;
+                top: 18px;
+            }
+
+            .content {
+                text-align: center;
+            }
+
+            .title {
+                font-size: 84px;
+            }
+
+            .links &gt; a {
+                color: #636b6f;
+                padding: 0 25px;
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: .1rem;
+                text-decoration: none;
+                text-transform: uppercase;
+            }
+
+            .m-b-md {
+                margin-bottom: 30px;
+            }
+        &lt;/style&gt;
+    &lt;/head&gt;
+    &lt;body&gt;
+        &lt;div class="flex-center position-ref full-height"&gt;
+            &lt;div class="content"&gt;
+                &lt;div class="title m-b-md"&gt;
+                    Welcome
+                &lt;/div&gt;
+
+                &lt;div class="links"&gt;
+                    &lt;a href="https://ruan.dev" target="_blank"&gt;About Me&lt;/a&gt;
+                &lt;/div&gt;
+            &lt;/div&gt;
+        &lt;/div&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+
+<p>Our <code>configs/nginx.conf</code>:</p>
+
+<pre><code>user  nginx;
+worker_processes  auto;
+error_log  /var/log/nginx/error.log notice;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+    sendfile        on;
+    keepalive_timeout  65;
+
+    include /etc/nginx/conf.d/app.conf;
+}
+</code></pre>
+
+<p>And lastly, our <code>configs/app.conf</code>:</p>
+
+<pre><code>server {
+  listen 80;
+  server_name _;
+
+  location / {
+    root   /usr/share/nginx/html;
+    index  index.html;
+  }
+
+  location /healthz {
+    return 200 'up';
+  }
+}
+</code></pre>
+
+<h2>Deployment</h2>
+
+<p>Once everything is in place, or if you want to clone my repository, you can do that by:</p>
+
+<pre><code>git clone https://github.com/ruanbekker/terraform-docker-container-example
+cd terraform-docker-container-example
+</code></pre>
+
+<p>Then we can initialize terraform by fetching the required plugins:</p>
+
+<pre><code>terraform init
+</code></pre>
+
+<p>Once that completes we can run a plan:</p>
+
+<pre><code>terraform plan
+</code></pre>
+
+<p>And that should output something more or less like:</p>
+
+<pre><code>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with
+the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # docker_container.nginx will be created
+  + resource "docker_container" "nginx" {
+      + attach                = false
+      + bridge                = (known after apply)
+      + command               = (known after apply)
+      + container_logs        = (known after apply)
+      + destroy_grace_seconds = 30
+      + entrypoint            = (known after apply)
+      + env                   = [
+          + "PGID=20",
+          + "PUID=501",
+        ]
+      + exit_code             = (known after apply)
+      + gateway               = (known after apply)
+      + hostname              = (known after apply)
+      + id                    = (known after apply)
+      + image                 = "nginx:stable-alpine"
+      + init                  = (known after apply)
+      + ip_address            = (known after apply)
+      + ip_prefix_length      = (known after apply)
+      + ipc_mode              = (known after apply)
+      + log_driver            = "json-file"
+      + logs                  = false
+      + memory                = 256
+      + must_run              = true
+      + name                  = "nginx"
+      + network_data          = (known after apply)
+      + read_only             = false
+      + remove_volumes        = true
+      + restart               = "unless-stopped"
+      + rm                    = false
+      + security_opts         = (known after apply)
+      + shm_size              = (known after apply)
+      + start                 = true
+      + stdin_open            = false
+      + tty                   = false
+
+      + healthcheck {
+          + interval     = (known after apply)
+          + retries      = (known after apply)
+          + start_period = (known after apply)
+          + test         = (known after apply)
+          + timeout      = (known after apply)
+        }
+
+      + labels {
+          + label = "traefik.docker.network"
+          + value = "docknet"
+        }
+      + labels {
+          + label = "traefik.enable"
+          + value = "true"
+        }
+      + labels {
+          + label = "traefik.frontend.rule"
+          + value = (known after apply)
+        }
+      + labels {
+          + label = "traefik.port"
+          + value = "80"
+        }
+
+      + networks_advanced {
+          + aliases = [
+              + "docknet",
+            ]
+          + name    = "docknet"
+        }
+
+      + volumes {
+          + container_path = "/etc/nginx/conf.d/app.conf"
+          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
+        }
+      + volumes {
+          + container_path = "/etc/nginx/nginx.conf"
+          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
+        }
+      + volumes {
+          + container_path = "/usr/share/nginx/html"
+          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
+        }
+    }
+
+  # docker_container.traefik will be created
+  + resource "docker_container" "traefik" {
+      + attach                = false
+      + bridge                = (known after apply)
+      + command               = [
+          + "--api",
+          + "--docker",
+          + "--docker.watch",
+          + "--entrypoints=Name:http Address::80",
+          + "--logLevel=INFO",
+        ]
+      + container_logs        = (known after apply)
+      + destroy_grace_seconds = 30
+      + entrypoint            = (known after apply)
+      + env                   = (known after apply)
+      + exit_code             = (known after apply)
+      + gateway               = (known after apply)
+      + hostname              = (known after apply)
+      + id                    = (known after apply)
+      + image                 = "traefik:1.7.14"
+      + init                  = (known after apply)
+      + ip_address            = (known after apply)
+      + ip_prefix_length      = (known after apply)
+      + ipc_mode              = (known after apply)
+      + log_driver            = "json-file"
+      + logs                  = false
+      + memory                = 256
+      + must_run              = true
+      + name                  = "traefik"
+      + network_data          = (known after apply)
+      + read_only             = false
+      + remove_volumes        = true
+      + restart               = "unless-stopped"
+      + rm                    = false
+      + security_opts         = (known after apply)
+      + shm_size              = (known after apply)
+      + start                 = true
+      + stdin_open            = false
+      + tty                   = false
+
+      + healthcheck {
+          + interval     = (known after apply)
+          + retries      = (known after apply)
+          + start_period = (known after apply)
+          + test         = (known after apply)
+          + timeout      = (known after apply)
+        }
+
+      + labels {
+          + label = "traefik.docker.network"
+          + value = "docknet"
+        }
+      + labels {
+          + label = "traefik.enable"
+          + value = "true"
+        }
+      + labels {
+          + label = "traefik.frontend.rule"
+          + value = "Host:traefik.localdns.xyz"
+        }
+      + labels {
+          + label = "traefik.port"
+          + value = "8080"
+        }
+
+      + networks_advanced {
+          + aliases = [
+              + "docknet",
+            ]
+          + name    = "docknet"
+        }
+
+      + ports {
+          + external = 80
+          + internal = 80
+          + ip       = "0.0.0.0"
+          + protocol = "tcp"
+        }
+
+      + volumes {
+          + container_path = "/var/run/docker.sock"
+          + host_path      = "/var/run/docker.sock"
+        }
+    }
+
+  # docker_image.nginx will be created
+  + resource "docker_image" "nginx" {
+      + id          = (known after apply)
+      + latest      = (known after apply)
+      + name        = "nginx:stable-alpine"
+      + output      = (known after apply)
+      + repo_digest = (known after apply)
+    }
+
+  # docker_image.traefik will be created
+  + resource "docker_image" "traefik" {
+      + id          = (known after apply)
+      + latest      = (known after apply)
+      + name        = "traefik:1.7.14"
+      + output      = (known after apply)
+      + repo_digest = (known after apply)
+    }
+
+  # docker_network.nginx will be created
+  + resource "docker_network" "nginx" {
+      + driver      = "bridge"
+      + id          = (known after apply)
+      + internal    = (known after apply)
+      + ipam_driver = "default"
+      + name        = "docknet"
+      + options     = (known after apply)
+      + scope       = (known after apply)
+
+      + ipam_config {
+          + aux_address = (known after apply)
+          + gateway     = (known after apply)
+          + ip_range    = (known after apply)
+          + subnet      = (known after apply)
+        }
+    }
+
+  # random_string.nginx will be created
+  + resource "random_string" "nginx" {
+      + id          = (known after apply)
+      + length      = 8
+      + lower       = true
+      + min_lower   = 0
+      + min_numeric = 0
+      + min_special = 0
+      + min_upper   = 0
+      + number      = true
+      + result      = (known after apply)
+      + special     = false
+      + upper       = false
+    }
+
+Plan: 6 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + nginx_container_name   = "nginx"
+  + nginx_url              = (known after apply)
+  + traefik_container_name = "traefik"
+  + traefik_url            = "http://traefik.localdns.xyz/"
+</code></pre>
+
+<p>Which we can see will create 2 containers, traefik and then nginx, map the configs and html in place and also sets the traefik hostname in the labels for our respective containers so that we can reach them via the specific host headers.</p>
+
+<p>The we can deploy our containers:</p>
+
+<pre><code>terraform apply -auto-approve
+</code></pre>
+
+<p>Which will provide us the output detail defined from our <code>outputs.tf</code>:</p>
+
+<pre><code>Apply complete! Resources: 6 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+nginx_container_name = "nginx"
+nginx_url = "http://www.5igjdfq9.localdns.xyz/"
+traefik_container_name = "traefik"
+traefik_url = "http://traefik.localdns.xyz/"
+</code></pre>
+
+<h2>Access our Containers</h2>
+
+<p>We can access our Traefik Dashboard on <a href="http://traefik.localdns.xyz">http://traefik.localdns.xyz</a> and should look something like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/143064031-23e9dbe4-522b-4f11-96f9-f30a2104ee44.png" alt="image" /></p>
+
+<p>And when we access our Nginx container on <a href="http://www.5igjdfq9.localdns.xyz">http://www.5igjdfq9.localdns.xyz</a> it should look more or less like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/143064228-88107b75-31fc-41eb-aee0-f26ff976c42a.png" alt="image" /></p>
+
+<p>Running a <code>docker ps</code> will show our running containers:</p>
+
+<pre><code>docker ps
+CONTAINER ID   IMAGE                  COMMAND                  CREATED         STATUS                PORTS                NAMES
+e45158ae8cba   nginx:stable-alpine    "/docker-entrypoint   3 minutes ago   Up 3 minutes          80/tcp               nginx
+ebdbe42a0fcb   traefik:1.7.14         "/traefik --api       3 minutes ago   Up 3 minutes          0.0.0.0:80-&gt;80/tcp   traefik
+</code></pre>
+
+<h2>Cleanup</h2>
+
+<p>We can delete our containers by running:</p>
+
+<pre><code>terraform destroy -auto-approve
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setup Traefik Version 2 on Docker]]></title>
@@ -162,7 +798,7 @@ Attaching to webapp, traefik
 traefik    | time="2021-07-11T11:02:22Z" level=info msg="Configuration loaded from flags."
 traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider aggregator.ProviderAggregator {}"
 traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *traefik.Provider {}"
-traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *docker.Provider {\"watch\":true,\"endpoint\":\"unix:///var/run/docker.so                                              ck\",\"defaultRule\":\"Host(``)\",\"swarmModeRefreshSeconds\":\"15s\"}"
+traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *docker.Provider {\"watch\":true,\"endpoint\":\"unix:///var/run/docker.so                                              ck\",\"defaultRule\":\"Host(`{{ normalize .Name }}`)\",\"swarmModeRefreshSeconds\":\"15s\"}"
 traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *acme.ChallengeTLSALPN {\"Timeout\":4000000000}"
 traefik    | time="2021-07-11T11:02:22Z" level=info msg="Starting provider *acme.Provider {\"email\":\"youremail@domain.com\",\"caServer\":\"https://                                              acme-v02.api.letsencrypt.org/directory\",\"storage\":\"acme.json\",\"keyType\":\"RSA4096\",\"httpChallenge\":{\"entryPoint\":\"http\"},\"ResolverNam                                              e\":\"letsencrypt\",\"store\":{},\"TLSChallengeProvider\":{\"Timeout\":4000000000},\"HTTPChallengeProvider\":{}}"
 traefik    | time="2021-07-11T11:02:22Z" level=info msg="Testing certificate renew..." providerName=letsencrypt.acme
@@ -556,7 +1192,7 @@ provisioning/group_vars/all
     - name: ensure ntpd is at the latest version
       apt:
         pkg: ntp
-        state: ""
+        state: "{{ desired_state }}"
       notify:
       - restart ntpd
   handlers:
@@ -1082,45 +1718,6 @@ ok
 <li><a href="https://github.com/ruanbekker/docker-logging-loki-fuentbit">https://github.com/ruanbekker/docker-logging-loki-fuentbit</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Reduce Docker Log Size on Disk]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/12/23/reduce-docker-log-size-on-disk/"/>
-    <updated>2020-12-23T04:11:35-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/12/23/reduce-docker-log-size-on-disk</id>
-    <content type="html"><![CDATA[<p>In cases where you are using the defaults for logging and your application logs a lot you can consume a lot of disk space and you can run out of disk space quite quickly.</p>
-
-<p>If it&rsquo;s a case where you already ran out of disk space, we can investigate the disk space consumed by docker logs:</p>
-
-<pre><code>$ cd /var/lib/docker/containers
-$ du -sh *
-6.0G    14052251a0f13f46f65bc73d10c01408130ee8ae71529600ba5bd6bee76af4ee
-1.2G    e6b40b1d30c5cf05e8cb201ca9abf6bd283d7cf7ceaa3be2a0422be7cd750a33
-</code></pre>
-
-<p>Referenced from <a href="https://blog.birkhoff.me/devops-truncate-docker-container-logs-periodically-to-free-up-server-disk-space/">https://blog.birkhoff.me/devops-truncate-docker-container-logs-periodically-to-free-up-server-disk-space/</a> you can truncate those files:</p>
-
-<pre><code>$ sh -c 'truncate -s 0 /var/lib/docker/containers/*/*-json.log'
-</code></pre>
-
-<p>Check the size again:</p>
-
-<pre><code>$ du -sh *
-40K 14052251a0f13f46f65bc73d10c01408130ee8ae71529600ba5bd6bee76af4ee
-36K e6b40b1d30c5cf05e8cb201ca9abf6bd283d7cf7ceaa3be2a0422be7cd750a33
-</code></pre>
-
-<p>To overcome this issue you can use this in logging options in your compose:</p>
-
-<pre><code>...
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "1m"
-...
-</code></pre>
 ]]></content>
   </entry>
   

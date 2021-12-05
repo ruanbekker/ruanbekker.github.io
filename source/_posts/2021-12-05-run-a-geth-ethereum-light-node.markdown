@@ -577,3 +577,9 @@ du -h /blockchain/ethereum/
 - [ETH WIki - JSON RPC](https://eth.wiki/json-rpc/API#personal_newAccount)
 - https://gist.github.com/swaldman/e58a866eafc4ff043c4099e394901a1e
 - [Run Geth on a Raspberry Pi - ethereum.org](https://ethereum.org/en/developers/tutorials/run-node-raspberry-pi/)
+
+## Thank You
+
+Thanks for reading, if you like my content, check out my **[website](https://ruan.dev)** or follow me at **[@ruanbekker](https://twitter.com/ruanbekker)** on Twitter.
+
+

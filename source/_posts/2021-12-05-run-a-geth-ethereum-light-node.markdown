@@ -12,6 +12,9 @@ In this tutorial we will install the Geth implementation of [Ethereum](https://e
 
 Once we have our node setup we will be using the API and Web3 to interact with our ethereum node.
 
+To understand the basics of blockchain better, you can read my post:
+- [The Basics of Blockchain](https://blog.ruanbekker.com/blog/2021/12/05/blockchain-basics/)
+
 ## Environment Setup
 
 We require go to be installed on our server, so from golang's [releases](https://golang.org/dl/) page get the latest version of Go and extract it:
@@ -206,6 +209,8 @@ And our balances should reflect in our account:
 ```json
 {"jsonrpc":"2.0","id":1,"result":"0x429d069189e0000"}
 ```
+
+## Hexadecimal and Wei
 
 As you can notice the value of our balance for our ethereum address is in hexadecimal format, we can convert it to decimal format:
 

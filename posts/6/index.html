@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="This is a getting started on python-rq tutorial and I will demonstrate how to work with asynchronous tasks using python redis queue (python-rq). What &hellip;">
+  <meta name="description" content="Links that I stumble upon, I always save to getpocket.com and tag them with the relevant info. So the one day I had this random idea to list my &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,579 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/06/08/ingesting-pocket-items-into-elasticsearch/">Ingesting Pocket.com Links Into Elasticsearch</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-06-08T23:06:23+02:00'><span class='date'><span class='date-month'>Jun</span> <span class='date-day'>8</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>11:06 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://img.sysadmins.co.za/wngib2.png" alt="python-elasticsearch-pocket" /></p>
+
+<p>Links that I stumble upon, I always save to <a href="https://getpocket.com">getpocket.com</a> and tag them with the relevant info. So the one day I had this random idea to list my links per category on a web service and I was wondering how to approach that scenario, which lead me to this.</p>
+
+<p>In this post we will consume all our saved bookmarks from pocket.com and ingest them into elasticsearch. But we dont want to read all the items from pocket&rsquo;s api every single time when the consumer run, therefore I have a method of checkpointing the last save run with a timestamp, so the next time it runs, we have context where to start from</p>
+
+<h2>What will we be doing</h2>
+
+<p>We will authenticate with pocket, then write the code how we will read the data from pocket and ingest them into elasticsearch.</p>
+
+<h2>Authentication</h2>
+
+<p>Head over to the <a href="https://getpocket.com/developer/apps/new">developer console</a> on pocket and create a new application then save your config in <code>config.py</code> which we will have as:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>application_name = "Awesome Links"
+</span><span class='line'>application_link = "https://getpocket.com/developer/app/x/x"
+</span><span class='line'>application_url = "https://awesome-links.domain"
+</span><span class='line'>consumer_key = "x"
+</span><span class='line'>access_token = "x"
+</span><span class='line'>es_host = ""
+</span><span class='line'>es_user = ""
+</span><span class='line'>es_pass = ""</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure that you have the requests library installed (<code>pip install requests</code>), the code that I used to get a access token:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>import config
+</span><span class='line'>import requests
+</span><span class='line'>import webbrowser
+</span><span class='line'>import time
+</span><span class='line'>
+</span><span class='line'>CONSUMER_KEY = config.consumer_key
+</span><span class='line'>BASE_URL = "https://getpocket.com"
+</span><span class='line'>REDIRECT_URL = "localhost" # &lt;-- you can run python -m SimpleHTTPServer 80 to have a local server listening on port 80
+</span><span class='line'>HEADERS = {"Content-Type": "application/json; charset=UTF-8", "X-Accept": "application/json"}
+</span><span class='line'>
+</span><span class='line'>def request_code():
+</span><span class='line'>    payload = {
+</span><span class='line'>        "consumer_key": CONSUMER_KEY,
+</span><span class='line'>        "redirect_uri": REDIRECT_URL,
+</span><span class='line'>    }
+</span><span class='line'>    response = requests.post("https://getpocket.com/v3/oauth/request", headers=HEADERS, json=payload)
+</span><span class='line'>    print("request_code")
+</span><span class='line'>    print(response.json())
+</span><span class='line'>    return response.json()["code"]
+</span><span class='line'>
+</span><span class='line'>def request_access_token(code):
+</span><span class='line'>    payload = {
+</span><span class='line'>        "consumer_key": CONSUMER_KEY,
+</span><span class='line'>        "code": code,
+</span><span class='line'>    }
+</span><span class='line'>    response = requests.post("https://getpocket.com/v3/oauth/authorize", headers=HEADERS, json=payload)
+</span><span class='line'>    print("request_access_token")
+</span><span class='line'>    print(response.json())
+</span><span class='line'>    time.sleep(10)
+</span><span class='line'>    return response.json()["access_token"]
+</span><span class='line'>
+</span><span class='line'>def request_authorization(code):
+</span><span class='line'>    url = "https://getpocket.com/auth/authorize?request_token={code}&redirect_uri={redirect_url}".format(code=code, redirect_url=REDIRECT_URL)
+</span><span class='line'>    print("request_authorization")
+</span><span class='line'>    print(url)
+</span><span class='line'>    webbrowser.open(url, new=2)
+</span><span class='line'>
+</span><span class='line'>def authenticate_pocket():
+</span><span class='line'>    code = request_code()
+</span><span class='line'>    request_authorization(code)
+</span><span class='line'>    return request_access_token(code)
+</span><span class='line'>
+</span><span class='line'>authenticate_pocket()
+</span><span class='line'># access_token will be returned</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Main App</h2>
+
+<p>Once we have our access_token we can save that to our <code>config.py</code>, we will also be working with elasticsearch so we can add our elasticsearch info there as well:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+<span class='line-number'>91</span>
+<span class='line-number'>92</span>
+<span class='line-number'>93</span>
+<span class='line-number'>94</span>
+<span class='line-number'>95</span>
+<span class='line-number'>96</span>
+<span class='line-number'>97</span>
+<span class='line-number'>98</span>
+<span class='line-number'>99</span>
+<span class='line-number'>100</span>
+<span class='line-number'>101</span>
+<span class='line-number'>102</span>
+<span class='line-number'>103</span>
+<span class='line-number'>104</span>
+<span class='line-number'>105</span>
+<span class='line-number'>106</span>
+<span class='line-number'>107</span>
+<span class='line-number'>108</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>#!/usr/bin/env python
+</span><span class='line'>
+</span><span class='line'>import config
+</span><span class='line'>import requests
+</span><span class='line'>import time
+</span><span class='line'>
+</span><span class='line'>CONSUMER_KEY = config.consumer_key
+</span><span class='line'>ACCESS_TOKEN = config.access_token
+</span><span class='line'>HEADERS = {"Content-Type": "application/json; charset=UTF-8", "X-Accept": "application/json"}
+</span><span class='line'>ES_HOST = config.es_host
+</span><span class='line'>ES_USER = config.es_user
+</span><span class='line'>ES_PASS = config.es_pass
+</span><span class='line'>
+</span><span class='line'>def write_checkpoint(timestamp):
+</span><span class='line'>    response = requests.put(
+</span><span class='line'>        'https://{eshost}/pocket-data/_doc/checkpoint'.format(eshost=ES_HOST),
+</span><span class='line'>        auth=(ES_USER, ES_PASS),
+</span><span class='line'>        json={
+</span><span class='line'>            "checkpoint_timestamp": timestamp
+</span><span class='line'>        }
+</span><span class='line'>    )
+</span><span class='line'>    return {"checkpoint_timestamp": timestamp}
+</span><span class='line'>
+</span><span class='line'>def get_checkpoint():
+</span><span class='line'>    response = requests.get(
+</span><span class='line'>        'https://{eshost}/pocket-data/_doc/checkpoint'.format(ES_HOST),
+</span><span class='line'>        auth=(ES_USER, ES_PASS)
+</span><span class='line'>    )
+</span><span class='line'>    checkpoint_timestamp = response.json()['_source']['checkpoint_timestamp']
+</span><span class='line'>    return checkpoint_timestamp
+</span><span class='line'>
+</span><span class='line'>def ingest_to_es(payload):
+</span><span class='line'>    response = requests.put(
+</span><span class='line'>        'https://{eshost}/pocket-data/_doc/{item_id}'.format(eshost=ES_HOST, item_id=payload['item_id']),
+</span><span class='line'>        auth=(ES_USER, ES_PASS),
+</span><span class='line'>        json=payload
+</span><span class='line'>    )
+</span><span class='line'>    return response.json()
+</span><span class='line'>
+</span><span class='line'>def convert_timestamp(epoch):
+</span><span class='line'>    return time.strftime('%Y-%m-%d', time.localtime(int(epoch)))
+</span><span class='line'>
+</span><span class='line'>def mapper(pocket_item):
+</span><span class='line'>    try:
+</span><span class='line'>        payload = {
+</span><span class='line'>            "item_id": pocket_item['item_id'],
+</span><span class='line'>            "time_added": convert_timestamp(pocket_item['time_added']),
+</span><span class='line'>            "url": pocket_item['resolved_url'],
+</span><span class='line'>            "title": pocket_item['resolved_title'],
+</span><span class='line'>            #"excerpt": pocket_item['excerpt'],
+</span><span class='line'>            "tags": list(pocket_item['tags'].keys())
+</span><span class='line'>        }
+</span><span class='line'>    except:
+</span><span class='line'>        print("error, item has been skipped:")
+</span><span class='line'>        print(pocket_item)
+</span><span class='line'>        payload = "skip"
+</span><span class='line'>    return payload
+</span><span class='line'>
+</span><span class='line'>def ingest_pocket_items(payload):
+</span><span class='line'>    pocket_items = list()
+</span><span class='line'>    pocket_items.extend(payload['list'].keys())
+</span><span class='line'>    last_scraped_time = payload['since']
+</span><span class='line'>    number_of_items = len(pocket_items)
+</span><span class='line'>    print('got {} items from pocket'.format(len(pocket_items)))
+</span><span class='line'>    time.sleep(5)
+</span><span class='line'>    if len(pocket_items) &gt; 0:
+</span><span class='line'>        for pocket_item in pocket_items:
+</span><span class='line'>            mapped_payload = mapper(payload['list'][pocket_item])
+</span><span class='line'>            #print(mapped_payload)
+</span><span class='line'>            if mapped_payload != "skip":
+</span><span class='line'>                ingest_to_es(mapped_payload)
+</span><span class='line'>            print("Number of items left to ingest: {}".format(number_of_items))
+</span><span class='line'>            number_of_items-=1
+</span><span class='line'>    else:
+</span><span class='line'>        print('nothing new')
+</span><span class='line'>    print('writing checkpoint to es: {}'.format(last_scraped_time))
+</span><span class='line'>    write_checkpoint(last_scraped_time)
+</span><span class='line'>    return 'done'
+</span><span class='line'>
+</span><span class='line'>def fetch_pocket_items(timestamp):
+</span><span class='line'>    response = requests.post(
+</span><span class='line'>        "https://getpocket.com/v3/get",
+</span><span class='line'>        headers=HEADERS,
+</span><span class='line'>        json={
+</span><span class='line'>            "consumer_key": CONSUMER_KEY,
+</span><span class='line'>            "access_token": ACCESS_TOKEN,
+</span><span class='line'>            "state": "all",
+</span><span class='line'>            "contentType": "article",
+</span><span class='line'>            "sort": "newest",
+</span><span class='line'>            "detailType": "complete",
+</span><span class='line'>            "since": int(timestamp)
+</span><span class='line'>        }
+</span><span class='line'>    )
+</span><span class='line'>    return response.json()
+</span><span class='line'>
+</span><span class='line'># get checkpoint
+</span><span class='line'>print('getting checkpoint id')
+</span><span class='line'>checkpoint_timestamp = get_checkpoint()
+</span><span class='line'>print('got checkpoint id: {}'.format(checkpoint_timestamp))
+</span><span class='line'>time.sleep(5)
+</span><span class='line'>
+</span><span class='line'># fetch items from pocket
+</span><span class='line'>print('fetch items from pocket')
+</span><span class='line'>pocket_response = fetch_pocket_items(checkpoint_timestamp)
+</span><span class='line'>
+</span><span class='line'># write
+</span><span class='line'>print('ingesting pocket items into es')
+</span><span class='line'>ingest_pocket_items(pocket_response)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So what we are doing here is that we are reading from the pocket api all the data that you saved in your account, and save the current time in epoch format, which we will need to tell our run when was the last time we consumed and keep that value in memory.</p>
+
+<p>Then from the data we received, we will map the data that we are interested in, into key/value pairs and then ingest the data into elasticsearch.</p>
+
+<p>After the initial ingestion has been done, which can take some time depending on how many items you have on pocket, as soon as it&rsquo;s done it will write the checkpoint time to elasticsearch so that the client know the next time from what time to search from again.</p>
+
+<p>This way we dont ingest all the items again, testing it:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ python server.py
+</span><span class='line'>getting checkpoint id
+</span><span class='line'>got checkpoint id: 1591045652
+</span><span class='line'>fetch items from pocket
+</span><span class='line'>ingesting pocket items into es
+</span><span class='line'>got 2 items from pocket
+</span><span class='line'>Number of items left to ingest: 2
+</span><span class='line'>Number of items left to ingest: 1
+</span><span class='line'>writing checkpoint to es: 1591392580</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Add one more item to pocket, then run our ingester again:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ python server.py
+</span><span class='line'>getting checkpoint id
+</span><span class='line'>got checkpoint id: 1591392580
+</span><span class='line'>fetch items from pocket
+</span><span class='line'>ingesting pocket items into es
+</span><span class='line'>got 1 items from pocket
+</span><span class='line'>Number of items left to ingest: 1
+</span><span class='line'>writing checkpoint to es: 1591650259</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Search for one document on elasticsearch:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -u user:pass 'https://es.domain/pocket-data/_search?pretty=true&size=1'
+</span><span class='line'>{
+</span><span class='line'>  "took" : 194,
+</span><span class='line'>  "timed_out" : false,
+</span><span class='line'>  "_shards" : {
+</span><span class='line'>    "total" : 5,
+</span><span class='line'>    "successful" : 5,
+</span><span class='line'>    "skipped" : 0,
+</span><span class='line'>    "failed" : 0
+</span><span class='line'>  },
+</span><span class='line'>  "hits" : {
+</span><span class='line'>    "total" : 766,
+</span><span class='line'>    "max_score" : 1.0,
+</span><span class='line'>    "hits" : [
+</span><span class='line'>      {
+</span><span class='line'>        "_index" : "pocket-data",
+</span><span class='line'>        "_type" : "_doc",
+</span><span class='line'>        "_id" : "2676106577",
+</span><span class='line'>        "_score" : 1.0,
+</span><span class='line'>        "_source" : {
+</span><span class='line'>          "item_id" : "2676106577",
+</span><span class='line'>          "time_added" : "2020-05-03",
+</span><span class='line'>          "url" : "https://programmaticponderings.com/2019/07/30/managing-aws-infrastructure-as-code-using-ansible-cloudformation-and-codebuild/",
+</span><span class='line'>          "title" : "Managing AWS Infrastructure as Code using Ansible, CloudFormation, and CodeBuild",
+</span><span class='line'>          "tags" : [
+</span><span class='line'>            "ansible",
+</span><span class='line'>            "aws",
+</span><span class='line'>            "cicd",
+</span><span class='line'>            "cloudformation",
+</span><span class='line'>            "devops"
+</span><span class='line'>          ]
+</span><span class='line'>        }
+</span><span class='line'>      }
+</span><span class='line'>    ]
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Search for aws tags:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -u x:x 'https://es.domain/pocket-data/_search?q=tags:aws&pretty=true&size=1'
+</span><span class='line'>{
+</span><span class='line'>  "took" : 101,
+</span><span class='line'>  "timed_out" : false,
+</span><span class='line'>  "_shards" : {
+</span><span class='line'>    "total" : 5,
+</span><span class='line'>    "successful" : 5,
+</span><span class='line'>    "skipped" : 0,
+</span><span class='line'>    "failed" : 0
+</span><span class='line'>  },
+</span><span class='line'>  "hits" : {
+</span><span class='line'>    "total" : 112,
+</span><span class='line'>    "max_score" : 2.6346242,
+</span><span class='line'>    "hits" : [
+</span><span class='line'>      {
+</span><span class='line'>        "_index" : "pocket-data",
+</span><span class='line'>        "_type" : "_doc",
+</span><span class='line'>        "_id" : "2673747670",
+</span><span class='line'>        "_score" : 2.6346242,
+</span><span class='line'>        "_source" : {
+</span><span class='line'>          "item_id" : "2673747670",
+</span><span class='line'>          "time_added" : "2019-07-28",
+</span><span class='line'>          "url" : "https://github.com/lgoodridge/serverless-chat",
+</span><span class='line'>          "title" : "lgoodridge/serverless-chat",
+</span><span class='line'>          "tags" : [
+</span><span class='line'>            "aws"
+</span><span class='line'>          ]
+</span><span class='line'>        }
+</span><span class='line'>      }
+</span><span class='line'>    ]
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Now what</h2>
+
+<p>Now that our data is in elasticsearch, we can build a search engine or a web application that can list our favorite links per category. I wil write up a post on the search engine in the future.</p>
+
+<h2>Thank You</h2>
+
+<p>If you liked this please send me a shout out on Twitter: <a href="https://twitter.com/ruanbekker">@ruanbekker</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2800,635 +3373,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/04/19/ipsec-site-to-site-vpn-with-dynamic-ips-with-openswan/">IPSec Site to Site VPN With Dynamic IPs With Openswan</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-04-19T20:58:17+02:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>19</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>8:58 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this tutorial we will setup a site to site ipsec vpn with strongswan and we will enable each server to discover the other vpn server via dynamic dns. We will also append to our config the ability of roadwarriors so that you will be able to connect to your homelab from any mobile or laptop device from any remote source.</p>
-
-<h2>Some background</h2>
-
-<p>Me and one of my friends decided to build a site to site vpn with strongswan so that our homelabs could be reachable to each other over private networks.</p>
-
-<p>One challenge that I thought of is that both of our internet providers don&rsquo;t support static ip addressing, so each vpn server needs to know where to connect to whenever the ip address changes.</p>
-
-<h2>What we will be doing</h2>
-
-<p>We will setup strongswan vpn on both servers and allow the private LAN ranges to be reachable for both sides. As I have a domain hosted on cloudflare, I will be using cloudflare&rsquo;s api to update the A record of each sides dns whenever the IP changes.</p>
-
-<h2>Environment</h2>
-
-<p>On my side, which I will be referring to as <strong>Side-A</strong>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Public DNS Name: side-a.example.com
-</span><span class='line'>Private Range: 192.168.0.0/24
-</span><span class='line'>VPN Server IP: 192.168.0.2</span></code></pre></td></tr></table></div></figure>
-
-
-<p>On my friend&rsquo;s side, which I will be referring to as <strong>Side-B</strong>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Public DNS Name: side-b.example.com
-</span><span class='line'>Private Range: 192.168.1.0/24
-</span><span class='line'>VPN Server IP: 192.168.1.2</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Cloudflare Dynamic DNS</h2>
-
-<p>You don&rsquo;t need to use Cloudflare, theres services such as dyndns.com, no-ip.com. But for this tutorial I will be using cloudflare to utilize my own domain.</p>
-
-<p>I will be using the <a href="https://github.com/LINKIWI/cloudflare-ddns-client">cloudflare-ddns-client</a></p>
-
-<p>First we need to create a API Token, head over to your dashboard: <a href="https://dash.cloudflare.com">dash.cloudflare.com</a>, head over to &ldquo;my profile&rdquo;, select &ldquo;API Tokens&rdquo;, then allow &ldquo;Read Zones&rdquo; and &ldquo;Edit DNS&rdquo;, then select &ldquo;Create Token&rdquo;. Keep the returned token value in a safe place.</p>
-
-<p>Install the pre-requirements:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt install python python-dev python-pip make curl build-essential -y</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Get the source and install:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/LINKIWI/cloudflare-ddns-client.git
-</span><span class='line'>$ cd cloudflare-ddns-client
-</span><span class='line'>$ make install</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We will now configure the cloudflare dynamic dns client, this will be done on both sides, but will only demonstrate for side-a:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cloudflare-ddns --configure
-</span><span class='line'>Use API token or API key to authenticate?
-</span><span class='line'>Choose [T]oken or [K]ey: T
-</span><span class='line'>Enter the API token you created at https://dash.cloudflare.com/profile/api-tokens.
-</span><span class='line'>Required permissions are READ Account.Access: Organizations, Identity Providers, and Groups; READ Zone.Zone; EDIT Zone.DNS
-</span><span class='line'>CloudFlare API token: [redacted]
-</span><span class='line'>Enter the domains for which you would like to automatically update the DNS records, delimited by a single comma.
-</span><span class='line'>Comma-delimited domains: side-a.example.com</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Testing it out to ensure the A record can be updated:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cloudflare-ddns --update-now
-</span><span class='line'>Found external IPv4: "1.x.x.x"
-</span><span class='line'>Listing all zones.
-</span><span class='line'>Finding all DNS records.
-</span><span class='line'>Updating the A record (ID x) of (sub)domain side-a.example.com (ID x) to 1.x.x.x.
-</span><span class='line'>DNS record updated successfully!</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can run this command from above in a cron, but I will use a bash script to only run when the public ip changed: <code>/opt/scripts/detect_ip_change.sh</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
-</span><span class='line'>set -ex
-</span><span class='line'>MY_DDNS_HOST="side-a.example.com"
-</span><span class='line'>
-</span><span class='line'>if [ $(dig ${MY_DDNS_HOST} +short) == $(curl -s icanhazip.com) ];
-</span><span class='line'>  then exit 0;
-</span><span class='line'>  else /usr/local/bin/cloudflare-ddns --update-now;
-</span><span class='line'>fi</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Make the file executable: <code>chmod +x /opt/scripts/detect_ip_change.sh</code> then edit your cronjobs: <code>crontab -e</code> and add the script:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>* * * * * /opt/scripts/detect_ip_change.sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This will keep your DNS updated, this needs to be done on both sides, if you want to use dynamic dns.</p>
-
-<h2>Port Forwarding</h2>
-
-<p>We will need to forward UDP traffic from the router to the VPN server, on both sides:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Port: UDP/500 
-</span><span class='line'>Target: VPN-Server-IP:500
-</span><span class='line'>
-</span><span class='line'>Port: UDP/4500
-</span><span class='line'>Target: VPN-Server-IP:4500</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create a Pre-Shared Key</h2>
-
-<p>Create a preshared key that will be used on both sides to authenticate:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ openssl rand -base64 36
-</span><span class='line'>pgDU4eKZaQNL7GNRWJPvZbaSYFn2PAFjK9vDOvxAQ85p7qc4</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This value will be used on both sides, which we will need later.</p>
-
-<h2>Install Strongswan on Side-A</h2>
-
-<p>Install strongswan and enable the service on boot:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt install strongswan -y
-</span><span class='line'>$ systemctl enable strongswan</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The left side will be the side we are configuring and the right side will be the remote side.</p>
-
-<p>Create the config: <code>/etc/ipsec.conf</code> and provide the following config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>config setup
-</span><span class='line'>    charondebug="all"
-</span><span class='line'>    uniqueids=yes
-</span><span class='line'>    virtual_private=
-</span><span class='line'>    cachecrls=no
-</span><span class='line'>
-</span><span class='line'>conn vpn-to-side-b
-</span><span class='line'>    type=tunnel
-</span><span class='line'>    authby=secret
-</span><span class='line'>    left=%defaultroute
-</span><span class='line'>    leftid=side-a.example.com
-</span><span class='line'>    leftsubnet=192.168.0.0/24
-</span><span class='line'>    right=%side-b.example.com
-</span><span class='line'>    rightid=side-b.example.com
-</span><span class='line'>    rightsubnet=192.168.1.0/24
-</span><span class='line'>    ike=aes256-sha2_256-modp1024!
-</span><span class='line'>    esp=aes256-sha2_256!
-</span><span class='line'>    keyingtries=0
-</span><span class='line'>    ikelifetime=1h
-</span><span class='line'>    lifetime=8h
-</span><span class='line'>    dpddelay=30
-</span><span class='line'>    dpdtimeout=120
-</span><span class='line'>    dpdaction=restart
-</span><span class='line'>    auto=start</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the secrets file: <code>/etc/ipsec.secrets</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>side-b.example.com : PSK "pgDU4eKZaQNL7GNRWJPvZbaSYFn2PAFjK9vDOvxAQ85p7qc4"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Append the following kernel parameters to <code>/etc/sysctl.conf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>net.ipv4.ip_forward = 1
-</span><span class='line'>net.ipv4.conf.all.accept_redirects = 0
-</span><span class='line'>net.ipv4.conf.all.send_redirects = 0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Save:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sysctl -p</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We now want to add a POSTROUTING and FORWARD rule using iptables:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ iptables -t nat -A POSTROUTING -s 192.168.1.0/24  -d 192.168.0.0/24 -j MASQUERADE
-</span><span class='line'>$ iptables -A FORWARD -s 192.168.1.0/24 -d 192.168.0.0/24 -j ACCEPT</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to route back:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ip route add 192.168.1.0/24 via 192.168.0.2 dev eth0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We want to persist the iptables and static route across reboots, so edit the <code>/etc/rc.local</code> file, if it&rsquo;s not there create it with the following values:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
-</span><span class='line'>iptables -t nat -A POSTROUTING -s 192.168.1.0/24  -d 192.168.0.0/24 -j MASQUERADE
-</span><span class='line'>iptables -A FORWARD -s 192.168.1.0/24 -d 192.168.0.0/24 -j ACCEPT
-</span><span class='line'>ip route add 192.168.1.0/24 via 192.168.0.2 dev eth0
-</span><span class='line'>exit 0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you created the file, make sure to apply executable permissions:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x /etc/rc.local</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Read the secrets and restart strongswan:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ipsec rereadsecrets
-</span><span class='line'>$ systemctl restart strongswan</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Install Strongswan on Side-B</h2>
-
-<p>Install strongswan and enable the service on boot:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt install strongswan -y
-</span><span class='line'>$ systemctl enable strongswan</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The left side will be the side we are configuring and the right side will be the remote side.</p>
-
-<p>Create the config: <code>/etc/ipsec.conf</code> and provide the following config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>config setup
-</span><span class='line'>    charondebug="all"
-</span><span class='line'>    uniqueids=yes
-</span><span class='line'>    virtual_private=
-</span><span class='line'>    cachecrls=no
-</span><span class='line'>
-</span><span class='line'>conn vpn-to-side-a
-</span><span class='line'>    type=tunnel
-</span><span class='line'>    authby=secret
-</span><span class='line'>    left=%defaultroute
-</span><span class='line'>    leftid=side-b.example.com
-</span><span class='line'>    leftsubnet=192.168.1.0/24
-</span><span class='line'>    right=%side-a.example.com
-</span><span class='line'>    rightid=side-a.example.com
-</span><span class='line'>    rightsubnet=192.168.0.0/24
-</span><span class='line'>    ike=aes256-sha2_256-modp1024!
-</span><span class='line'>    esp=aes256-sha2_256!
-</span><span class='line'>    keyingtries=0
-</span><span class='line'>    ikelifetime=1h
-</span><span class='line'>    lifetime=8h
-</span><span class='line'>    dpddelay=30
-</span><span class='line'>    dpdtimeout=120
-</span><span class='line'>    dpdaction=restart
-</span><span class='line'>    auto=start</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the secrets file: <code>/etc/ipsec.secrets</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>side-a.example.com : PSK "pgDU4eKZaQNL7GNRWJPvZbaSYFn2PAFjK9vDOvxAQ85p7qc4"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Append the following kernel parameters to <code>/etc/sysctl.conf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>net.ipv4.ip_forward = 1
-</span><span class='line'>net.ipv4.conf.all.accept_redirects = 0
-</span><span class='line'>net.ipv4.conf.all.send_redirects = 0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Save:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sysctl -p</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We now want to add a POSTROUTING and FORWARD rule using iptables:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ iptables -t nat -A POSTROUTING -s 192.168.0.0/24  -d 192.168.1.0/24 -j MASQUERADE
-</span><span class='line'>$ iptables -A FORWARD -s 192.168.0.0/24 -d 192.168.1.0/24 -j ACCEPT</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we need to route back:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ip route add 192.168.0.0/24 via 192.168.1.2 dev eth0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We want to persist the iptables and static route across reboots, so edit the <code>/etc/rc.local</code> file, if it&rsquo;s not there create it with the following values:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
-</span><span class='line'>iptables -t nat -A POSTROUTING -s 192.168.0.0/24  -d 192.168.1.0/24 -j MASQUERADE
-</span><span class='line'>iptables -A FORWARD -s 192.168.0.0/24 -d 192.168.1.0/24 -j ACCEPT
-</span><span class='line'>ip route add 192.168.0.0/24 via 192.168.1.2 dev eth0
-</span><span class='line'>exit 0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you created the file, make sure to apply executable permissions:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x /etc/rc.local</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Read the secrets and restart strongswan:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ipsec rereadsecrets
-</span><span class='line'>$ systemctl restart strongswan</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Verify Status</h2>
-
-<p>Verify that the ipsec tunnel is up on side-a:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ipsec statusall
-</span><span class='line'>
-</span><span class='line'>Connections:
-</span><span class='line'>  vpn-to-side-b:  %any...side-b.example.com,0.0.0.0/0,::/0  IKEv1/2
-</span><span class='line'>  vpn-to-side-b:   local:  [side-a.example.com] uses pre-shared key authentication
-</span><span class='line'>  vpn-to-side-b:   remote: [side-b.example.com] uses pre-shared key authentication
-</span><span class='line'>  vpn-to-side-b:   child:  192.168.0.0/24 === 192.168.1.0/24 TUNNEL
-</span><span class='line'>Security Associations (1 up, 0 connecting):
-</span><span class='line'>  vpn-to-side-b[1]: ESTABLISHED 28 minutes ago, 192.168.0.2[side-a.example.com]...4x.x.x.214[side-b.example.com]
-</span><span class='line'>  vpn-to-side-b[1]: IKEv2 SPIs: 81996170df1c927d_i e8294946491ddf08_r, pre-shared key reauthentication in 2 hours
-</span><span class='line'>  vpn-to-side-b[1]: IKE proposal: AES_CBC_128/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/ECP_256
-</span><span class='line'>  vpn-to-side-b{2}:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: cc4504be_i c294cb26_o
-</span><span class='line'>  vpn-to-side-b{2}:  AES_CBC_128/HMAC_SHA2_256_128, 0 bytes_i, 240 bytes_o (4 pkts, 7s ago), rekeying in 18 minutes
-</span><span class='line'>  vpn-to-side-b{2}:   192.168.0.0/24 === 192.168.1.0/24</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify that the ipsec tunnel is up on side-b:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ipsec statusall
-</span><span class='line'>
-</span><span class='line'>Connections:
-</span><span class='line'> vpn-to-side-a:  %any...side-a.example.com,0.0.0.0/0,::/0  IKEv1/2
-</span><span class='line'> vpn-to-side-a:   local:  [side-b.example.com] uses pre-shared key authentication
-</span><span class='line'> vpn-to-side-a:   remote: [side-a.example.com] uses pre-shared key authentication
-</span><span class='line'> vpn-to-side-a:   child:  192.168.1.0/24 === 192.168.0.0/24 TUNNEL
-</span><span class='line'>Security Associations (1 up, 0 connecting):
-</span><span class='line'> vpn-to-side-a[2]: ESTABLISHED 20 minutes ago, 192.168.1.2[side-b.example.com]...14x.x.x.x[side-a.example.com]
-</span><span class='line'> vpn-to-side-a[2]: IKEv2 SPIs: 81996170df1c927d_i e8294946491ddf08_r, pre-shared key reauthentication in 2 hours
-</span><span class='line'> vpn-to-side-a[2]: IKE proposal: AES_CBC_128/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/ECP_256
-</span><span class='line'> vpn-to-side-a{2}:  INSTALLED, TUNNEL, reqid 1, ESP in UDP SPIs: c294cb26_i cc4504be_o
-</span><span class='line'> vpn-to-side-a{2}:  AES_CBC_128/HMAC_SHA2_256_128, 0 bytes_i, 0 bytes_o, rekeying in 26 minutes
-</span><span class='line'> vpn-to-side-a{2}:   192.168.1.0/24 === 192.168.0.0/24</span></code></pre></td></tr></table></div></figure>
-
-
-<p>From side-a (192.168.0.2) ping the gateway on side-b (192.168.1.1):</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ $ ping -c2 192.168.1.1
-</span><span class='line'>PING 10.3.96.2 (192.168.1.1) 56(84) bytes of data.
-</span><span class='line'>64 bytes from 192.168.1.1: icmp_seq=1 ttl=62 time=11.9 ms</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you want to be able to reach the private range of the other side of the vpn from any device on your network, you should add a static route on your router to inform your default gateway where to route traffic to.</p>
-
-<p>In this case on side-a (192.168.0.0/24) we want to inform our default gateway to route (192.168.1.0/24) to the VPN as it knows to route that destination over the VPN.</p>
-
-<p>On side-a, on your router, add a static route:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Route: 192.168.1.0
-</span><span class='line'>Subnet: 255.255.255.0
-</span><span class='line'>Gateway: 192.168.0.2</span></code></pre></td></tr></table></div></figure>
-
-
-<p>On side-b, on your router, add a static route:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>Route: 192.168.0.0
-</span><span class='line'>Subnet: 255.255.255.0
-</span><span class='line'>Gateway: 192.168.1.2</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Optional: Roadwarrior VPN Clients</h2>
-
-<p>This step is optional, but since we can access each others homelabs, we thought it would be nice to be able to access the resources from mobile devices or laptops when we are on remote locations.</p>
-
-<p>We made it that each VPN owner will connect to its own endpoint (for roadwarriors), so side-a (which will be me) will connect to its own dns endpoint to connect when away from home..</p>
-
-<p>I will only demonstrate how to append your config to add the ability for a roadwarrion vpn connection, append to the <code>/etc/ipsec.conf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'># ...
-</span><span class='line'>conn ikev2-vpn
-</span><span class='line'>    auto=add
-</span><span class='line'>    type=tunnel
-</span><span class='line'>    authby=secret
-</span><span class='line'>    left=%any
-</span><span class='line'>    leftid=side-a.roadwarrior
-</span><span class='line'>    leftsubnet=0.0.0.0/0
-</span><span class='line'>    right=%any
-</span><span class='line'>    rightid=%any
-</span><span class='line'>    rightsourceip=10.10.0.0/24
-</span><span class='line'>    rightdns=192.168.0.1,8.8.8.8
-</span><span class='line'>    auto=start</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Append the secret in <code>/etc/ipsec.secrets</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'># ...
-</span><span class='line'>side-a.roadwarrior my-laptop : PSK "MySuperSecureSecret123"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Add the vpn ip&rsquo;s that we will assign to the roardwarrior clients to the routing table:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ip route add 10.10.0.0/24 via 192.168.0.2 dev eth0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If you only want the roadwarriors to be able to reach your network, you will only forward to the local network such as:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ iptables -A FORWARD -s 10.10.0.0/24 -d 192.168.0.0/24 -j ACCEPT</span></code></pre></td></tr></table></div></figure>
-
-
-<p>But we will be forwarding traffic to all destinations:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ iptables -A FORWARD -s 10.10.0.0/24 -d 0.0.0.0/0 -j ACCEPT
-</span><span class='line'>$ iptables -t nat -A POSTROUTING -s 10.10.0.0/24 -d 0.0.0.0/0 -j MASQUERADE</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Remember to append the routes to <code>/etc/rc.local</code> to persist across reboots.</p>
-
-<p>Reread the secrets and restart strongswan:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ipsec rereadsecrets
-</span><span class='line'>$ systemctl restart strongswan</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Connecting your VPN Client, I will be using my Laptop, with the following details:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>VPN Type: IKEv2
-</span><span class='line'>Description: Home VPN
-</span><span class='line'>Server: side-a.example.com
-</span><span class='line'>Remote ID: side-a.roadwarrior
-</span><span class='line'>Local ID: my-laptop
-</span><span class='line'>User Authentication: None
-</span><span class='line'>Secret: MySuperSecureSecret123</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>In this tutorial I demonstrated how to setup a site to site ipsec vpn between 2 sides that consists of internet connections that has dynamic ip&rsquo;s and also appending roadwarrior config so that you can connect to your homelab from anywhere in the world.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -3486,6 +3430,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/02/20/create-dns-records-with-terraform-on-cloudflare/">Create DNS Records With Terraform on Cloudflare</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2021/12/05/blockchain-basics/">Blockchain Basics</a>
       </li>
     
@@ -3499,10 +3447,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2021/11/03/setup-traefik-version-2-on-docker/">Setup Traefik Version 2 on Docker</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/10/11/install-nodejs-on-linux-using-nvm/">Install Nodejs on Linux Using NVM</a>
       </li>
     
   </ul>

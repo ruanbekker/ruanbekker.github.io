@@ -48,7 +48,7 @@ First we will create a project directory:
 
 First we will create the `providers.tf` which we define our provider and the required parameters for the provider:
 
-```hcl
+```
 terraform {
   required_providers {
     cloudflare = {
@@ -66,7 +66,7 @@ provider "cloudflare" {
 
 As you can see, we are referencing `email` and `api_token` as variables, therefore we need to define those variables in `variables.tf`:
 
-```hcl
+```
 variable "cloudflare_email" {
   type        = string
   description = "clouflare email address"
@@ -82,7 +82,7 @@ In our `main.tf`, we are first using a data resource to query cloudflare for our
 
 Then we are going to create the A record `foobar` and provide the value of `127.0.0.1`:
 
-```hcl
+```
 data "cloudflare_zone" "this" {
   name = "rbkr.xyz"
 }
@@ -98,7 +98,7 @@ resource "cloudflare_record" "foobar" {
 
 Then we are defining our outputs in `outputs.tf`:
 
-```hcl
+```
 output "record" {
   value = cloudflare_record.foobar.hostname
 }

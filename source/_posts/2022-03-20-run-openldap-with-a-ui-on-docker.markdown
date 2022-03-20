@@ -103,4 +103,4 @@ Result: Success (0)
 
 ## Thank You
 
-Thanks for reading, if you like my content, check out my **[website](https://ruan.dev)**, read my **[newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog) or follow me at **[@ruanbekker](https://twitter.com/ruanbekker)** on Twitter.
+Thanks for reading, if you like my content, check out my **[website](https://ruan.dev)**, read my **[newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog)** or follow me at **[@ruanbekker](https://twitter.com/ruanbekker)** on Twitter.

@@ -34,7 +34,7 @@ We will go through the following topics:
 First we will install `nginx` and `apache2-utils`. In my use-case I will be using Ubuntu 20 as my operating system:
 
 ```
-$ sudo apt update && sudp apt install nginx apache2-utils -y
+$ sudo apt update && sudo apt install nginx apache2-utils -y
 ```
 
 Next we will install Loki v2.0.0, if you are upgrading from a previous version of Loki, I would recommend checking out the [upgrade guide](https://github.com/grafana/loki/releases/tag/v2.0.0) mentioned on their releases page.

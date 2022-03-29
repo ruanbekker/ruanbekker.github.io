@@ -1,0 +1,173 @@
+---
+layout: post
+title: "Matrix Bot using SimpleMatrixBotlib in Python"
+date: 2022-03-29 18:50:43 -0400
+comments: true
+categories: ["python", "matrix", "bots"]
+---
+
+In this tutorial we will setup a python bot for our matrix chat server. We will only do a couple of basic commands, so that you have a solid base to build from.
+
+## Matrix Server
+
+In our [previous post](https://blog.ruanbekker.com/blog/2022/03/29/setup-matrix-and-element-chat-server/) we've setup a matrix and element server, so if you are following along, head over to that post to setup your matrix server before continuing.
+
+## Matrix Python Bot
+
+We will be using [simple-matrix-bot-lib](https://simple-matrix-bot-lib.readthedocs.io/en/latest/index.html) as our bot, so first we need to install it:
+
+```bash
+python3 -m pip install simplematrixbotlib
+python3 -m pip install requests
+```
+
+We will need to authenticate with a user, so I will create a dedicated bot user:
+
+```bash
+$ docker exec -it matrix_synapse_1 bash
+> register_new_matrix_user -c /data/homeserver.yaml http://localhost:8008
+
+New user localpart [root]: bot
+Password:
+Confirm password:
+Make admin [no]: no
+Sending registration request...
+Success!
+```
+
+The most basic bot is the echo bot, which just returns your message:
+
+```python
+import subprocess
+import simplematrixbotlib as botlib
+from urllib.request import ssl, socket
+import datetime, smtplib
+
+MATRIX_URL="https://matrix.foodmain.co.za"
+MATRIX_USER="@foobot:matrix.foodmain.co.za"
+MATRIX_PASS="foo"
+
+creds = botlib.Creds(MATRIX_URL, MATRIX_USER, MATRIX_PASS)
+bot = botlib.Bot(creds)
+
+PREFIX = '!'
+
+# Help
+@bot.listener.on_message_event
+async def help(room, message):
+    match = botlib.MessageMatch(room, message, bot, PREFIX)
+    if match.is_not_from_this_bot() and match.prefix() and match.command("help"):
+        help_message = """
+        Help:
+         - !help
+        Echo
+         - !echo your message
+        """
+        await bot.api.send_markdown_message(room.room_id, help_message)
+
+# Echo
+@bot.listener.on_message_event
+async def echo(room, message):
+    """
+    Example function that "echoes" arguements.
+    Usage:
+    user:  !echo say something
+    bot:   say something
+    """
+    match = botlib.MessageMatch(room, message, bot, PREFIX)
+    if match.is_not_from_this_bot() and match.prefix() and match.command("echo"):
+        print("Room: {r}, User: {u}, Message: {m}".format(r=room.room_id, u=str(message).split(':')[0], m=str(message).split(':')[-1].strip()))
+        await bot.api.send_text_message(room.room_id, " ".join(arg for arg in match.args()))
+
+bot.run()
+```
+
+Run the bot, invite the bot user to a room and test it with `!echo hi`
+
+For a bot having to use the requests library, such as getting a quote from an api, we can use the following:
+
+```python
+import random
+import subprocess
+import simplematrixbotlib as botlib
+import requests
+from urllib.request import ssl, socket
+import datetime, smtplib
+
+MATRIX_URL="https://matrix.foodmain.co.za"
+MATRIX_USER="@foobot:matrix.foodmain.co.za"
+MATRIX_PASS="foo"
+
+creds = botlib.Creds(MATRIX_URL, MATRIX_USER, MATRIX_PASS)
+bot = botlib.Bot(creds)
+
+PREFIX = '!'
+
+# Help
+@bot.listener.on_message_event
+async def help(room, message):
+    match = botlib.MessageMatch(room, message, bot, PREFIX)
+    if match.is_not_from_this_bot() and match.prefix() and match.command("help"):
+        help_message = """
+        Help:
+         - !help
+        Echo
+         - !echo msg
+        Fortune:
+         - !fortune
+        Quote:
+         - !quote
+        """
+        await bot.api.send_markdown_message(room.room_id, help_message)
+
+# Echo
+@bot.listener.on_message_event
+async def echo(room, message):
+    """
+    Example function that "echoes" arguements.
+    Usage:
+    user: !echo say something
+    bot:  say something
+    """
+    match = botlib.MessageMatch(room, message, bot, PREFIX)
+    if match.is_not_from_this_bot() and match.prefix() and match.command("echo"):
+        print("Room: {r}, User: {u}, Message: {m}".format(r=room.room_id, u=str(message).split(':')[0], m=str(message).split(':')[-1].strip()))
+        await bot.api.send_text_message(room.room_id, " ".join(arg for arg in match.args()))
+
+# Fortune
+@bot.listener.on_message_event
+async def fortune(room, message):
+    match = botlib.MessageMatch(room, message, bot)
+    if match.is_not_from_this_bot and match.command('!fortune'):
+        fortune = subprocess.run(['/usr/games/fortune'], capture_output=True).stdout.decode('UTF-8')
+        print(fortune)
+        await bot.api.send_text_message(room.room_id, fortune)
+
+# Quotes
+@bot.listener.on_message_event
+async def quote(room, message):
+    match = botlib.MessageMatch(room, message, bot, PREFIX)
+    if match.is_not_from_this_bot() and match.prefix() and (
+            match.command("quote") or match.command("q")):
+
+        response = requests.get('https://goquotes-api.herokuapp.com/api/v1/random?count=1').json()['quotes'][0]
+        quote = response['text']
+        author = response['author']
+        tag = response['tag']
+        formatted_message = f"""{quote}
+        - {author}
+        """
+        #await bot.api.send_text_message(room.room_id, formatted_message)
+        await bot.api.send_markdown_message(room.room_id,  formatted_message)
+
+bot.run()
+```
+
+## Resources
+
+For more information, have a look at their [documentation](https://simple-matrix-bot-lib.readthedocs.io/en/latest/index.html)
+
+## Thank You
+
+Thanks for reading, if you like my content, check out my **[website](https://ruan.dev)**, read my **[newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog)** or follow me at **[@ruanbekker](https://twitter.com/ruanbekker)** on Twitter.
+

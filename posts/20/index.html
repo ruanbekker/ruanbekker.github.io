@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="This is a repost of my first blogpost which is hosted on my Raspberry Pi Cluster (04 July 2017), that runs Docker Swarm and is served from my Home in &hellip;">
+  <meta name="description" content="As the curious person that I am, I like to play around with new stuff that I stumble upon, and one of them was having a docker swarm cluster running &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,606 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/23/setting-up-a-docker-swarm-cluster-on-3-raspberrypi-nodes/">Setting Up a Docker Swarm Cluster on 3 RaspberryPi Nodes</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-23T16:24:00-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>4:24 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/rpi-docker-swarm.png" alt="" /></p>
+
+<p>As the curious person that I am, I like to play around with new stuff that I stumble upon, and one of them was having a docker swarm cluster running on 3 Raspberry Pi&rsquo;s on my LAN.</p>
+
+<p>The idea is to have 3 Raspberry Pi&rsquo;s (Model 3 B), a Manager Node, and 2 Worker Nodes, each with a 32 GB SanDisk SD Card, which I will also be part of a 3x Replicated GlusterFS Volume that will come in handy later for some data that needs persistent data.</p>
+
+<p>More Inforamtion on: <a href="https://docs.docker.com/engine/swarm/">Docker Swarm</a></p>
+
+<script id="mNCC" language="javascript">
+    medianet_width = "728";
+    medianet_height = "90";
+    medianet_crid = "218284798";
+    medianet_versionId = "3111299"; 
+  </script>
+
+
+<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
+
+
+<h2>Provision Raspbian on each RaspberryPi</h2>
+
+<p>Grab the <a href="https://downloads.raspberrypi.org/raspbian_lite_latest">Latest Raspbian Lite ISO</a> and the following <a href="https://www.raspberrypi.org/documentation/installation/installing-images/">source</a> will help provisioning your RaspberryPi with Raspbian.</p>
+
+<h2>Installing Docker on Raspberry PI</h2>
+
+<p>On each node, run the following to install docker, and also add your user to the docker group, so that you can run docker commands with a normal user:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt-get update <span class="o">&amp;&amp;</span> sudo apt-get upgrade -y
+</span><span class='line'><span class="nv">$ </span>sudo apt-get remove docker.io
+</span><span class='line'><span class="nv">$ </span>curl https://get.docker.com <span class="p">|</span> sudo bash
+</span><span class='line'><span class="nv">$ </span>sudo usermod -aG docker pi
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you have an internal DNS Server, set an A Record for each node, or for simplicity, set your hosts file on each node so that your hostname for each node responds to it&rsquo;s provisioned IP Address:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/hosts
+</span><span class='line'>192.168.0.2   rpi-01
+</span><span class='line'>192.168.0.3   rpi-02
+</span><span class='line'>192.168.0.4   rpi-03
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Also, to have passwordless SSH, from each node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-01
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-02
+</span><span class='line'><span class="nv">$ </span>ssh-copy-id rpi-03
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Initialize the Swarm</h2>
+
+<p>Time to set up our swarm. As we have more than one network interface, we will need to setup our swarm by specifying the IP Address of our network interface that is accessible from our LAN:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>ifconfig eth0
+</span><span class='line'>eth0      Link encap:Ethernet  HWaddr a1:12:bc:d3:cd:4d
+</span><span class='line'>          inet addr:192.168.0.2  Bcast:192.168.0.255  Mask:255.255.255.0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that we have our IP Address, initialize the swarm on the manager node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker swarm init --advertise-addr 192.168.0.2
+</span><span class='line'>Swarm initialized: current node <span class="o">(</span>siqyf3yricsvjkzvej00a9b8h<span class="o">)</span> is now a manager.
+</span><span class='line'>
+</span><span class='line'>To add a worker to this swarm, run the following <span class="nb">command</span>:
+</span><span class='line'>
+</span><span class='line'>    docker swarm join <span class="se">\</span>
+</span><span class='line'>    --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 <span class="se">\</span>
+</span><span class='line'>    192.168.0.2:2377
+</span><span class='line'>
+</span><span class='line'>To add a manager to this swarm, run <span class="s1">&#39;docker swarm join-token manager&#39;</span> and follow the instructions.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then from <code>rpi-02</code> join the manager node of the swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
+</span><span class='line'>This node joined a swarm as a worker.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then from <code>rpi-03</code> join the manager node of the swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>docker swarm join --token SWMTKN-1-0eith07xkcg93lzftuhjmxaxwfa6mbkjsmjzb3d3sx9cobc2zp-97s6xzdt27y2gk3kpm0cgo6y2 192.168.0.2:2377
+</span><span class='line'>This node joined a swarm as a worker.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then from the manager node: <code>rpi-01</code>, ensure that the nodes are checked in:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker node ls
+</span><span class='line'>ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
+</span><span class='line'>62s7gx1xdm2e3gp5qoca2ru0d     rpi-03              Ready               Active
+</span><span class='line'>6fhyfy9yt761ar9pl84dkxck3 *   rpi-01              Ready               Active              Leader
+</span><span class='line'>pg0nyy9l27mtfc13qnv9kywe7     rpi-02              Ready               Active
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Setting Up a Replicated GlusterFS Volume</h2>
+
+<p>I have decided to setup a replicated glusterfs volume to have data replicated throughout the cluster if I would like to have some persistent data. From each node, install the GlusterFS Client and Server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt install glusterfs-server glusterfs-client -y <span class="o">&amp;&amp;</span> sudo systemctl <span class="nb">enable </span>glusterfs-server
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Probe the other nodes from the manager node:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster peer probe rpi-02
+</span><span class='line'>peer probe: success.
+</span><span class='line'>
+</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster peer probe rpi-03
+</span><span class='line'>peer probe: success.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Ensure that we can see all 3 nodes in our GlusterFS Pool:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster pool list
+</span><span class='line'>UUID                                    Hostname        State
+</span><span class='line'>778c7463-ba48-43de-9f97-83a960bba99e    rpi-02          Connected
+</span><span class='line'>00a20a3c-5902-477e-a8fe-da35aa955b5e    rpi-03          Connected
+</span><span class='line'>d82fb688-c50b-405d-a26f-9cb2922cce75    localhost       Connected
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>From each node, create the directory where GlusterFS will store the data for the bricks that we will specify when creating the volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
+</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
+</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo mkdir -p /gluster/brick
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next, create a 3 Way Replicated GlusterFS Volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume create rpi-gfs replica <span class="m">3</span> <span class="se">\</span>
+</span><span class='line'>rpi-01:/gluster/brick <span class="se">\</span>
+</span><span class='line'>rpi-02:/gluster/brick <span class="se">\</span>
+</span><span class='line'>rpi-03:/gluster/brick <span class="se">\</span>
+</span><span class='line'>force
+</span><span class='line'>
+</span><span class='line'>volume create: rpi-gfs: success: please start the volume to access data
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Start the GlusterFS Volume:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume start rpi-gfs
+</span><span class='line'>volume start: rpi-gfs: success
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify the GlusterFS Volume Info, and from the below output you will see that the volume is replicated 3 ways from the 3 bricks that we specified</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo gluster volume info
+</span><span class='line'>
+</span><span class='line'>Volume Name: rpi-gfs
+</span><span class='line'>Type: Replicate
+</span><span class='line'>Volume ID: b879db15-63e9-44ca-ad76-eeaa3e247623
+</span><span class='line'>Status: Started
+</span><span class='line'>Number of Bricks: <span class="m">1</span> x <span class="nv">3</span> <span class="o">=</span> 3
+</span><span class='line'>Transport-type: tcp
+</span><span class='line'>Bricks:
+</span><span class='line'>Brick1: rpi-01:/gluster/brick
+</span><span class='line'>Brick2: rpi-02:/gluster/brick
+</span><span class='line'>Brick3: rpi-03:/gluster/brick
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Mount the GlusterFS Volume on each Node, first on <code>rpi-01</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo umount /mnt
+</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
+</span><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then on <code>rpi-02</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo umount /mnt
+</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
+</span><span class='line'>pi@rpi-02:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And lastly on <code>rpi-03</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo umount /mnt
+</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo <span class="nb">echo</span> <span class="s1">&#39;localhost:/rpi-gfs /mnt glusterfs defaults,_netdev,backupvolfile-server=localhost 0 0&#39;</span> &gt;&gt; /etc/fstab
+</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo mount.glusterfs localhost:/rpi-gfs /mnt
+</span><span class='line'>pi@rpi-03:~ <span class="nv">$ </span>sudo chown -R pi:docker /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then your GlusterFS Volume will be mounted on all the nodes, and when a file is written to the <code>/mnt/</code> partition, data will be replicated to all the nodes in the Cluster:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem          Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/root            30G  4.5G   24G  16% /
+</span><span class='line'>localhost:/rpi-gfs   30G  4.5G   24G  16% /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create a Web Service on Docker Swarm:</h2>
+
+<p>Let&rsquo;s create a Web Service in our Swarm, called <code>web</code> and by specifying <code>1</code> replica and publishing the exposed port <code>80</code> to our containers port <code>80</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service create --name web --replicas <span class="m">1</span> --publish 80:80 hypriot/rpi-busybox-httpd
+</span><span class='line'>vsvyanuw6q6yf4jr52m5z7vr1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verifying that our Service is Started and equals to the desired replica count:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+</span><span class='line'>vsvyanuw6q6y        web                 replicated          1/1                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Inspecting the Service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service inspect web
+</span><span class='line'><span class="o">[</span>
+</span><span class='line'>    <span class="o">{</span>
+</span><span class='line'>        <span class="s2">&quot;ID&quot;</span>: <span class="s2">&quot;vsvyanuw6q6yf4jr52m5z7vr1&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Version&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;Index&quot;</span>: 2493
+</span><span class='line'>        <span class="o">}</span>,
+</span><span class='line'>        <span class="s2">&quot;CreatedAt&quot;</span>: <span class="s2">&quot;2017-07-16T21:20:00.017836646Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;UpdatedAt&quot;</span>: <span class="s2">&quot;2017-07-16T21:20:00.026359794Z&quot;</span>,
+</span><span class='line'>        <span class="s2">&quot;Spec&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;Name&quot;</span>: <span class="s2">&quot;web&quot;</span>,
+</span><span class='line'>            <span class="s2">&quot;Labels&quot;</span>: <span class="o">{}</span>,
+</span><span class='line'>            <span class="s2">&quot;TaskTemplate&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                <span class="s2">&quot;ContainerSpec&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                    <span class="s2">&quot;Image&quot;</span>: <span class="s2">&quot;hypriot/rpi-busybox-httpd:latest@sha256:c00342f952d97628bf5dda457d3b409c37df687c859df82b9424f61264f54cd1&quot;</span>,
+</span><span class='line'>                    <span class="s2">&quot;StopGracePeriod&quot;</span>: 10000000000,
+</span><span class='line'>                    <span class="s2">&quot;DNSConfig&quot;</span>: <span class="o">{}</span>
+</span><span class='line'>                <span class="o">}</span>,
+</span><span class='line'>                <span class="s2">&quot;Resources&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                    <span class="s2">&quot;Limits&quot;</span>: <span class="o">{}</span>,
+</span><span class='line'>                    <span class="s2">&quot;Reservations&quot;</span>: <span class="o">{}</span>
+</span><span class='line'>                <span class="o">}</span>,
+</span><span class='line'>                <span class="s2">&quot;RestartPolicy&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                    <span class="s2">&quot;Condition&quot;</span>: <span class="s2">&quot;any&quot;</span>,
+</span><span class='line'>                    <span class="s2">&quot;Delay&quot;</span>: 5000000000,
+</span><span class='line'>                    <span class="s2">&quot;MaxAttempts&quot;</span>: 0
+</span><span class='line'>                <span class="o">}</span>,
+</span><span class='line'>                <span class="s2">&quot;Placement&quot;</span>: <span class="o">{}</span>,
+</span><span class='line'>                <span class="s2">&quot;ForceUpdate&quot;</span>: 0
+</span><span class='line'>            <span class="o">}</span>,
+</span><span class='line'>            <span class="s2">&quot;Mode&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                <span class="s2">&quot;Replicated&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                    <span class="s2">&quot;Replicas&quot;</span>: 1
+</span><span class='line'>                <span class="o">}</span>
+</span><span class='line'>            <span class="o">}</span>,
+</span><span class='line'>            <span class="s2">&quot;UpdateConfig&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                <span class="s2">&quot;Parallelism&quot;</span>: 1,
+</span><span class='line'>                <span class="s2">&quot;FailureAction&quot;</span>: <span class="s2">&quot;pause&quot;</span>,
+</span><span class='line'>                <span class="s2">&quot;Monitor&quot;</span>: 5000000000,
+</span><span class='line'>                <span class="s2">&quot;MaxFailureRatio&quot;</span>: 0,
+</span><span class='line'>                <span class="s2">&quot;Order&quot;</span>: <span class="s2">&quot;stop-first&quot;</span>
+</span><span class='line'>            <span class="o">}</span>,
+</span><span class='line'>            <span class="s2">&quot;RollbackConfig&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                <span class="s2">&quot;Parallelism&quot;</span>: 1,
+</span><span class='line'>                <span class="s2">&quot;FailureAction&quot;</span>: <span class="s2">&quot;pause&quot;</span>,
+</span><span class='line'>                <span class="s2">&quot;Monitor&quot;</span>: 5000000000,
+</span><span class='line'>                <span class="s2">&quot;MaxFailureRatio&quot;</span>: 0,
+</span><span class='line'>                <span class="s2">&quot;Order&quot;</span>: <span class="s2">&quot;stop-first&quot;</span>
+</span><span class='line'>            <span class="o">}</span>,
+</span><span class='line'>            <span class="s2">&quot;EndpointSpec&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                <span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;vip&quot;</span>,
+</span><span class='line'>                <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
+</span><span class='line'>                    <span class="o">{</span>
+</span><span class='line'>                        <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
+</span><span class='line'>                        <span class="s2">&quot;TargetPort&quot;</span>: 80,
+</span><span class='line'>                        <span class="s2">&quot;PublishedPort&quot;</span>: 80,
+</span><span class='line'>                        <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
+</span><span class='line'>                    <span class="o">}</span>
+</span><span class='line'>                <span class="o">]</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>        <span class="o">}</span>,
+</span><span class='line'>        <span class="s2">&quot;Endpoint&quot;</span>: <span class="o">{</span>
+</span><span class='line'>            <span class="s2">&quot;Spec&quot;</span>: <span class="o">{</span>
+</span><span class='line'>                <span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;vip&quot;</span>,
+</span><span class='line'>                <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
+</span><span class='line'>                    <span class="o">{</span>
+</span><span class='line'>                        <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
+</span><span class='line'>                        <span class="s2">&quot;TargetPort&quot;</span>: 80,
+</span><span class='line'>                        <span class="s2">&quot;PublishedPort&quot;</span>: 80,
+</span><span class='line'>                        <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
+</span><span class='line'>                    <span class="o">}</span>
+</span><span class='line'>                <span class="o">]</span>
+</span><span class='line'>            <span class="o">}</span>,
+</span><span class='line'>            <span class="s2">&quot;Ports&quot;</span>: <span class="o">[</span>
+</span><span class='line'>                <span class="o">{</span>
+</span><span class='line'>                    <span class="s2">&quot;Protocol&quot;</span>: <span class="s2">&quot;tcp&quot;</span>,
+</span><span class='line'>                    <span class="s2">&quot;TargetPort&quot;</span>: 80,
+</span><span class='line'>                    <span class="s2">&quot;PublishedPort&quot;</span>: 80,
+</span><span class='line'>                    <span class="s2">&quot;PublishMode&quot;</span>: <span class="s2">&quot;ingress&quot;</span>
+</span><span class='line'>                <span class="o">}</span>
+</span><span class='line'>            <span class="o">]</span>,
+</span><span class='line'>            <span class="s2">&quot;VirtualIPs&quot;</span>: <span class="o">[</span>
+</span><span class='line'>                <span class="o">{</span>
+</span><span class='line'>                    <span class="s2">&quot;NetworkID&quot;</span>: <span class="s2">&quot;zjerz0xsw39icnh24enja4cgk&quot;</span>,
+</span><span class='line'>                    <span class="s2">&quot;Addr&quot;</span>: <span class="s2">&quot;10.255.0.13/16&quot;</span>
+</span><span class='line'>                <span class="o">}</span>
+</span><span class='line'>            <span class="o">]</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Docker Swarm&rsquo;s Routing mesh takes care of the internal routing, so requests will respond even if the container is not running on the node that you are making the request against.</p>
+
+<p>With that said, verifying on which node our service is running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ps web
+</span><span class='line'>ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE           ERROR               PORTS
+</span><span class='line'>sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running <span class="m">2</span> minutes ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When we make a HTTP Request to one of these Nodes IP Addresses, our request will be responded with this awesome static page:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/armed-with-hypriot.jpg" alt="" /></p>
+
+<p>We can see we only have one container in our swarm, let&rsquo;s scale that up to <code>3</code> containers:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service scale <span class="nv">web01</span><span class="o">=</span>3
+</span><span class='line'>web01 scaled to 3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that the service is scaled to 3 containers, requests will be handled using the round-robin algorithm. To ensured that the service scaled, we will see that we will have 3 replicas:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+</span><span class='line'>vsvyanuw6q6y        web                 replicated          3/3                 hypriot/rpi-busybox-httpd:latest                         *:891-&gt;80/tcp
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verifying where these containers are running on:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service ps web01
+</span><span class='line'>ID                  NAME                IMAGE                              NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+</span><span class='line'>sd67cd18s5m0        web.1               hypriot/rpi-busybox-httpd:latest   rpi-02              Running             Running <span class="m">2</span> minutes ago
+</span><span class='line'>ope3ya7hh9j4        web.2               hypriot/rpi-busybox-httpd:latest   rpi-03              Running             Running <span class="m">30</span> seconds ago
+</span><span class='line'>07m1ww7ptxro        web.3               hypriot/rpi-busybox-httpd:latest   rpi-01              Running             Running <span class="m">28</span> seconds ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Lastly, removing the service from our swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>pi@rpi-01:~ <span class="nv">$ </span>docker service rm web01
+</span><span class='line'>web01
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Massive Thanks:</h2>
+
+<p>a Massive thanks to <a href="https://twitter.com/alexellisuk">Alex Ellis</a> for mentioning me on one of his blogposts:</p>
+
+<ul>
+<li><a href="https://blog.alexellis.io/blog-community-inspiration/">https://blog.alexellis.io/blog-community-inspiration/</a></li>
+</ul>
+
+
+<p><img src="https://objects.ruanbekker.com/assets/images/tweet-alexellis-21072017.png" alt="" /></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1882,127 +2482,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/08/27/improving-performance-from-your-lambda-function-from-the-use-of-global-variables/">Improving Performance From Your Lambda Function From the Use of Global Variables</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-08-27T08:30:30-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>27</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>8:30 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/aws-logo.png" alt="" /></p>
-
-<p>When using Lambda and DynamoDB, you can use global variables to gain performance when your data from DynamoDB does not get updated that often, and you would like to use caching to prevent a API call to DynamoDB everytime your Lambda Function gets invoked.</p>
-
-<p>You can use external services like Redis or Memcached when you would like to verify that each invocation is as true as your source of truth which will be DynamoDB. Then your application logic can work with caching.</p>
-
-<p>But in this case we just want a simple piece of code that can keep the state for the remaining time that the function is running on that underlying container. I am not 100% sure, but I have seen that the data can be cached for up to 60 minutes. This can be a total mess when your data gets updated regularly, then I would set all my calls in functions, as the global variables keeps their state for some time.</p>
-
-<script id="mNCC" language="javascript">
-    medianet_width = "728";
-    medianet_height = "90";
-    medianet_crid = "218284798";
-    medianet_versionId = "3111299"; 
-  </script>
-
-
-<script src="//contextual.media.net/nmedianet.js?cid=8CUD78FSV"></script>
-
-
-<h2>Example Function:</h2>
-
-<p>This function gets data from DynamoDB, iterates through a small dataset (10 Items), and appends each group name to my list which is the value of my <code>groups</code> key inside my dictionary.</p>
-
-<p>Due to my global variable <code>mydata</code>, you will see that the first invocation will result in a API call to DynamoDB as the length of my <code>mydata["groups"]</code> being 0, the second invocation, the data will exist inside my global variable, therefore I am returning the data directly from my variable.</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">boto3</span><span class="o">,</span> <span class="nn">json</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">resource</span><span class="p">(</span><span class="s">&#39;dynamodb&#39;</span><span class="p">,</span> <span class="n">region_name</span><span class="o">=</span><span class="s">&#39;eu-west-1&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="n">tbl</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="s">&#39;my-dynamo-table&#39;</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">mydata</span> <span class="o">=</span> <span class="p">{}</span>
-</span><span class='line'><span class="n">mydata</span><span class="p">[</span><span class="s">&quot;groups&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-</span><span class='line'>    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">mydata</span><span class="p">[</span><span class="s">&quot;groups&quot;</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-</span><span class='line'>        <span class="c"># data is not cached, make call to dynamo</span>
-</span><span class='line'>        <span class="n">data</span> <span class="o">=</span> <span class="n">tbl</span><span class="o">.</span><span class="n">scan</span><span class="p">()</span>
-</span><span class='line'>        <span class="n">group_data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s">&#39;Items&#39;</span><span class="p">]</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">group_data</span><span class="p">:</span>
-</span><span class='line'>            <span class="n">mydata</span><span class="p">[</span><span class="s">&quot;groups&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">group</span><span class="p">[</span><span class="s">&#39;name&#39;</span><span class="p">])</span>
-</span><span class='line'>        <span class="k">return</span> <span class="n">mydata</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
-</span><span class='line'>        <span class="c"># return cached content</span>
-</span><span class='line'>        <span class="k">return</span> <span class="n">mydata</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Results of my Invocations:</h2>
-
-<p>The first call that I made:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/lambda-caching-miss.png" alt="" /></p>
-
-<p>The second call that I made:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/lambda-caching-hit.png" alt="" /></p>
-
-<p>If you need a small layer of caching that can improve your latency, this can be used. But if you need your data to be accurate from every call, rather looking into a different approach and external caching services.</p>
-
-<h2>Resources:</h2>
-
-<p><em>Take advantage of Execution Context reuse to improve the performance of your function.</em>:</p>
-
-<p>&ldquo;Make sure any externalized configuration or dependencies that your code retrieves are stored and referenced locally after initial execution. Limit the re-initialization of variables/objects on every invocation. Instead use static initialization/constructor, global/static variables and singletons. Keep alive and reuse connections (HTTP, database, etc.) that were established during a previous invocation.&rdquo;</p>
-
-<ul>
-<li><a href="https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html">https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html</a></li>
-<li><a href="https://aws.amazon.com/blogs/compute/container-reuse-in-lambda/">https://aws.amazon.com/blogs/compute/container-reuse-in-lambda/</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/21">&larr; Older</a>
@@ -2058,6 +2537,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/03/29/setup-matrix-and-element-chat-server/">Setup Matrix and Element Chat Server</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/03/22/load-environment-variables-from-file-in-python/">Load Environment Variables From File in Python</a>
       </li>
     
@@ -2071,10 +2554,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2022/02/20/create-dns-records-with-terraform-on-cloudflare/">Create DNS Records With Terraform on Cloudflare</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2021/12/05/blockchain-basics/">Blockchain Basics</a>
       </li>
     
   </ul>

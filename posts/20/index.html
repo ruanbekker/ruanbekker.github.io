@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="The Environment: I had my Ghost Blog listening on port 2368 and exposing port 80 on Docker so that the port translation directs port 80 traffic to &hellip;">
+  <meta name="description" content="In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image. We will then push the image &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,322 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/23/building-a-raspberry-pi-nginx-image-with-caching-on-alpine-for-docker-swarm/">Building a Raspberry Pi Nginx Image With Caching on Alpine for Docker Swarm</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-23T17:00:02-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>5:00 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image.</p>
+
+<p>We will then push the image to gitlab&rsquo;s private registry, and then run the service on docker swarm.</p>
+
+<h2>Create the backend service:</h2>
+
+<p>We will upstream to our blog using ghost, which you can deploy using:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create --name blog --network docknet rbekker87/armhf-ghost:2.0.3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Current File Structure:</h2>
+
+<p>Our file structure for the assets we need to build the reverse proxy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>find .
+</span><span class='line'>./conf.d
+</span><span class='line'>./conf.d/blog.conf
+</span><span class='line'>./Dockerfile
+</span><span class='line'>./nginx.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><code>Dockerfile</code></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>FROM hypriot/rpi-alpine-scratch
+</span><span class='line'>MAINTAINER Ruan Bekker
+</span><span class='line'>
+</span><span class='line'>RUN apk update <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    apk add nginx <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    rm -rf /etc/nginx/nginx.conf <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    chown -R nginx:nginx /var/lib/nginx <span class="o">&amp;&amp;</span> <span class="se">\</span>
+</span><span class='line'>    rm -rf /var/cache/apk/*
+</span><span class='line'>
+</span><span class='line'>ADD nginx.conf /etc/nginx/
+</span><span class='line'>ADD conf.d/blog.conf /etc/nginx/conf.d/
+</span><span class='line'>
+</span><span class='line'>EXPOSE 80
+</span><span class='line'>
+</span><span class='line'>CMD <span class="o">[</span><span class="s2">&quot;nginx&quot;</span>, <span class="s2">&quot;-g&quot;</span>, <span class="s2">&quot;daemon off;&quot;</span><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><code>nginx.conf</code></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>user nginx<span class="p">;</span>
+</span><span class='line'>worker_processes 1<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>events <span class="o">{</span>
+</span><span class='line'>    worker_connections 1024<span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>error_log  /var/log/nginx/nginx_error.log warn<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>http <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    sendfile        on<span class="p">;</span>
+</span><span class='line'>    tcp_nodelay         on<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    gzip              on<span class="p">;</span>
+</span><span class='line'>    gzip_http_version 1.0<span class="p">;</span>
+</span><span class='line'>    gzip_proxied      any<span class="p">;</span>
+</span><span class='line'>    gzip_min_length   500<span class="p">;</span>
+</span><span class='line'>    gzip_disable      <span class="s2">&quot;MSIE [1-6]\.&quot;</span><span class="p">;</span>
+</span><span class='line'>    gzip_types        text/plain text/xml text/css
+</span><span class='line'>                      text/comma-separated-values
+</span><span class='line'>                      text/javascript
+</span><span class='line'>                      application/x-javascript
+</span><span class='line'>                      application/atom+xml<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    log_format  main  <span class="s1">&#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;</span>
+</span><span class='line'>                      <span class="s1">&#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;</span><span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    access_log  /var/log/nginx/access.log  main<span class="p">;</span>
+</span><span class='line'>    error_log   /var/log/nginx/error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    proxy_cache_path /var/cache/nginx/ <span class="nv">levels</span><span class="o">=</span>1:2 <span class="nv">keys_zone</span><span class="o">=</span>nginx_cache:5m <span class="nv">max_size</span><span class="o">=</span>128m <span class="nv">inactive</span><span class="o">=</span>60m<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    keepalive_timeout  60<span class="p">;</span>
+</span><span class='line'>    server_tokens      off<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    include /etc/nginx/conf.d/*.conf<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Hostname resolution to our Ghost Blog Service: In our swarm we have a service called blog which is associated to the docknet network, so the dns resolution will resolve to the vip of the service. As seen in the figure below:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+</span><span class='line'>nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<ul>
+<li><code>conf.d/blog.conf</code></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>upstream ghost_blog <span class="o">{</span>
+</span><span class='line'>    server blog:2368<span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>server <span class="o">{</span>
+</span><span class='line'>    listen 80<span class="p">;</span>
+</span><span class='line'>    server_name blog.yourdomain.com<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    access_log  /var/log/nginx/blog_access.log  main<span class="p">;</span>
+</span><span class='line'>    error_log   /var/log/nginx/blog_error.log<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>    location / <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>        proxy_cache                 nginx_cache<span class="p">;</span>
+</span><span class='line'>        add_header                  X-Proxy-Cache <span class="nv">$upstream_cache_status</span><span class="p">;</span>
+</span><span class='line'>        proxy_ignore_headers        Cache-Control<span class="p">;</span>
+</span><span class='line'>        proxy_cache_valid any       10m<span class="p">;</span>
+</span><span class='line'>        proxy_cache_use_stale       error timeout http_500 http_502 http_503 http_504<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>        proxy_pass                  http://ghost_blog<span class="p">;</span>
+</span><span class='line'>        proxy_redirect              off<span class="p">;</span>
+</span><span class='line'>
+</span><span class='line'>        proxy_set_header            Host <span class="nv">$host</span><span class="p">;</span>
+</span><span class='line'>        proxy_set_header            X-Real-IP <span class="nv">$remote_addr</span><span class="p">;</span>
+</span><span class='line'>        proxy_set_header            X-Forwarded-For <span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+</span><span class='line'>        proxy_set_header            X-Forwarded-Host <span class="nv">$server_name</span><span class="p">;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Building the Image and Pushing to Gitlab</h2>
+
+<p>I&rsquo;m using Gitlab in this demonstration, but you can use the registry of your choice:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker login registry.gitlab.com
+</span><span class='line'><span class="nv">$ </span>docker build -t registry.gitlab.com/user/docker/arm-nginx:caching .
+</span><span class='line'><span class="nv">$ </span>docker tag registry.gitlab.com/user/docker/arm-nginx:caching registry.gitlab.com/user/docker/arm-nginx:caching
+</span><span class='line'><span class="nv">$ </span>docker push registry.gitlab.com/user/docker/arm-nginx:caching
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy</h2>
+
+<p>Create the Nginx Reverse Proxy Service on Docker Swarm:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service create --name nginx_proxy <span class="se">\</span>
+</span><span class='line'>--network docknet <span class="se">\</span>
+</span><span class='line'>--publish 80:80 <span class="se">\</span>
+</span><span class='line'>--replicas <span class="m">1</span> <span class="se">\</span>
+</span><span class='line'>--with-registry-auth registry.gitlab.com/user/docker/arm-nginx:caching
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Listing our Services:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                                    PORTS
+</span><span class='line'>je7x21l7egoh        nginx_proxy         replicated          1/1                 registry.gitlab.com/user/docker/arm-nginx:caching   *:80-&gt;80/tcp
+</span><span class='line'>nq42a6jfwx3d        blog                replicated          1/1                 rbekker87/armhf-ghost:2.0.3
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once you access your proxy on port 80, you should see your Ghost Blog Homepage like below:</p>
+
+<p><img src="https://objects.ruanbekker.com/assets/images/ghost-blog-main.png" alt="" /></p>
+
+<p>Have a look at the <a href="https://blog.ruanbekker.com/blog/2018/10/23/nginx-caching-performance-for-static-content-on-docker-swarm-with-raspberrypi/">benchmark performance</a> when using Nginx with caching enabled</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-ghost/">https://hub.docker.com/r/rbekker87/armhf-ghost/</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2412,151 +2728,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/08/29/review-and-secure-your-facebook-account/">Review and Secure Your Facebook Account</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-08-29T15:03:10-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>29</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>3:03 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/fb-security-logo.png" alt="" /></p>
-
-<p>This post is a bit different from my other posts, but I feel it&rsquo;s a important one: Facebook Security.</p>
-
-<p>Facebook, everyone loves it right? Yeah, but what happens when you get locked out of your account, or an attacker gains access to your account and start doing things that you dont want to, and especially all the photos / messages that needs to remain private, can potentially end up in the wrong hands.</p>
-
-<p>Facebook usually detects strange behavior, but being able to be pro-active on security on this can help a lot.</p>
-
-<p>There&rsquo;s a couple of ways how attackers can gain access to your account, but I won&rsquo;t go into that, google will be your friend if you are curious how they do it.</p>
-
-<h2>Scenario: Something suspicious is up / weird behavior / getting unusual messages from groups etc</h2>
-
-<p>Usually Facebook will detect this, but if not you can and should do the following:</p>
-
-<ul>
-<li>Reset your password</li>
-<li>Enable Two-Factor Authentication</li>
-<li>Terminate or Logout all sessions from your account, if you find unknown sessions, report it to facebook and log them out.</li>
-<li>Review your account&rsquo;s activity</li>
-<li>Review Group Activity, if you are subscribed to groups, unsubscribe</li>
-<li>Reach out to facebook support</li>
-</ul>
-
-
-<h2>Head over to your Facebook Accounts Settings Page:</h2>
-
-<p>Head over to <a href="https://www.facebook.com/settings">https://www.facebook.com/settings</a> , this will be the main view where you are able to configure/review your account. It should look like this:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-1.png" alt="" /></p>
-
-<p>When you select the &ldquo;Security and Login&rdquo; tab: <a href="https://www.facebook.com/settings?tab=security">https://www.facebook.com/settings?tab=security</a> , you will be presented with a couple of login options:</p>
-
-<h2>Security and Login Info:</h2>
-
-<p>The list of your devices that is currently logged on:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-2.png" alt="" /></p>
-
-<p>Hit the <code>See More</code> dropdown to review all your devices, which is currently logged onto Facebook, if you are not aware of the sessions, hit the <code>Log Out</code> button to terminate that session, or select <code>Not You</code> if you are not aware of that session, then continue to report the activity to Facebook, so that they can look into it.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-3.png" alt="" /></p>
-
-<p>You can follow up on your incident via <a href="https://www.facebook.com/support/">https://www.facebook.com/support/</a> .</p>
-
-<h2>Password and Two Factor Authentication:</h2>
-
-<p>This is actually the first thing that I would do, is to change your password. If someone did manage to gain access to your password and you are still logged on, change it immediately. If they reset your password before you do, game over. Well kind of..</p>
-
-<p>From the same page, change your password:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-4.png" alt="" /></p>
-
-<p>Enable <code>"Two-Factor Authentication"</code>, when you are logged out, or trying to logon from a new device, a notification will be sent to your device where Facebook is installed, or alternatively, you will receive a code sent to you which you will need to enter after you have logged on, just to provide you with a extra layer of security.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-5.png" alt="" /></p>
-
-<p>Enable <code>"Get alerts about unrecognized logins"</code>, which allows you to set up to 5 friends that can help you unlock your account, if your account has been locked out.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-6.png" alt="" /></p>
-
-<h2>Review your Activity Log</h2>
-
-<p>From <a href="https://www.facebook.com/settings?tab=your_facebook_information">https://www.facebook.com/settings?tab=your_facebook_information</a> , head over to <code>"Activity Log"</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-7.png" alt="" /></p>
-
-<p>Select <code>"Activity Log"</code>, to review your recent activity:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-8.png" alt="" /></p>
-
-<p>Below <code>Comments</code>, select <code>more</code>, then <code>Security and Login Information</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-9.png" alt="" /></p>
-
-<p>Then we will be presented with the <code>Active Sessions</code>, <code>Login and Logouts</code> and <code>Recognized Devices</code>.</p>
-
-<p>First look at <code>Active Sessions</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-10.png" alt="" /></p>
-
-<p>Then <code>Logins and Logouts</code>:</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-11.png" alt="" /></p>
-
-<p>From this same page you can review other activity like <code>Search History</code>, <code>Groups</code>. etc.</p>
-
-<p><img src="https://objects.ruanbekker.com/assets/images/fb-12.png" alt="" /></p>
-
-<p>If someone had to access/subscribed to groups, you will be able to review the activity, within 3 different views:</p>
-
-<ul>
-<li>Groups: any interaction with groups, such as likes, comments etc.</li>
-<li>Membership Activity: Any group memberships</li>
-<li>Posts and Comments: Self explanatory.</li>
-</ul>
-
-
-<h2>Final Note:</h2>
-
-<p>People try to access accounts all the time, watch out for the following:</p>
-
-<ul>
-<li>Friend Requests: people have a lot of private information on facebook, keep it private</li>
-<li>Watch out for strange applications that wants your permission, review the permission levels closely</li>
-<li>Reset your password time to time, use unique passwords, and not the same password as the password that your main email account is associated with</li>
-<li>Watch out for links, some of them can end you up in a bad spot.</li>
-<li>When you see weird activity from your friends account, report it, so that facebook can investigate it. It happened to a friend and Facebook sorted it out within 20 minutes.</li>
-</ul>
-
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.facebook.com/security/">https://www.facebook.com/security/</a></li>
-<li><a href="https://www.facebook.com/support">https://www.facebook.com/support</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/21">&larr; Older</a>
@@ -2612,6 +2783,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/04/16/provision-a-aws-ec2-instance-with-terraform/">Provision a AWS EC2 Instance With Terraform</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/03/29/matrix-bot-using-simplematrixbotlib-in-python/">Matrix Bot Using SimpleMatrixBotlib in Python</a>
       </li>
     
@@ -2625,10 +2800,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2022/03/20/run-a-basic-python-flask-restful-api/">Run a Basic Python Flask Restful API</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/03/20/run-openldap-with-a-ui-on-docker/">Run OpenLDAP With a UI on Docker</a>
       </li>
     
   </ul>

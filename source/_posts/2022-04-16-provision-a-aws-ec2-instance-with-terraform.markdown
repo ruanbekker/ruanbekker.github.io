@@ -37,10 +37,10 @@ mkdir terraform-aws-ec2
 cd terraform-aws-ec2
 ```
 
-Create the following files: `main.tf`, `providers.tf`, `variables.tf`, `outputs.tf` and `terraform.tfvars`:
+Create the following files: `main.tf`, `providers.tf`, `variables.tf`, `outputs.tf`, `locals.tf` and `terraform.tfvars`:
 
 ```bash
-touch main.tf providers.tf variables.tf outputs.tf terraform.tfvars
+touch main.tf providers.tf variables.tf outputs.tf locals.tf terraform.tfvars
 ```
 
 ## Define Terraform Configuration Code
@@ -281,7 +281,7 @@ output "ip" {
 
 output "subnet_id" {
   description = "the subnet id which will be used"
-  value       = var.subnetid
+  value       = var.subnet_id
   sensitive   = false
 }
 ```

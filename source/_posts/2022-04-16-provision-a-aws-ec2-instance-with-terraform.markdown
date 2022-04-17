@@ -6,7 +6,7 @@ comments: true
 categories: ["devops", "terraform", "aws"] 
 ---
 
-In this tutorial I will demonstrate how to use Terraform (a Infrastructure as Code Tool), to provision a AWS EC2 Instance and the source code that we will be using in this tutorial will be published to my [terraformfiles guthub repository](https://github.com/ruanbekker/terraformfiles/tree/master/aws-ec2-instance).
+In this tutorial I will demonstrate how to use Terraform (a Infrastructure as Code Tool), to provision a AWS EC2 Instance and the source code that we will be using in this tutorial will be published to my [terraformfiles github repository](https://github.com/ruanbekker/terraformfiles/tree/master/aws-ec2-instance).
 
 ## Requirements
 

@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this guide, we will be creating a nginx reverse proxy with the ability to cache static content using a alpine image. We will then push the image &hellip;">
+  <meta name="description" content="In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -121,6 +121,458 @@ fathom('trackPageview');
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/23/build-a-traefik-proxy-image-for-your-raspberry-pi-on-docker-swarm/">Build a Traefik Proxy Image for Your Raspberry Pi on Docker Swarm</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-23T17:31:02-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>23</span><span class='date-suffix'>rd</span>, <span class='date-year'>2018</span></span> <span class='time'>5:31 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/traefik-logo-routing.png" alt="" /></p>
+
+<p>In this post we will setup a Docker Image for Traefik Proxy on the ARM Architecture, specifically on the Raspberry Pi, which we will deploy to our Raspberry Pi Docker Swarm.</p>
+
+<p>Then we will build and push our image to a registry, then setup traefik and also setup a web application that sits behind our Traefik Proxy.</p>
+
+<h2>What is Traefik</h2>
+
+<p><a href="https://traefik.io/">Traefik</a> is a modern load balancer and reverse proxy built for micro services.</p>
+
+<h2>Dockerfile</h2>
+
+<p>We will be running Traefik on Alpine 3.8:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='dockerfile'><span class='line'><span class="k">FROM</span> rbekker87/armhf-alpine:3.8
+</span><span class='line'>
+</span><span class='line'><span class="k">ENV</span> TRAEFIK_VERSION 1.7.0-rc3
+</span><span class='line'><span class="k">ENV</span> ARCH arm
+</span><span class='line'>
+</span><span class='line'><span class="k">ADD</span> https://github.com/containous/traefik/releases/download/v<span class="k">${</span><span class="nv">TRAEFIK_VERSION</span><span class="k">}</span>/traefik_linux-<span class="k">${</span><span class="nv">ARCH</span><span class="k">}</span> /traefik
+</span><span class='line'>
+</span><span class='line'><span class="k">RUN</span> apk add --no-cache ca-certificates <span class="err">\</span>
+</span><span class='line'>    <span class="o">&amp;&amp;</span> chmod +x /traefik <span class="err">\</span>
+</span><span class='line'>    <span class="o">&amp;&amp;</span> rm -rf /var/cache/apk/*
+</span><span class='line'>
+</span><span class='line'><span class="k">EXPOSE</span> <span class="m">80</span> <span class="m">8080</span> <span class="m">443</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">ENTRYPOINT</span> <span class="o">[</span><span class="s2">&quot;/traefik&quot;</span><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Build and Push</h2>
+
+<p>Build and Push your image to your registry of choice:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker build -t your-user/repo:tag .
+</span><span class='line'><span class="nv">$ </span>docker push your-user/repo:tag
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you do not want to push to a registry, I have a public image available at <a href="https://hub.docker.com/r/rbekker87/armhf-traefik/">https://hub.docker.com/r/rbekker87/armhf-traefik/</a>, the image itself is <code>rbekker87/armhf-traefik:1.7.0-rc3</code></p>
+
+<h2>Deploy Traefik to the Swarm</h2>
+
+<p>From our <code>traefik-compose.yml</code>, you will notice that I have set that our network is external, so the network should exist prior to deploying the stack.</p>
+
+<p>Let&rsquo;s create the overlay network:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker network create --driver overlay appnet
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Below, the <code>traefik-compose.yml</code>, note that I&rsquo;m using pistack.co.za as my domain:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&quot;3.4&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">traefik</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">rbekker87/armhf-traefik:1.7.0-rc3</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--api&quot;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--docker&quot;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--docker.swarmmode&quot;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--docker.domain=pistack.co.za&quot;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--docker.watch&quot;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--logLevel=DEBUG&quot;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;--web&quot;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">appnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">80:80</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">8080:8080</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">mode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">global</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">restart_policy</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">condition</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">on-failure</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">placement</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">constraints</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">node.role == manager</span><span class="p-Indicator">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">appnet</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">external</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Deploy the stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c traefik-compose.yml proxy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the stacks:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack ls
+</span><span class='line'>NAME                SERVICES
+</span><span class='line'>proxy               1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check if the services in your stack is running. Since our deploy mode was global, there will be a replica running on each node, and in my swarm I&rsquo;ve got 3 nodes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services proxy
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                    PORTS
+</span><span class='line'>16x31j7o0f0r        proxy_traefik       global              3/3                 rbekker87/armhf-traefik:1.7.0-rc3   *:80-&gt;80/tcp,*:8080-&gt;8080/tcp
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy a Web Service hooked up to Traefik</h2>
+
+<p>Pre-Requirement:</p>
+
+<p>To register subdomains on the fly, set you DNS for your domain to the following (im using pistack.co.za in this example):</p>
+
+<ul>
+<li><code>pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
+<li><code>*.pistack.co.za</code> <code>A</code> <code>x.x.x.x</code></li>
+</ul>
+
+
+<p>Next, we will deploy we app that will be associated to our Traefik service domain, so we will inform Traefik that our web app fqdn and port that will be registered with the proxy.</p>
+
+<p>Our <code>app-compose.yml</code> file for our webapp:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&quot;3.4&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">whoami</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">rbekker87/golang-whoami:alpine-amrhf</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">appnet</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">deploy</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">3</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.backend=whoami&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.port=80&quot;</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="s">&quot;traefik.frontend.rule=Host:whoami.pistack.co.za&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">update_config</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">parallelism</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">delay</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">10s</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">restart_policy</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">condition</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">on-failure</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">placement</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">constraints</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">node.role == worker</span><span class="p-Indicator">]</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">healthcheck</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">test</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nc -vz 127.0.0.1 80 || exit 1</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">60s</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">timeout</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">3s</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">retries</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">3</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">appnet</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">external</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the above compose, you will notice that our traefik backend is set to our service name, our port is the port that the proxy will forward requests to the containers port, since the proxy and the whoami container is in the same network, they will be able to communicate with each other. Then we also have our frontend rule which will be the endpoint we will reach our application on.</p>
+
+<p>Deploy the stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack deploy -c whoami.yml web
+</span><span class='line'>Creating service web_whoami
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the tasks running in our web stack:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker stack services web
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE                                  PORTS
+</span><span class='line'>31ylfcfb7uyw        web_whoami          replicated          3/3                 rbekker87/golang-whoami:alpine-amrhf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once all the replicas is running, move along to test the application</p>
+
+<h2>Testing our Application:</h2>
+
+<p>I have 3 replicas each running on their own container, so each container will respond with its own hostname:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker service ps web_whoami
+</span><span class='line'>ID                  NAME                IMAGE                                  NODE                DESIRED STATE       CURRENT STATE            ERROR                              PORTS
+</span><span class='line'>ivn8fgfosvgd        web_whoami.1        rbekker87/golang-whoami:alpine-amrhf   rpi-01              Running             Running <span class="m">26</span> minutes ago
+</span><span class='line'>rze6u6z56aop        web_whoami.2        rbekker87/golang-whoami:alpine-amrhf   rpi-02              Running             Running <span class="m">26</span> minutes ago
+</span><span class='line'>6fjua869r498        web_whoami.3        rbekker87/golang-whoami:alpine-amrhf   rpi-04              Running             Running <span class="m">23</span> minutes ago
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Making our 1st GET request:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ $ </span>curl http://whoami.pistack.co.za/
+</span><span class='line'>Hostname: 43f5f0a6682f
+</span><span class='line'>IP: 127.0.0.1
+</span><span class='line'>IP: 10.0.0.138
+</span><span class='line'>IP: 10.0.0.218
+</span><span class='line'>IP: 172.18.0.4
+</span><span class='line'>GET / HTTP/1.1
+</span><span class='line'>Host: whoami.pistack.co.za
+</span><span class='line'>User-Agent: curl/7.38.0
+</span><span class='line'>Accept: */*
+</span><span class='line'>Accept-Encoding: gzip
+</span><span class='line'>X-Forwarded-For: 165.73.96.95, 10.255.0.2
+</span><span class='line'>X-Forwarded-Host: whoami.pistack.co.za
+</span><span class='line'>X-Forwarded-Port: 80
+</span><span class='line'>X-Forwarded-Proto: http
+</span><span class='line'>X-Forwarded-Server: 31b37f9714d3
+</span><span class='line'>X-Real-Ip: 10.255.0.2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our 2nd GET Request:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://whoami.pistack.co.za/
+</span><span class='line'>Hostname: d1c17a476414
+</span><span class='line'>IP: 127.0.0.1
+</span><span class='line'>IP: 10.0.0.138
+</span><span class='line'>IP: 10.0.0.71
+</span><span class='line'>IP: 172.19.0.5
+</span><span class='line'>GET / HTTP/1.1
+</span><span class='line'>Host: whoami.pistack.co.za
+</span><span class='line'>User-Agent: curl/7.38.0
+</span><span class='line'>Accept: */*
+</span><span class='line'>Accept-Encoding: gzip
+</span><span class='line'>X-Forwarded-For: 165.73.96.95, 10.255.0.2
+</span><span class='line'>X-Forwarded-Host: whoami.pistack.co.za
+</span><span class='line'>X-Forwarded-Port: 80
+</span><span class='line'>X-Forwarded-Proto: http
+</span><span class='line'>X-Forwarded-Server: 02b0ff6eab73
+</span><span class='line'>X-Real-Ip: 10.255.0.2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And our 3rd GET Request:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>curl http://whoami.pistack.co.za/
+</span><span class='line'>Hostname: 17c817a1813b
+</span><span class='line'>IP: 172.18.0.6
+</span><span class='line'>IP: 127.0.0.1
+</span><span class='line'>IP: 10.0.0.138
+</span><span class='line'>IP: 10.0.0.73
+</span><span class='line'>GET / HTTP/1.1
+</span><span class='line'>Host: whoami.pistack.co.za
+</span><span class='line'>User-Agent: curl/7.38.0
+</span><span class='line'>Accept: */*
+</span><span class='line'>Accept-Encoding: gzip
+</span><span class='line'>X-Forwarded-For: 165.73.96.95, 10.255.0.2
+</span><span class='line'>X-Forwarded-Host: whoami.pistack.co.za
+</span><span class='line'>X-Forwarded-Port: 80
+</span><span class='line'>X-Forwarded-Proto: http
+</span><span class='line'>X-Forwarded-Server: 31b37f9714d3
+</span><span class='line'>X-Real-Ip: 10.255.0.2
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Hope this was useful.</p>
+
+<h2>Resources:</h2>
+
+<ul>
+<li><a href="https://hub.docker.com/r/rbekker87/armhf-traefik/tags/">https://hub.docker.com/r/rbekker87/armhf-traefik/tags/</a></li>
+<li><a href="https://github.com/containous/traefik/releases">https://github.com/containous/traefik/releases</a></li>
+<li><a href="https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile">https://github.com/ruanbekker/traefik-armhf/blob/master/Dockerfile</a></li>
+</ul>
+
+
+<script type="text/javascript">
+  ( function() {
+    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
+    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
+    var placement_id = window.CHITIKA.units.length;
+    window.CHITIKA.units.push(unit);
+    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
+}());
+</script>
+
+
+<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>
+
+
+<p></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2404,330 +2856,6 @@ fathom('trackPageview');
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2018/09/01/dockerizing-a-memcached-server-for-docker-on-alpine/">Dockerizing a Memcached Server for Docker on Alpine</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2018-09-01T16:01:09-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>1</span><span class='date-suffix'>st</span>, <span class='date-year'>2018</span></span> <span class='time'>4:01 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://objects.ruanbekker.com/assets/images/memcached-logo.png" alt="" /></p>
-
-<p>This post I will demostrate how to dockerize a memcached server on Alpine and how to create a boot script that allows you to pass environment variables through to the application.</p>
-
-<h2>What is Memcached</h2>
-
-<p>Memcached is a multi-threaded, in-memory key/value store for small chunks of arbitrary data (strings, objects) from results of database calls, API calls, etc. More on <a href="https://memcached.org/about">Memcached</a></p>
-
-<h2>The Dockerfile:</h2>
-
-<p>Our Dockerfile will consist of a simple install of memcached and add a boot script that we will start it from:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='docker'><span class='line'><span class="k">FROM</span> alpine:3.7
-</span><span class='line'>
-</span><span class='line'>COPY boot.sh /boot.sh
-</span><span class='line'><span class="k">RUN</span> apk --no-cache add memcached <span class="o">&amp;&amp;</span> chmod +x /boot.sh
-</span><span class='line'>
-</span><span class='line'>USER memcached
-</span><span class='line'><span class="k">CMD</span> <span class="o">[</span><span class="s2">&quot;/boot.sh&quot;</span><span class="o">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>The Boot Script:</h2>
-
-<p>As you can see we have set defaults so when the user does not specify any environment variables, that it will inherit the default values</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="c">#!/bin/sh</span>
-</span><span class='line'>
-</span><span class='line'>/usr/bin/memcached <span class="se">\</span>
-</span><span class='line'>  --user<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_USER</span><span class="k">:-</span><span class="nv">memcached</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --listen<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_HOST</span><span class="k">:-</span><span class="nv">0</span><span class="p">.0.0.0</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --port<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_PORT</span><span class="k">:-</span><span class="nv">11211</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --memory-limit<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_MEMUSAGE</span><span class="k">:-</span><span class="nv">64</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --conn-limit<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_MAXCONN</span><span class="k">:-</span><span class="nv">1024</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --threads<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_THREADS</span><span class="k">:-</span><span class="nv">4</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --max-reqs-per-event<span class="o">=</span><span class="k">${</span><span class="nv">MEMCACHED_REQUESTS_PER_EVENT</span><span class="k">:-</span><span class="nv">20</span><span class="k">}</span> <span class="se">\</span>
-</span><span class='line'>  --verbose
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Build and Deploy:</h2>
-
-<p>Build the image, if you just want to run the container you can use my public image in the next step:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker build -t <span class="nb">local</span>/memcached:0.1 .
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Run the Memcached Container:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -itd --name memcached -p 11211:11211 -e <span class="nv">MEMCACHED_MEMUSAGE</span><span class="o">=</span><span class="m">32</span> <span class="nb">local</span>/memcached:0.1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Or my Public Image from Docker Hub:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run -itd --name memcached -p 11211:11211 -e <span class="nv">MEMCACHED_MEMUSAGE</span><span class="o">=</span><span class="m">32</span> rbekker87/memcached:alpine
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Check out the Stats:</h2>
-
-<p>Pass the command <code>stats</code> through the exposed port:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-<span class='line-number'>80</span>
-<span class='line-number'>81</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> -e <span class="s2">&quot;stats&quot;</span> <span class="p">|</span> nc localhost <span class="m">11211</span>
-</span><span class='line'>STAT pid 8
-</span><span class='line'>STAT uptime 2
-</span><span class='line'>STAT <span class="nb">time </span>1535833177
-</span><span class='line'>STAT version 1.5.6
-</span><span class='line'>STAT libevent 2.1.8-stable
-</span><span class='line'>STAT pointer_size 64
-</span><span class='line'>STAT rusage_user 0.030000
-</span><span class='line'>STAT rusage_system 0.000000
-</span><span class='line'>STAT max_connections 1024
-</span><span class='line'>STAT curr_connections 1
-</span><span class='line'>STAT total_connections 2
-</span><span class='line'>STAT rejected_connections 0
-</span><span class='line'>STAT connection_structures 2
-</span><span class='line'>STAT reserved_fds 20
-</span><span class='line'>STAT cmd_get 0
-</span><span class='line'>STAT cmd_set 0
-</span><span class='line'>STAT cmd_flush 0
-</span><span class='line'>STAT cmd_touch 0
-</span><span class='line'>STAT get_hits 0
-</span><span class='line'>STAT get_misses 0
-</span><span class='line'>STAT get_expired 0
-</span><span class='line'>STAT get_flushed 0
-</span><span class='line'>STAT delete_misses 0
-</span><span class='line'>STAT delete_hits 0
-</span><span class='line'>STAT incr_misses 0
-</span><span class='line'>STAT incr_hits 0
-</span><span class='line'>STAT decr_misses 0
-</span><span class='line'>STAT decr_hits 0
-</span><span class='line'>STAT cas_misses 0
-</span><span class='line'>STAT cas_hits 0
-</span><span class='line'>STAT cas_badval 0
-</span><span class='line'>STAT touch_hits 0
-</span><span class='line'>STAT touch_misses 0
-</span><span class='line'>STAT auth_cmds 0
-</span><span class='line'>STAT auth_errors 0
-</span><span class='line'>STAT bytes_read 6
-</span><span class='line'>STAT bytes_written 0
-</span><span class='line'>STAT limit_maxbytes 33554432
-</span><span class='line'>STAT accepting_conns 1
-</span><span class='line'>STAT listen_disabled_num 0
-</span><span class='line'>STAT time_in_listen_disabled_us 0
-</span><span class='line'>STAT threads 4
-</span><span class='line'>STAT conn_yields 0
-</span><span class='line'>STAT hash_power_level 16
-</span><span class='line'>STAT hash_bytes 524288
-</span><span class='line'>STAT hash_is_expanding 0
-</span><span class='line'>STAT slab_reassign_rescues 0
-</span><span class='line'>STAT slab_reassign_chunk_rescues 0
-</span><span class='line'>STAT slab_reassign_evictions_nomem 0
-</span><span class='line'>STAT slab_reassign_inline_reclaim 0
-</span><span class='line'>STAT slab_reassign_busy_items 0
-</span><span class='line'>STAT slab_reassign_busy_deletes 0
-</span><span class='line'>STAT slab_reassign_running 0
-</span><span class='line'>STAT slabs_moved 0
-</span><span class='line'>STAT lru_crawler_running 0
-</span><span class='line'>STAT lru_crawler_starts 255
-</span><span class='line'>STAT lru_maintainer_juggles 155
-</span><span class='line'>STAT malloc_fails 0
-</span><span class='line'>STAT log_worker_dropped 0
-</span><span class='line'>STAT log_worker_written 0
-</span><span class='line'>STAT log_watcher_skipped 0
-</span><span class='line'>STAT log_watcher_sent 0
-</span><span class='line'>STAT bytes 0
-</span><span class='line'>STAT curr_items 0
-</span><span class='line'>STAT total_items 0
-</span><span class='line'>STAT slab_global_page_pool 0
-</span><span class='line'>STAT expired_unfetched 0
-</span><span class='line'>STAT evicted_unfetched 0
-</span><span class='line'>STAT evicted_active 0
-</span><span class='line'>STAT evictions 0
-</span><span class='line'>STAT reclaimed 0
-</span><span class='line'>STAT crawler_reclaimed 0
-</span><span class='line'>STAT crawler_items_checked 0
-</span><span class='line'>STAT lrutail_reflocked 0
-</span><span class='line'>STAT moves_to_cold 0
-</span><span class='line'>STAT moves_to_warm 0
-</span><span class='line'>STAT moves_within_lru 0
-</span><span class='line'>STAT direct_reclaims 0
-</span><span class='line'>STAT lru_bumps_dropped 0
-</span><span class='line'>END
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Some descriptions:</p>
-
-<p><code>evictions</code> - when items are evicted from the cache
-<code>total_items</code> - the number of items the server has stored since it was started
-<code>current_items</code> - the number of items in the cache
-<code>bytes</code> - the current number of bytes used to store items
-<code>limit_maxbytes</code> - the number of bytes the server is allowed to use for storage
-<code>get_misses</code> - the number of times a item has been requested, but not found
-<code>get_hits</code> - the number of times a item has been served from the cache</p>
-
-<p>To get specific stats, like evictions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> -e <span class="s2">&quot;stats&quot;</span> <span class="p">|</span> nc localhost <span class="m">11211</span> <span class="p">|</span> grep -w evictions
-</span><span class='line'>STAT evictions 0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When you see evictions value increases, this essentially means that memcache had to remove the oldest items from memory for new or more frequent used items. If this number remains high, consider increasing your memory allocated to memcache.</p>
-
-<p>Slab Stats: returns information about each of the slabs created by memcached during runtime:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo</span> -e <span class="s2">&quot;stats slabs&quot;</span> <span class="p">|</span> nc localhost <span class="m">11211</span>
-</span><span class='line'>STAT active_slabs 0
-</span><span class='line'>STAT total_malloced 0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p><code>active_slabs</code> - Total number of slab classes allocated.
-<code>total_malloced</code> - Total amount of memory allocated to slab pages.</p>
-
-<p>For detailed description about statistics, have a look at their github resource:
-- <a href="https://github.com/memcached/memcached/blob/master/doc/protocol.txt">https://github.com/memcached/memcached/blob/master/doc/protocol.txt</a></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://memcached.org/">https://memcached.org/</a></li>
-<li><a href="https://blog.serverdensity.com/monitor-memcached/">https://blog.serverdensity.com/monitor-memcached/</a></li>
-<li><a href="https://wiki.mikejung.biz/Memcached">https://wiki.mikejung.biz/Memcached</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/21">&larr; Older</a>
@@ -2783,6 +2911,10 @@ fathom('trackPageview');
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/04/19/publish-and-use-your-ansible-role-from-git/">Publish and Use Your Ansible Role From Git</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/04/16/provision-a-aws-ec2-instance-with-terraform/">Provision a AWS EC2 Instance With Terraform</a>
       </li>
     
@@ -2796,10 +2928,6 @@ fathom('trackPageview');
     
       <li class="post">
         <a href="/blog/2022/03/22/load-environment-variables-from-file-in-python/">Load Environment Variables From File in Python</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/03/20/run-a-basic-python-flask-restful-api/">Run a Basic Python Flask Restful API</a>
       </li>
     
   </ul>

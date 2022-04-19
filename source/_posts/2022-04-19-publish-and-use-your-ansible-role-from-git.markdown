@@ -8,6 +8,8 @@ categories: ["devops", "ansible", "git"]
 
 In this tutorial we will be creating a ansible role, publish our ansible role to github, then we will install the role locally and create a ansible playbook to use the ansible role.
 
+The source code for this blog post will be available on my [github](https://blog.ruanbekker.com/blog/2022/04/19/publish-and-use-your-ansible-role-from-git/) repository.
+
 ## Ansible Installation
 
 Create a virtual environment with Python:

@@ -31,6 +31,7 @@ A Ansible Role consists of a couple of files, and using `ansible-galaxy` makes i
 
 ```
 $ ansible-galaxy init --init-path roles ssh_config
+- Role ssh_config was created successfully
 ```
 
 The role that we created is named `ssh_config` and will be placed under the directory `roles` under our current working directory.
@@ -39,14 +40,7 @@ The role that we created is named `ssh_config` and will be placed under the dire
 
 Create the dummy task under `roles/ssh_config/tasks/main.yml`:
 
-```yaml
----
-# tasks file for ssh_config
-- name: Dummy task
-  ansible.builtin.debug:
-    msg: "This is a dummy task changing ssh port to {{ ssh_port }}."
-  register: task_result
-```
+<script src="https://gist.github.com/ruanbekker/4971be45476915ba877bb444a9ff1c0b.js"></script>
 
 Then define the defaults environment values in the file `roles/ssh_config/defaults/main.yml`:
 
@@ -65,7 +59,7 @@ The assumption is made here that you already created a git repository and that y
 ```
 $ git add .
 $ git commit -m "Your message"
-$ git push origin master
+$ git push origin main
 ```
 
 Now your ansible role should be commited and visible in git.
@@ -103,7 +97,7 @@ The requirements file is used to define where our role is located, which version
 ---
 roles:
   - name: ssh_config
-    src: ssh://git@github.com:ruanbekker/ansible-demo-role.git
+    src: ssh://git@github.com/ruanbekker/ansible-demo-role.git
     version: main
     scm: git
 ```

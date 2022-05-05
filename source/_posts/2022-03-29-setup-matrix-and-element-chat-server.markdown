@@ -142,15 +142,15 @@ And adjust the bits where needed in `element-config.json`:
       "url": "https://ems.element.io/element-home/in-app-loader"
     },
     "sentry": {
-        "dsn": "https://029a0eb289f942508ae0fb17935bd8c5@sentry.matrix.org/6",
+        "dsn": "https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxc5@sentry.matrix.org/6",
         "environment": "develop"
     },
     "posthog": {
-        "projectApiKey": "phc_Jzsm6DTm6V2705zeU5dcNvQDlonOR68XvX2sh1sEOHO",
+        "projectApiKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         "apiHost": "https://posthog.hss.element.io"
     },
     "features": {},
-    "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=fU3vlMsMn4Jb6dnEIFsx"
+    "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=xxxxxxxxxxxxx"
 }
 ```
 

@@ -6,9 +6,11 @@ comments: true
 categories: ["discord", "python"]
 ---
 
-![discord-logo](https://user-images.githubusercontent.com/567298/166906752-64346a03-b92c-495e-9c5a-6ac5a3c5af89.png)
+![discord-logo](https://user-images.githubusercontent.com/567298/166907630-cfd0760e-ddff-46b4-9b82-f163fb90f0ee.png)
 
 In this tutorial we will develop our own **[Discord](https://discord.com/)** bot using **Python**.
+
+The source code for this bot will be stored in my [github repository](https://github.com/ruanbekker/discord-minecraft-python-bot)
 
 ## About the bot
 

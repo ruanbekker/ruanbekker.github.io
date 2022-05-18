@@ -6,13 +6,13 @@ comments: true
 categories: ["python", "flask", "charts", "graphs", "chartjs"] 
 ---
 
-![](https://thumbsplus.tutsplus.com/uploads/users/1251/posts/28278/preview_image/chartjs-tutsplus.jpg)
+![image](https://user-images.githubusercontent.com/567298/169163207-0b94e9df-1949-4fad-bb76-9a8619296ce8.png)
 
 I am a big sucker for Charts and Graphs, and today I found one awesome library called [Chart.js](http://www.chartjs.org/), which we will use with Python Flask Web Framework, to graph our data.
 
 As Bitcoin is doing so well, I decided to graph the monthly Bitcoin price from January up until now.
 
-<a href="https://bekkerclothing.com/collections/developer?utm_source=blog.ruanbekker.com&utm_medium=blog&utm_campaign=leaderboard_ad" target="_blank"><img alt="bekker-clothing-developer-tshirts" src="https://user-images.githubusercontent.com/567298/70170981-7c278a80-16d6-11ea-9759-6621d02c1423.png"></a>
+<a href="https://github.com/ruanbekker/cheatsheets" target="_blank"><img alt="ruanbekker-cheatsheets" src="https://user-images.githubusercontent.com/567298/169162832-ef3019de-bc49-4d6c-b2a6-8ac17c457d24.png"></a>
 
 ## Dependencies:
 

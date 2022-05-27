@@ -8,6 +8,7 @@ categories: ["aws", "lambda", "docker", "devops"]
 
 In this tutorial we will be creating a AWS Lambda Python [Layer](https://docs.aws.amazon.com/lambda/latest/dg/configuration-layers.html) that will include the Python Requests package and we will compile the package with Docker and the LambCI image.
 
+## Getting Started
 
 First we will create the directory where we will store the intermediate data:
 
@@ -63,5 +64,8 @@ $ aws lambda create-function --function-name test-requests \
    --code "S3Bucket=string,S3Key=string"
 ```
 
+## Thank You
+
 Thanks for reading, if you like my content, check out my **[website](https://ruan.dev)**, read my **[newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog)** or follow me at **[@ruanbekker](https://twitter.com/ruanbekker)** on Twitter.
 
+Credit to [oznetnerd.com](https://oznetnerd.com/2020/11/11/lambda-packaging-the-right-way/).

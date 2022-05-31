@@ -7,7 +7,7 @@ description: "Linkding is a Bookmarks Service that runs on docker and is self-ho
 categories: ["docker", "bookmarks", "self-hosted"] 
 ---
 
-==Note==:  *Originally posted on [containers.fan](https://containers.fan/posts/setup-linkding-bookmarks-manager/)* 
+**Note**:  *Originally posted on [containers.fan](https://containers.fan/posts/setup-linkding-bookmarks-manager/)* 
 
 I've stumbled upon a great bookmarks manager service called **[Linkding](https://github.com/sissbruecker/linkding/blob/master/README.md)**. What I really like about it, it allows you to save your bookmarks, assign tags to it to search for it later, it has chrome and firefox browser extensions, and comes with an API.
 

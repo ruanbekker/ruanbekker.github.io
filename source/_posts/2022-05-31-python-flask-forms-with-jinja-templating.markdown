@@ -48,6 +48,7 @@ if __name__ == '__main__':
 ```
 
 As you can see our first route `/` will render the template in `form.html`. Our second route `/result` a couple of things are happening:
+
 - If we received a POST method, we will capture the form data
 - We are then casting it to a dictionary data type
 - Print the results out of our form data (for debugging)
@@ -105,4 +106,4 @@ So you can see that our request data was parsed through the template and our app
 
 Thanks for reading, if you like my content, check out my **[website](https://ruan.dev)**, read my **[newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog)** or follow me at **[@ruanbekker](https://twitter.com/ruanbekker)** on Twitter.
 
-
+<a href="https://github.com/ruanbekker/cheatsheets" target="_blank"><img alt="ruanbekker-cheatsheets" src="https://user-images.githubusercontent.com/567298/169162832-ef3019de-bc49-4d6c-b2a6-8ac17c457d24.png"></a>

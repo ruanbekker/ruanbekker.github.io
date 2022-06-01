@@ -72,6 +72,35 @@ Then our last template `templates/result.html` is used when we click on submit, 
 
 <script src="https://gist.github.com/ruanbekker/ad40ae4c59a81e8c089e7df2d50c605a.js"></script>
 
+~~~ html
+{% extends "base.html" %}
+
+{% block content %}
+<table id="data" class="table table-striped">
+
+  <thead>
+    <tr>
+      <th>Key</th>
+	    <th>Value</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    {% for key, value in result.items() %}
+      <tr>
+        <td> {{ key }} </th>
+        <td> {{ value }} </td>
+      </tr>
+    {% endfor %}
+
+</table>
+
+<p></p>
+ App Version: {{ app_version }}
+
+{% endblock %}
+~~~
+
 So our directory structure should look like this:
 
 ```bash

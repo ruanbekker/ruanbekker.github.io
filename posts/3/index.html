@@ -9,8 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Concourse is a Pipeline Based Continious Integration system written in Go Resources: https://concourse-ci.org/
-https://github.com/concourse/ &hellip;">
+  <meta name="description" content="I had a public VPS server that I wanted to scrape node-exporter metrics from, but my Prometheus instance was behind a Dynamic IP address, so to allow &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -112,6 +111,205 @@ https://github.com/concourse/ &hellip;">
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2021/10/10/setup-basic-authentication-on-node-exporter-and-prometheus/">Setup TLS and Basic Authentication on Node Exporter for Prometheus</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2021-10-10T16:50:17-04:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2021</span></span> <span class='time'>4:50 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>I had a public VPS server that I wanted to scrape node-exporter metrics from, but my Prometheus instance was behind a Dynamic IP address, so to allow only my prometheus instance to scrape my Node Exporter instance, was a bit difficult, since the IP keep changing and I had to update my iptables firewall rules.</p>
+
+<p>In this tutorial I will show you how to setup TLS and Basic Authentication on Node Exporter, and how to configure prometheus to pass the auhtentication to successfully scrape the node exporter metrics endpoint.</p>
+
+<h2>Install Node Exporter</h2>
+
+<p>On the node-exporter host, set the environment variables for the version, user and directory path where node exporter will be installed::</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ NODE_EXPORTER_VERSION</span><span class="o">=</span><span class="s2">&quot;1.1.2&quot;</span>
+</span><span class='line'><span class="nv">$ NODE_EXPORTER_USER</span><span class="o">=</span><span class="s2">&quot;node_exporter&quot;</span>
+</span><span class='line'><span class="nv">$ BIN_DIRECTORY</span><span class="o">=</span><span class="s2">&quot;/usr/local/bin&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Download and place the node-exporter binary in place:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget https://github.com/prometheus/node_exporter/releases/download/v<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>/node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64.tar.gz
+</span><span class='line'><span class="nv">$ </span>tar -xf node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64.tar.gz
+</span><span class='line'><span class="nv">$ </span>cp node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64/node_exporter <span class="k">${</span><span class="nv">BIN_DIRECTORY</span><span class="k">}</span>/
+</span><span class='line'><span class="nv">$ </span>chown <span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span>:<span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span> <span class="k">${</span><span class="nv">BIN_DIRECTORY</span><span class="k">}</span>/node_exporter
+</span><span class='line'><span class="nv">$ </span>rm -rf node_exporter-<span class="k">${</span><span class="nv">NODE_EXPORTER_VERSION</span><span class="k">}</span>.linux-amd64*
+</span><span class='line'><span class="nv">$ </span>mkdir /etc/node-exporter
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configuration</h2>
+
+<p>Create a self-signed cert for node-exporter:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>openssl req -new -newkey rsa:2048 -days <span class="m">365</span> -nodes -x509 -keyout node_exporter.key -out node_exporter.crt -subj <span class="s2">&quot;/C=ZA/ST=CT/L=SA/O=VPN/CN=localhost&quot;</span> -addext <span class="s2">&quot;subjectAltName = DNS:localhost&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Move the certs into the directory we created:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mv node_exporter.* /etc/node-exporter/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Install htpasswd so that we can generate a password hash with bcrypt, which will prompt you for a password that we are setting for the prometheus user::</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install apache2-utils
+</span><span class='line'><span class="nv">$ </span>htpasswd -nBC <span class="m">10</span> <span class="s2">&quot;&quot;</span> <span class="p">|</span> tr -d <span class="s1">&#39;:\n&#39;</span><span class="p">;</span> <span class="nb">echo</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now populate the config for node-exporter:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/node-exporter/config.yml
+</span><span class='line'>tls_server_config:
+</span><span class='line'>  cert_file: node_exporter.crt
+</span><span class='line'>  key_file: node_exporter.key
+</span><span class='line'>basic_auth_users:
+</span><span class='line'>  prometheus: &lt;the-output-value-of-htpasswd&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Change the ownership of the node exporter directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>chown -R <span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span>:<span class="k">${</span><span class="nv">NODE_EXPORTER_USER</span><span class="k">}</span> /etc/node-exporter
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the systemd unit file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat &gt; /etc/systemd/system/node_exporter.service <span class="s">&lt;&lt; EOF</span>
+</span><span class='line'><span class="s">[Unit]</span>
+</span><span class='line'><span class="s">Description=Node Exporter</span>
+</span><span class='line'><span class="s">Wants=network-online.target</span>
+</span><span class='line'><span class="s">After=network-online.target</span>
+</span><span class='line'><span class="s">StartLimitIntervalSec=500</span>
+</span><span class='line'><span class="s">StartLimitBurst=5</span>
+</span><span class='line'><span class="s">[Service]</span>
+</span><span class='line'><span class="s">User=${NODE_EXPORTER_USER}</span>
+</span><span class='line'><span class="s">Group=${NODE_EXPORTER_USER}</span>
+</span><span class='line'><span class="s">Type=simple</span>
+</span><span class='line'><span class="s">Restart=on-failure</span>
+</span><span class='line'><span class="s">RestartSec=5s</span>
+</span><span class='line'><span class="s">ExecStart=${BIN_DIRECTORY}/node_exporter --web.config=/etc/node-exporter/config.yml</span>
+</span><span class='line'><span class="s">[Install]</span>
+</span><span class='line'><span class="s">WantedBy=multi-user.target</span>
+</span><span class='line'><span class="s">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Reload systemd and start node-exporter</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl daemon-reload
+</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>node_exporter
+</span><span class='line'><span class="nv">$ </span>systemctl restart node_exporter
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Prometheus Config</h2>
+
+<p>Copy the <code>/etc/node-exporter/node_exporter.crt</code> from the node-exporter node to prometheus-node, then in the <code>/etc/prometheus/prometheus.yml</code> config:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">scrape_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">job_name</span><span class="p-Indicator">:</span> <span class="s">&#39;node-exporter-tls&#39;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">scheme</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">https</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">basic_auth</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">username</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">prometheus</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">password</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">&lt;the-plain-text-password&gt;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">tls_config</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">ca_file</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">node_exporter.crt</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">insecure_skip_verify</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">static_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">targets</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;node-exporter-ip:9100&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">instance</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">friendly-instance-name</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After you restart prometheus, you should see the metrics in prometheus' tsdb of the node exporter target that we are scraping.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2823,566 +3021,6 @@ https://github.com/concourse/ &hellip;">
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2021/04/06/install-concourse-ci-v6-on-ubuntu-20-dot-04/">Install Concourse CI V6 on Ubuntu 20.04</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2021-04-06T17:56:38-04:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>6</span><span class='date-suffix'>th</span>, <span class='date-year'>2021</span></span> <span class='time'>5:56 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://i.snag.gy/gzkdu9.jpg?nocache=1511644783495" alt="" /></p>
-
-<p>Concourse is a Pipeline Based Continious Integration system written in Go</p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://concourse-ci.org/">https://concourse-ci.org/</a></li>
-<li><a href="https://github.com/concourse/concourse">https://github.com/concourse/concourse</a></li>
-<li><a href="https://github.com/starkandwayne/concourse-tutorial">https://github.com/starkandwayne/concourse-tutorial</a></li>
-</ul>
-
-
-<h2>Older Version</h2>
-
-<p>An older version is available:</p>
-
-<ul>
-<li><a href="https://blog.ruanbekker.com/blog/2017/11/07/setup-a-concourse-ci-server-on-ubuntu-16/">Setup Concourse CI v4 on Ubuntu 16.04</a></li>
-</ul>
-
-
-<h2>What is Concourse CI:</h2>
-
-<p>Concourse CI is a Continious Integration Platform. Concourse enables you to construct pipelines with a yaml configuration that can consist out of 3 core concepts, tasks, resources, and jobs that compose them. For more information about this have a look at their <a href="https://concourse.ci/concepts.html">docs</a></p>
-
-<h2>What will we be doing today</h2>
-
-<p>We will setup a Concourse CI Server v6.7.6 (web and worker) on Ubuntu 20.04 and run the traditional <code>Hello, World</code> pipeline</p>
-
-<h2>Setup the Server:</h2>
-
-<p>Concourse needs <code>PostgresSQL</code> server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt update <span class="o">&amp;&amp;</span> apt upgrade -y
-</span><span class='line'><span class="nv">$ </span>apt install postgresql postgresql-contrib -y
-</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>postgresql
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the Database and User for Concourse on Postgres:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo -u postgres createuser concourse
-</span><span class='line'><span class="nv">$ </span>sudo -u postgres createdb --owner<span class="o">=</span>concourse atc
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Download the Concourse and Fly Cli Binaries:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget https://github.com/concourse/concourse/releases/download/v6.7.6/concourse-6.7.6-linux-amd64.tgz
-</span><span class='line'><span class="nv">$ </span>wget https://github.com/concourse/concourse/releases/download/v6.7.6/fly-6.7.6-linux-amd64.tgz
-</span><span class='line'><span class="nv">$ </span>tar -xvf concourse-6.7.6-linux-amd64.tgz -C /usr/local/
-</span><span class='line'><span class="nv">$ </span>tar -xvf fly-6.7.6-linux-amd64.tgz
-</span><span class='line'><span class="nv">$ </span>mv fly /usr/bin/fly
-</span><span class='line'><span class="nv">$ </span>rm -rf concourse-6.7.6-linux-amd64.tgz fly-6.7.6-linux-amd64.tgz
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the Encryption Keys:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir /etc/concourse
-</span><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa -q -N <span class="s1">&#39;&#39;</span> -f /etc/concourse/tsa_host_key
-</span><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa -q -N <span class="s1">&#39;&#39;</span> -f /etc/concourse/worker_key
-</span><span class='line'><span class="nv">$ </span>ssh-keygen -t rsa -q -N <span class="s1">&#39;&#39;</span> -f /etc/concourse/session_signing_key
-</span><span class='line'><span class="nv">$ </span>cp /etc/concourse/worker_key.pub /etc/concourse/authorized_worker_keys
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Concourse Web Process Configuration:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/concourse/web_environment
-</span><span class='line'>
-</span><span class='line'><span class="nv">PATH</span><span class="o">=</span>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/concourse/bin
-</span><span class='line'><span class="nv">CONCOURSE_ADD_LOCAL_USER</span><span class="o">=</span>ruan:pass
-</span><span class='line'><span class="nv">CONCOURSE_SESSION_SIGNING_KEY</span><span class="o">=</span>/etc/concourse/session_signing_key
-</span><span class='line'><span class="nv">CONCOURSE_TSA_HOST_KEY</span><span class="o">=</span>/etc/concourse/tsa_host_key
-</span><span class='line'><span class="nv">CONCOURSE_TSA_AUTHORIZED_KEYS</span><span class="o">=</span>/etc/concourse/authorized_worker_keys
-</span><span class='line'><span class="nv">CONCOURSE_POSTGRES_HOST</span><span class="o">=</span>127.0.0.1
-</span><span class='line'><span class="nv">CONCOURSE_POSTGRES_USER</span><span class="o">=</span>concourse
-</span><span class='line'><span class="nv">CONCOURSE_POSTGRES_PASSWORD</span><span class="o">=</span>concourse
-</span><span class='line'><span class="nv">CONCOURSE_POSTGRES_DATABASE</span><span class="o">=</span>atc
-</span><span class='line'><span class="nv">CONCOURSE_MAIN_TEAM_LOCAL_USER</span><span class="o">=</span>ruan
-</span><span class='line'><span class="nv">CONCOURSE_EXTERNAL_URL</span><span class="o">=</span>http://10.20.30.40:8080 <span class="c"># replace this with your ip address</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Concourse Worker Process Configuration:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/concourse/worker_environment
-</span><span class='line'>
-</span><span class='line'><span class="nv">PATH</span><span class="o">=</span>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/concourse/bin
-</span><span class='line'><span class="nv">CONCOURSE_WORK_DIR</span><span class="o">=</span>/var/lib/concourse
-</span><span class='line'><span class="nv">CONCOURSE_TSA_HOST</span><span class="o">=</span>127.0.0.1:2222
-</span><span class='line'><span class="nv">CONCOURSE_TSA_PUBLIC_KEY</span><span class="o">=</span>/etc/concourse/tsa_host_key.pub
-</span><span class='line'><span class="nv">CONCOURSE_TSA_WORKER_PRIVATE_KEY</span><span class="o">=</span>/etc/concourse/worker_key
-</span><span class='line'><span class="nv">CONCOURSE_GARDEN_DNS_SERVER</span><span class="o">=</span>8.8.8.8
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create a Concourse user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir /var/lib/concourse
-</span><span class='line'><span class="nv">$ </span>sudo adduser --system --group concourse
-</span><span class='line'><span class="nv">$ </span>sudo chown -R concourse:concourse /etc/concourse /var/lib/concourse
-</span><span class='line'><span class="nv">$ </span>sudo chmod <span class="m">600</span> /etc/concourse/*_environment
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create SystemD Unit Files, first for the Web Service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/systemd/system/concourse-web.service
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>Unit<span class="o">]</span>
-</span><span class='line'><span class="nv">Description</span><span class="o">=</span>Concourse CI web process <span class="o">(</span>ATC and TSA<span class="o">)</span>
-</span><span class='line'><span class="nv">After</span><span class="o">=</span>postgresql.service
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>Service<span class="o">]</span>
-</span><span class='line'><span class="nv">User</span><span class="o">=</span>concourse
-</span><span class='line'><span class="nv">Restart</span><span class="o">=</span>on-failure
-</span><span class='line'><span class="nv">EnvironmentFile</span><span class="o">=</span>/etc/concourse/web_environment
-</span><span class='line'><span class="nv">ExecStart</span><span class="o">=</span>/usr/bin/concourse web
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>Install<span class="o">]</span>
-</span><span class='line'><span class="nv">WantedBy</span><span class="o">=</span>multi-user.target
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then the SystemD Unit File for the Worker Service:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/systemd/system/concourse-worker.service
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>Unit<span class="o">]</span>
-</span><span class='line'><span class="nv">Description</span><span class="o">=</span>Concourse CI worker process
-</span><span class='line'><span class="nv">After</span><span class="o">=</span>concourse-web.service
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>Service<span class="o">]</span>
-</span><span class='line'><span class="nv">User</span><span class="o">=</span>root
-</span><span class='line'><span class="nv">Restart</span><span class="o">=</span>on-failure
-</span><span class='line'><span class="nv">EnvironmentFile</span><span class="o">=</span>/etc/concourse/worker_environment
-</span><span class='line'><span class="nv">ExecStart</span><span class="o">=</span>/usr/bin/concourse worker
-</span><span class='line'>
-</span><span class='line'><span class="o">[</span>Install<span class="o">]</span>
-</span><span class='line'><span class="nv">WantedBy</span><span class="o">=</span>multi-user.target
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create a postgres password for the concourse user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd</span> /home/concourse/
-</span><span class='line'><span class="nv">$ </span>sudo -u concourse psql atc
-</span><span class='line'><span class="nv">atc</span><span class="o">=</span>&gt; ALTER USER concourse WITH PASSWORD <span class="s1">&#39;concourse&#39;</span><span class="p">;</span>
-</span><span class='line'><span class="nv">atc</span><span class="o">=</span>&gt; <span class="se">\q</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Start and Enable the Services:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>systemctl start concourse-web concourse-worker
-</span><span class='line'><span class="nv">$ </span>systemctl <span class="nb">enable </span>concourse-web concourse-worker postgresql
-</span><span class='line'><span class="nv">$ </span>systemctl status concourse-web concourse-worker
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>systemctl is-active concourse-worker concourse-web
-</span><span class='line'>active
-</span><span class='line'>active
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The listening ports should more or less look like the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>netstat -tulpn
-</span><span class='line'>
-</span><span class='line'>Active Internet connections <span class="o">(</span>only servers<span class="o">)</span>
-</span><span class='line'>Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 127.0.0.1:7777          0.0.0.0:*               LISTEN      4530/concourse
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 127.0.0.1:7788          0.0.0.0:*               LISTEN      4530/concourse
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 127.0.0.1:8079          0.0.0.0:*               LISTEN      4525/concourse
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 0.0.0.0:22              0.0.0.0:*               LISTEN      1283/sshd
-</span><span class='line'>tcp        <span class="m">0</span>      <span class="m">0</span> 127.0.0.1:5432          0.0.0.0:*               LISTEN      4047/postgres
-</span><span class='line'>tcp6       <span class="m">0</span>      <span class="m">0</span> :::36159                :::*                    LISTEN      4525/concourse
-</span><span class='line'>tcp6       <span class="m">0</span>      <span class="m">0</span> :::46829                :::*                    LISTEN      4525/concourse
-</span><span class='line'>tcp6       <span class="m">0</span>      <span class="m">0</span> :::2222                 :::*                    LISTEN      4525/concourse
-</span><span class='line'>tcp6       <span class="m">0</span>      <span class="m">0</span> :::8080                 :::*                    LISTEN      4525/concourse
-</span><span class='line'>tcp6       <span class="m">0</span>      <span class="m">0</span> :::22                   :::*                    LISTEN      1283/sshd
-</span><span class='line'>udp        <span class="m">0</span>      <span class="m">0</span> 0.0.0.0:68              0.0.0.0:*                           918/dhclient
-</span><span class='line'>udp        <span class="m">0</span>      <span class="m">0</span> 0.0.0.0:42165           0.0.0.0:*                           4530/concourse
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Client Side:</h2>
-
-<p>I will be using a the Fly cli from a Mac, so first we need to download the fly-cli for Mac:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>wget https://github.com/concourse/concourse/releases/download/v6.7.6/fly-6.7.6-darwin-amd64.tgz
-</span><span class='line'><span class="nv">$ </span>tar -xvf fly-6.7.6-darwin-amd64.tgz
-</span><span class='line'><span class="nv">$ </span>sudo mv fly /usr/local/bin/fly
-</span><span class='line'><span class="nv">$ </span>rm -rf fly-6.7.6-darwin-amd64.tgz
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Next, we need to setup our Concourse Target by Authenticating against our Concourse Endpoint, lets setup our target with the name <code>ci</code>, and make sure to replace the ip address with the ip of your concourse server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci login -c http://10.20.30.40:8080
-</span><span class='line'>logging in to team <span class="s1">&#39;main&#39;</span>
-</span><span class='line'>
-</span><span class='line'>navigate to the following URL in your browser:
-</span><span class='line'>
-</span><span class='line'>  http://10.20.30.40:8080/login?fly_port<span class="o">=</span>42181
-</span><span class='line'>
-</span><span class='line'>or enter token manually <span class="o">(</span>input hidden<span class="o">)</span>:
-</span><span class='line'>target saved
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Lets list our targets:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly targets
-</span><span class='line'>name  url                        team  expiry
-</span><span class='line'>ci    http://10.20.30.40:8080    main  Wed, <span class="m">08</span> Nov <span class="m">2021</span> 15:32:59 UTC
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Listing Registered Workers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci workers
-</span><span class='line'>name              containers  platform  tags  team  state    version
-</span><span class='line'>10.20.30.40       <span class="m">0</span>           linux     none  none  running  1.2
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Listing Active Containers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci containers
-</span><span class='line'>handle                                worker            pipeline     job            build <span class="c">#  build id  type   name                  attempt</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Hello World Pipeline:</h2>
-
-<p>Let&rsquo;s create a basic pipeline, that will print out <code>Hello, World!</code>:</p>
-
-<p>Our <code>hello-world.yml</code></p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">jobs</span><span class="p-Indicator">:</span>
-</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-job</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">plan</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">task</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">say-hello</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">config</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">platform</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">linux</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">image_resource</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">docker-image</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">repository</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">alpine</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">tag</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">edge</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">run</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/bin/sh</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">args</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">-c</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="p-Indicator">|</span>
-</span><span class='line'>          <span class="no">echo &quot;=============&quot;</span>
-</span><span class='line'>          <span class="no">echo &quot;Hello, World!&quot;</span>
-</span><span class='line'>          <span class="no">echo &quot;=============&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Applying the configuration to our pipeline:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci <span class="nb">set</span>-pipeline -p yeeehaa -c hello-world.yml
-</span><span class='line'><span class="nb">jobs</span>:
-</span><span class='line'>  job my-job has been added:
-</span><span class='line'>    name: my-job
-</span><span class='line'>    plan:
-</span><span class='line'>    - task: say-hello
-</span><span class='line'>      config:
-</span><span class='line'>        platform: linux
-</span><span class='line'>        image_resource:
-</span><span class='line'>          <span class="nb">type</span>: docker-image
-</span><span class='line'>          <span class="nb">source</span>:
-</span><span class='line'>            repository: alpine
-</span><span class='line'>            tag: edge
-</span><span class='line'>        run:
-</span><span class='line'>          path: /bin/sh
-</span><span class='line'>          args:
-</span><span class='line'>          - -c
-</span><span class='line'>          - <span class="p">|</span>
-</span><span class='line'>            <span class="nb">echo</span> <span class="s2">&quot;=============&quot;</span>
-</span><span class='line'>            <span class="nb">echo</span> <span class="s2">&quot;Hello, World!&quot;</span>
-</span><span class='line'>            <span class="nb">echo</span> <span class="s2">&quot;=============&quot;</span>
-</span><span class='line'>
-</span><span class='line'>apply configuration? <span class="o">[</span>yN<span class="o">]</span>: y
-</span><span class='line'>pipeline created!
-</span><span class='line'>you can view your pipeline here: http://10.20.30.40:8080/teams/main/pipelines/yeeehaa
-</span><span class='line'>
-</span><span class='line'>the pipeline is currently paused. to unpause, either:
-</span><span class='line'>  - run the unpause-pipeline <span class="nb">command</span>
-</span><span class='line'>  - click play next to the pipeline in the web ui
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can browse to the WebUI to unpause the pipeline, but since I like to do everything on cli as far as possible, I will unpause the pipeline via cli:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci unpause-pipeline -p yeeehaa
-</span><span class='line'>unpaused <span class="s1">&#39;yeeehaa&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now our Pipeline is unpaused, but since we did not specify any triggers, we need to manually trigger the pipeline to run, you can either via the WebUI, select your pipeline which in this case will be named <code>yeeehaa</code> and then select the job, which will be <code>my-job</code> then hit the <code>+</code> sign, which will trigger the pipeline.</p>
-
-<p>I will be using the cli:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci trigger-job --job yeeehaa/my-job
-</span><span class='line'>started yeeehaa/my-job <span class="c">#1</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Via the WebUI on <code>http://10.20.30.40:8080/teams/main/pipelines/yeeehaa/jobs/my-job/builds/1</code> you should see the <code>Hello, World!</code> output, or via the cli, we also have the option to see the output, so let&rsquo;s trigger it again, but this time passing the <code>--watch</code> flag:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci trigger-job --job yeeehaa/my-job --watch
-</span><span class='line'>started yeeehaa/my-job <span class="c">#2</span>
-</span><span class='line'>
-</span><span class='line'>initializing
-</span><span class='line'>running /bin/sh -c <span class="nb">echo</span> <span class="s2">&quot;=============&quot;</span>
-</span><span class='line'><span class="nb">echo</span> <span class="s2">&quot;Hello, World!&quot;</span>
-</span><span class='line'><span class="nb">echo</span> <span class="s2">&quot;=============&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="o">=============</span>
-</span><span class='line'>Hello, World!
-</span><span class='line'><span class="o">=============</span>
-</span><span class='line'>succeeded
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Listing our Workers and Containers again:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fly -t ci workers
-</span><span class='line'>name              containers  platform  tags  team  state    version
-</span><span class='line'>10.20.30.40       <span class="m">2</span>           linux     none  none  running  1.2
-</span><span class='line'>
-</span><span class='line'><span class="nv">$ </span>fly -t ci containers
-</span><span class='line'>handle                                worker            pipeline     job         build <span class="c">#  build id  type   name           attempt</span>
-</span><span class='line'>36982955-54fd-4c1b-57b8-216486c58db8  10.20.30.40       yeeehaa      my-job      <span class="m">2</span>        <span class="m">729</span>       task   say-hello      n/a
-</span></code></pre></td></tr></table></div></figure>
-
-
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/4">&larr; Older</a>
@@ -3447,6 +3085,10 @@ https://github.com/concourse/ &hellip;">
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/06/14/how-to-read-and-write-json-data-with-python/">How to Read and Write Json Data With Python</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/05/31/setup-linkding-bookmarks-manager-on-docker/">Setup Linkding Bookmarks Manager on Docker</a>
       </li>
     
@@ -3460,10 +3102,6 @@ https://github.com/concourse/ &hellip;">
     
       <li class="post">
         <a href="/blog/2022/05/27/create-a-aws-lambda-layer-with-docker/">Create a AWS Lambda Layer With Docker</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/05/11/customize-vim-editor-with-a-brand-new-look/">Customize VIM Editor With a Brand New Look</a>
       </li>
     
   </ul>

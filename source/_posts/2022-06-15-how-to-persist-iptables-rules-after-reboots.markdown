@@ -1,6 +1,7 @@
 ---
 layout: post
 title: "How to persist iptables rules after reboots"
+description: "In this tutorial we will demonstrate how to persist iptables rules across reboots."
 date: 2022-06-15 06:10:12 -0400
 comments: true
 categories: ["security", "linux", "iptables"] 

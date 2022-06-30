@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-06-23T18:09:22-04:00</updated>
+  <updated>2022-06-30T01:13:04-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,691 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Create a RAID5 Array With Mdadm on Linux]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/06/29/create-a-raid5-array-with-mdadm-on-linux/"/>
+    <updated>2022-06-29T05:02:13-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/06/29/create-a-raid5-array-with-mdadm-on-linux</id>
+    <content type="html"><![CDATA[<p><img src="https://blog.ruanbekker.com/images/ruanbekker-raid5-array-linux.png" alt="setup-raid5-array-ubuntu-linux" /></p>
+
+<p>In this tutorial we will setup a <a href="https://en.wikipedia.org/wiki/Standard_RAID_levels#RAID_5">RAID5</a> array, which is striping across multiple drives with distributed paritiy, which is good for redundancy. We will be using Ubuntu for our Linux Distribution, but the technique applies to other Linux Distributions as well.</p>
+
+<h2>What are we trying to achieve</h2>
+
+<p>We will run a server with one root disk and 6 extra disks, where we will first create our raid5 array with three disks, then I will show you how to expand your raid5 array by adding three other disks.</p>
+
+<p>Things fail all the time, and it&rsquo;s not fun when hard drives breaks, therefore we want to do our best to prevent our applications from going down due to hardware failures. To achieve data redundancy, we want to use three hard drives, which we want to add into a raid configuration that will proviide us:</p>
+
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/Data_striping">striping</a>, which is the technique of segmenting logically sequential data, so that consecutive segments are stored on different physical storage devices.</li>
+<li><a href="https://en.wikipedia.org/wiki/Parity_bit#RAID">distributed parity</a>, where parity data are distributed between the physical disks, where there is only one parity block per disk, this provide protection against one physical disk failure, where the minimum number of disks are three.</li>
+</ul>
+
+
+<p>This is how a RAID5 array looks like (image from diskpart.com):</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/176410333-0ff98867-dfb5-4fe3-a037-cc5d20014ab5.png" alt="raid5" /></p>
+
+<h2>Hardware Overview</h2>
+
+<p>We will have a Linux server with one root disk and six extra disks:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME    MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+</span><span class='line'>xvda    202:0    <span class="m">0</span>    8G  <span class="m">0</span> disk
+</span><span class='line'>└─xvda1 202:1    <span class="m">0</span>    8G  <span class="m">0</span> part /
+</span><span class='line'>xvdb    202:16   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvdc    202:32   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvdd    202:48   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvde    202:64   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvdf    202:80   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvdg    202:96   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Dependencies</h2>
+
+<p>We require <code>mdadm</code> to create our raid configuration:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo apt update
+</span><span class='line'><span class="nv">$ </span>sudo apt install mdadm -y
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Format Disks</h2>
+
+<p>First we will format and partition the following disks: <code>/dev/xvdb</code>, <code>/dev/xvdc</code>, <code>/dev/xvdd</code>, I will demonstrate the process for one disk, but repeat them for the other as well:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>fdisk /dev/xvdc
+</span><span class='line'>
+</span><span class='line'>Welcome to fdisk <span class="o">(</span>util-linux 2.34<span class="o">)</span>.
+</span><span class='line'>Changes will remain in memory only, <span class="k">until</span> you decide to write them.
+</span><span class='line'>Be careful before using the write command.
+</span><span class='line'>
+</span><span class='line'>The old ext4 signature will be removed by a write command.
+</span><span class='line'>
+</span><span class='line'>Device does not contain a recognized partition table.
+</span><span class='line'>Created a new DOS disklabel with disk identifier 0x26a2d2f6.
+</span><span class='line'>
+</span><span class='line'>Command <span class="o">(</span>m <span class="k">for</span> <span class="nb">help</span><span class="o">)</span>: n
+</span><span class='line'>Partition <span class="nb">type</span>
+</span><span class='line'><span class="nb">   </span>p   primary <span class="o">(</span><span class="m">0</span> primary, <span class="m">0</span> extended, <span class="m">4</span> free<span class="o">)</span>
+</span><span class='line'>   e   extended <span class="o">(</span>container <span class="k">for</span> logical partitions<span class="o">)</span>
+</span><span class='line'>Select <span class="o">(</span>default p<span class="o">)</span>: p
+</span><span class='line'>Partition number <span class="o">(</span>1-4, default 1<span class="o">)</span>: 1
+</span><span class='line'>First sector <span class="o">(</span>2048-20971519, default 2048<span class="o">)</span>:
+</span><span class='line'>Last sector, +/-sectors or +/-size<span class="o">{</span>K,M,G,T,P<span class="o">}</span> <span class="o">(</span>2048-20971519, default 20971519<span class="o">)</span>:
+</span><span class='line'>
+</span><span class='line'>Created a new partition <span class="m">1</span> of <span class="nb">type</span> <span class="s1">&#39;Linux&#39;</span> and of size <span class="m">10</span> GiB.
+</span><span class='line'>
+</span><span class='line'>Command <span class="o">(</span>m <span class="k">for</span> <span class="nb">help</span><span class="o">)</span>: t
+</span><span class='line'>Selected partition 1
+</span><span class='line'>Hex code <span class="o">(</span><span class="nb">type </span>L to list all codes<span class="o">)</span>: fd
+</span><span class='line'>Changed <span class="nb">type </span>of partition <span class="s1">&#39;Linux&#39;</span> to <span class="s1">&#39;Linux raid autodetect&#39;</span>.
+</span><span class='line'>
+</span><span class='line'>Command <span class="o">(</span>m <span class="k">for</span> <span class="nb">help</span><span class="o">)</span>: w
+</span><span class='line'>The partition table has been altered.
+</span><span class='line'>Calling ioctl<span class="o">()</span> to re-read partition table.
+</span><span class='line'>Syncing disks.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create RAID5 Array</h2>
+
+<p>Using <code>mdadm</code>, create the <code>/dev/md0</code> device, by specifying the raid level and the disks that we want to add to the array:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --create /dev/md0 --level<span class="o">=</span><span class="m">5</span> --raid-devices<span class="o">=</span><span class="m">3</span> /dev/xvdb1 /dev/xvdc1 /dev/xvdd1
+</span><span class='line'>mdadm: Defaulting to version 1.2 metadata
+</span><span class='line'>mdadm: array /dev/md0 started.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now that our device has been added, we can monitor the process:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /proc/mdstat
+</span><span class='line'>Personalities : <span class="o">[</span>raid6<span class="o">]</span> <span class="o">[</span>raid5<span class="o">]</span> <span class="o">[</span>raid4<span class="o">]</span>
+</span><span class='line'>md0 : active raid5 xvdd1<span class="o">[</span>3<span class="o">]</span> xvdc1<span class="o">[</span>1<span class="o">]</span> xvdb1<span class="o">[</span>0<span class="o">]</span>
+</span><span class='line'>      <span class="m">20951040</span> blocks super 1.2 level 5, 512k chunk, algorithm <span class="m">2</span> <span class="o">[</span>3/2<span class="o">]</span> <span class="o">[</span>UU_<span class="o">]</span>
+</span><span class='line'>      <span class="o">[==</span>&gt;..................<span class="o">]</span>  <span class="nv">recovery</span> <span class="o">=</span> 11.5% <span class="o">(</span>1212732/10475520<span class="o">)</span> <span class="nv">finish</span><span class="o">=</span>4.7min <span class="nv">speed</span><span class="o">=</span>32103K/sec
+</span><span class='line'>
+</span><span class='line'>unused devices: &lt;none&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see, currently its at 11.5%, give it some time to let it complete, you should treat the following as a completed state:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /proc/mdstat
+</span><span class='line'>Personalities : <span class="o">[</span>raid6<span class="o">]</span> <span class="o">[</span>raid5<span class="o">]</span> <span class="o">[</span>raid4<span class="o">]</span>
+</span><span class='line'>md0 : active raid5 xvdd1<span class="o">[</span>3<span class="o">]</span> xvdc1<span class="o">[</span>1<span class="o">]</span> xvdb1<span class="o">[</span>0<span class="o">]</span>
+</span><span class='line'>      <span class="m">20951040</span> blocks super 1.2 level 5, 512k chunk, algorithm <span class="m">2</span> <span class="o">[</span>3/3<span class="o">]</span> <span class="o">[</span>UUU<span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>unused devices: &lt;none&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also inspect devices with <code>mdadm</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm -E /dev/xvd<span class="o">[</span>b-d<span class="o">]</span>1
+</span><span class='line'>/dev/xvdb1:
+</span><span class='line'>          Magic : a92b4efc
+</span><span class='line'>        Version : 1.2
+</span><span class='line'>    Feature Map : 0x0
+</span><span class='line'>     Array UUID : ea997bce:a530519c:ae41022e:0f4306bf
+</span><span class='line'>           Name : ip-172-31-3-57:0  <span class="o">(</span><span class="nb">local </span>to host ip-172-31-3-57<span class="o">)</span>
+</span><span class='line'>  Creation Time : Wed Jan <span class="m">12</span> 13:36:39 2022
+</span><span class='line'>     Raid Level : raid5
+</span><span class='line'>   Raid Devices : 3
+</span><span class='line'>
+</span><span class='line'> Avail Dev Size : <span class="m">20951040</span> <span class="o">(</span>9.99 GiB 10.73 GB<span class="o">)</span>
+</span><span class='line'>     Array Size : <span class="m">20951040</span> <span class="o">(</span>19.98 GiB 21.45 GB<span class="o">)</span>
+</span><span class='line'>    Data Offset : <span class="m">18432</span> sectors
+</span><span class='line'>   Super Offset : <span class="m">8</span> sectors
+</span><span class='line'>   Unused Space : <span class="nv">before</span><span class="o">=</span><span class="m">18280</span> sectors, <span class="nv">after</span><span class="o">=</span><span class="m">0</span> sectors
+</span><span class='line'>          State : clean
+</span><span class='line'>    Device UUID : 8305a179:3ef96520:6c7b41dd:bdc7401f
+</span><span class='line'>
+</span><span class='line'>    Update Time : Wed Jan <span class="m">12</span> 13:42:14 2022
+</span><span class='line'>  Bad Block Log : <span class="m">512</span> entries available at offset <span class="m">136</span> sectors
+</span><span class='line'>       Checksum : 1f9b4887 - correct
+</span><span class='line'>         Events : 18
+</span><span class='line'>
+</span><span class='line'>         Layout : left-symmetric
+</span><span class='line'>     Chunk Size : 512K
+</span><span class='line'>
+</span><span class='line'>   Device Role : Active device 0
+</span><span class='line'>   Array State : AAA <span class="o">(</span><span class="s1">&#39;A&#39;</span> <span class="o">==</span> active, <span class="s1">&#39;.&#39;</span> <span class="o">==</span> missing, <span class="s1">&#39;R&#39;</span> <span class="o">==</span> replacing<span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To get information about your raid5 device:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --detail /dev/md0
+</span><span class='line'>/dev/md0:
+</span><span class='line'>           Version : 1.2
+</span><span class='line'>     Creation Time : Wed Jan <span class="m">12</span> 13:36:39 2022
+</span><span class='line'>        Raid Level : raid5
+</span><span class='line'>        Array Size : <span class="m">20951040</span> <span class="o">(</span>19.98 GiB 21.45 GB<span class="o">)</span>
+</span><span class='line'>     Used Dev Size : <span class="m">10475520</span> <span class="o">(</span>9.99 GiB 10.73 GB<span class="o">)</span>
+</span><span class='line'>      Raid Devices : 3
+</span><span class='line'>     Total Devices : 3
+</span><span class='line'>       Persistence : Superblock is persistent
+</span><span class='line'>
+</span><span class='line'>       Update Time : Wed Jan <span class="m">12</span> 13:42:14 2022
+</span><span class='line'>             State : clean
+</span><span class='line'>    Active Devices : 3
+</span><span class='line'>   Working Devices : 3
+</span><span class='line'>    Failed Devices : 0
+</span><span class='line'>     Spare Devices : 0
+</span><span class='line'>
+</span><span class='line'>            Layout : left-symmetric
+</span><span class='line'>        Chunk Size : 512K
+</span><span class='line'>
+</span><span class='line'>Consistency Policy : resync
+</span><span class='line'>
+</span><span class='line'>              Name : ip-172-31-3-57:0  <span class="o">(</span><span class="nb">local </span>to host ip-172-31-3-57<span class="o">)</span>
+</span><span class='line'>              UUID : ea997bce:a530519c:ae41022e:0f4306bf
+</span><span class='line'>            Events : 18
+</span><span class='line'>
+</span><span class='line'>    Number   Major   Minor   RaidDevice State
+</span><span class='line'>       <span class="m">0</span>     <span class="m">202</span>       <span class="m">17</span>        <span class="m">0</span>      active sync   /dev/xvdb1
+</span><span class='line'>       <span class="m">1</span>     <span class="m">202</span>       <span class="m">33</span>        <span class="m">1</span>      active sync   /dev/xvdc1
+</span><span class='line'>       <span class="m">3</span>     <span class="m">202</span>       <span class="m">49</span>        <span class="m">2</span>      active sync   /dev/xvdd1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create Filesystems</h2>
+
+<p>We will use our <code>/dev/md0</code> device and create a <code>ext4</code> filesystem:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkfs.ext4 /dev/md0
+</span><span class='line'>mke2fs 1.45.5 <span class="o">(</span>07-Jan-2020<span class="o">)</span>
+</span><span class='line'>Creating filesystem with <span class="m">5237760</span> 4k blocks and <span class="m">1310720</span> inodes
+</span><span class='line'>Filesystem UUID: 579f045e-d270-4ff2-b36b-8dc506c27c5f
+</span><span class='line'>Superblock backups stored on blocks:
+</span><span class='line'>  32768, 98304, 163840, 229376, 294912, 819200, 884736, 1605632, 2654208,
+</span><span class='line'>  4096000
+</span><span class='line'>
+</span><span class='line'>Allocating group tables: <span class="k">done</span>
+</span><span class='line'>Writing inode tables: <span class="k">done</span>
+</span><span class='line'>Creating journal <span class="o">(</span><span class="m">32768</span> blocks<span class="o">)</span>: <span class="k">done</span>
+</span><span class='line'>Writing superblocks and filesystem accounting information: <span class="k">done</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can then verify that by looking at our block devices using <code>lsblk</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>lsblk
+</span><span class='line'>NAME    MAJ:MIN RM  SIZE RO TYPE  MOUNTPOINT
+</span><span class='line'>xvda    202:0    <span class="m">0</span>    8G  <span class="m">0</span> disk
+</span><span class='line'>└─xvda1 202:1    <span class="m">0</span>    8G  <span class="m">0</span> part  /
+</span><span class='line'>xvdb    202:16   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>└─xvdb1 202:17   <span class="m">0</span>   10G  <span class="m">0</span> part
+</span><span class='line'>  └─md0   9:0    <span class="m">0</span>   20G  <span class="m">0</span> raid5
+</span><span class='line'>xvdc    202:32   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>└─xvdc1 202:33   <span class="m">0</span>   10G  <span class="m">0</span> part
+</span><span class='line'>  └─md0   9:0    <span class="m">0</span>   20G  <span class="m">0</span> raid5
+</span><span class='line'>xvdd    202:48   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>└─xvdd1 202:49   <span class="m">0</span>   10G  <span class="m">0</span> part
+</span><span class='line'>  └─md0   9:0    <span class="m">0</span>   20G  <span class="m">0</span> raid5
+</span><span class='line'>xvde    202:64   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvdf    202:80   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span><span class='line'>xvdg    202:96   <span class="m">0</span>   10G  <span class="m">0</span> disk
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we can mount our device to <code>/mnt</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mount /dev/md0 /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can verify that the device is mounted by using <code>df</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/root       7.7G  1.5G  6.3G  19% /
+</span><span class='line'>/dev/md0         20G   45M   19G   1% /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To persist the device across reboots, add it to the <code>/etc/fstab</code> file:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/fstab
+</span><span class='line'>/dev/md0                /mnt     ext4   defaults                <span class="m">0</span> 0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now our filesystem which is mounted at <code>/mnt</code> is ready to be used.</p>
+
+<h2>RAID Configuration (across reboots)</h2>
+
+<p>By default RAID doesn’t have a config file, therefore we need to save it manually. If this step is not followed RAID device will not be in md0, but perhaps something else.</p>
+
+<p>So, we must have to save the configuration to persist across reboots, when it reboot it gets loaded to the kernel and RAID will also get loaded.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --detail --scan --verbose &gt;&gt; /etc/mdadm.conf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Note: Saving the configuration will keep the RAID level stable in the md0 device.</p>
+
+<h2>Adding Spare Devices</h2>
+
+<p>Earlier I mentioned that we have spare disks that we can use to expand our raid device. After they have been formatted we can add them as spare devices to our raid setup:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --add /dev/md0 /dev/xvde1 /dev/xvdf1 /dev/xvdg1
+</span><span class='line'>mdadm: added /dev/xvde1
+</span><span class='line'>mdadm: added /dev/xvdf1
+</span><span class='line'>mdadm: added /dev/xvdg1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify our change by viewing the detail of our device:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --detail /dev/md0
+</span><span class='line'>/dev/md0:
+</span><span class='line'>           Version : 1.2
+</span><span class='line'>     Creation Time : Wed Jan <span class="m">12</span> 13:36:39 2022
+</span><span class='line'>        Raid Level : raid5
+</span><span class='line'>        Array Size : <span class="m">20951040</span> <span class="o">(</span>19.98 GiB 21.45 GB<span class="o">)</span>
+</span><span class='line'>     Used Dev Size : <span class="m">10475520</span> <span class="o">(</span>9.99 GiB 10.73 GB<span class="o">)</span>
+</span><span class='line'>      Raid Devices : 3
+</span><span class='line'>     Total Devices : 6
+</span><span class='line'>       Persistence : Superblock is persistent
+</span><span class='line'>
+</span><span class='line'>       Update Time : Wed Jan <span class="m">12</span> 14:28:23 2022
+</span><span class='line'>             State : clean
+</span><span class='line'>    Active Devices : 3
+</span><span class='line'>   Working Devices : 6
+</span><span class='line'>    Failed Devices : 0
+</span><span class='line'>     Spare Devices : 3
+</span><span class='line'>
+</span><span class='line'>            Layout : left-symmetric
+</span><span class='line'>        Chunk Size : 512K
+</span><span class='line'>
+</span><span class='line'>Consistency Policy : resync
+</span><span class='line'>
+</span><span class='line'>              Name : ip-172-31-3-57:0  <span class="o">(</span><span class="nb">local </span>to host ip-172-31-3-57<span class="o">)</span>
+</span><span class='line'>              UUID : ea997bce:a530519c:ae41022e:0f4306bf
+</span><span class='line'>            Events : 27
+</span><span class='line'>
+</span><span class='line'>    Number   Major   Minor   RaidDevice State
+</span><span class='line'>       <span class="m">0</span>     <span class="m">202</span>       <span class="m">17</span>        <span class="m">0</span>      active sync   /dev/xvdb1
+</span><span class='line'>       <span class="m">1</span>     <span class="m">202</span>       <span class="m">33</span>        <span class="m">1</span>      active sync   /dev/xvdc1
+</span><span class='line'>       <span class="m">3</span>     <span class="m">202</span>       <span class="m">49</span>        <span class="m">2</span>      active sync   /dev/xvdd1
+</span><span class='line'>
+</span><span class='line'>       <span class="m">4</span>     <span class="m">202</span>       <span class="m">65</span>        -      spare   /dev/xvde1
+</span><span class='line'>       <span class="m">5</span>     <span class="m">202</span>       <span class="m">81</span>        -      spare   /dev/xvdf1
+</span><span class='line'>       <span class="m">6</span>     <span class="m">202</span>       <span class="m">97</span>        -      spare   /dev/xvdg1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see it&rsquo;s only spares at this moment, we can use the spares for data storage, by growing our device:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --grow --raid-devices<span class="o">=</span><span class="m">6</span> /dev/md0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Verify:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mdadm --detail /dev/md0
+</span><span class='line'>/dev/md0:
+</span><span class='line'>           Version : 1.2
+</span><span class='line'>     Creation Time : Wed Jan <span class="m">12</span> 13:36:39 2022
+</span><span class='line'>        Raid Level : raid5
+</span><span class='line'>        Array Size : <span class="m">20951040</span> <span class="o">(</span>19.98 GiB 21.45 GB<span class="o">)</span>
+</span><span class='line'>     Used Dev Size : <span class="m">10475520</span> <span class="o">(</span>9.99 GiB 10.73 GB<span class="o">)</span>
+</span><span class='line'>      Raid Devices : 6
+</span><span class='line'>     Total Devices : 6
+</span><span class='line'>       Persistence : Superblock is persistent
+</span><span class='line'>
+</span><span class='line'>       Update Time : Wed Jan <span class="m">12</span> 15:15:31 2022
+</span><span class='line'>             State : clean, reshaping
+</span><span class='line'>    Active Devices : 6
+</span><span class='line'>   Working Devices : 6
+</span><span class='line'>    Failed Devices : 0
+</span><span class='line'>     Spare Devices : 0
+</span><span class='line'>
+</span><span class='line'>            Layout : left-symmetric
+</span><span class='line'>        Chunk Size : 512K
+</span><span class='line'>
+</span><span class='line'>Consistency Policy : resync
+</span><span class='line'>
+</span><span class='line'>    Reshape Status : 0% <span class="nb">complete</span>
+</span><span class='line'><span class="nb">     </span>Delta Devices : 3, <span class="o">(</span>3-&gt;6<span class="o">)</span>
+</span><span class='line'>
+</span><span class='line'>              Name : ip-172-31-3-57:0  <span class="o">(</span><span class="nb">local </span>to host ip-172-31-3-57<span class="o">)</span>
+</span><span class='line'>              UUID : ea997bce:a530519c:ae41022e:0f4306bf
+</span><span class='line'>            Events : 36
+</span><span class='line'>
+</span><span class='line'>    Number   Major   Minor   RaidDevice State
+</span><span class='line'>       <span class="m">0</span>     <span class="m">202</span>       <span class="m">17</span>        <span class="m">0</span>      active sync   /dev/xvdb1
+</span><span class='line'>       <span class="m">1</span>     <span class="m">202</span>       <span class="m">33</span>        <span class="m">1</span>      active sync   /dev/xvdc1
+</span><span class='line'>       <span class="m">3</span>     <span class="m">202</span>       <span class="m">49</span>        <span class="m">2</span>      active sync   /dev/xvdd1
+</span><span class='line'>       <span class="m">6</span>     <span class="m">202</span>       <span class="m">97</span>        <span class="m">3</span>      active sync   /dev/xvdg1
+</span><span class='line'>       <span class="m">5</span>     <span class="m">202</span>       <span class="m">81</span>        <span class="m">4</span>      active sync   /dev/xvdf1
+</span><span class='line'>       <span class="m">4</span>     <span class="m">202</span>       <span class="m">65</span>        <span class="m">5</span>      active sync   /dev/xvde1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Wait for the raid to rebuild, by viewing the <code>mdstat</code>::</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /proc/mdstat
+</span><span class='line'>Personalities : <span class="o">[</span>raid6<span class="o">]</span> <span class="o">[</span>raid5<span class="o">]</span> <span class="o">[</span>raid4<span class="o">]</span>
+</span><span class='line'>md0 : active raid5 xvdg1<span class="o">[</span>6<span class="o">]</span> xvdf1<span class="o">[</span>5<span class="o">]</span> xvde1<span class="o">[</span>4<span class="o">]</span> xvdd1<span class="o">[</span>3<span class="o">]</span> xvdc1<span class="o">[</span>1<span class="o">]</span> xvdb1<span class="o">[</span>0<span class="o">]</span>
+</span><span class='line'>      <span class="m">20951040</span> blocks super 1.2 level 5, 512k chunk, algorithm <span class="m">2</span> <span class="o">[</span>6/6<span class="o">]</span> <span class="o">[</span>UUUUUU<span class="o">]</span>
+</span><span class='line'>      <span class="o">[</span>&gt;....................<span class="o">]</span>  <span class="nv">reshape</span> <span class="o">=</span>  0.7% <span class="o">(</span>76772/10475520<span class="o">)</span> <span class="nv">finish</span><span class="o">=</span>18.0min <span class="nv">speed</span><span class="o">=</span>9596K/sec
+</span><span class='line'>
+</span><span class='line'>unused devices: &lt;none&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resizing our Filesystem</h2>
+
+<p>Once we added the spares and growed our device, we need to run integrity checks, then we can resize the volume. But first, we need to unmount our filesystem:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>umount /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run a integrity check:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>e2fsck -f /dev/md0
+</span><span class='line'>e2fsck 1.45.5 <span class="o">(</span>07-Jan-2020<span class="o">)</span>
+</span><span class='line'>Pass 1: Checking inodes, blocks, and sizes
+</span><span class='line'>Pass 2: Checking directory structure
+</span><span class='line'>Pass 3: Checking directory connectivity
+</span><span class='line'>Pass 4: Checking reference counts
+</span><span class='line'>Pass 5: Checking group summary information
+</span><span class='line'>/dev/md0: 12/1310720 files <span class="o">(</span>0.0% non-contiguous<span class="o">)</span>, 126323/5237760 blocks
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once that has passed, resize the file system:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>resize2fs /dev/md0
+</span><span class='line'>resize2fs 1.45.5 <span class="o">(</span>07-Jan-2020<span class="o">)</span>
+</span><span class='line'>Resizing the filesystem on /dev/md0 to <span class="m">13094400</span> <span class="o">(</span>4k<span class="o">)</span> blocks.
+</span><span class='line'>The filesystem on /dev/md0 is now <span class="m">13094400</span> <span class="o">(</span>4k<span class="o">)</span> blocks long.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we remount our filesystem:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mount /dev/md0 /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After the filesystem has been mounted, we can view the disk size and confirm that the size increased:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>df -h /mnt
+</span><span class='line'>Filesystem      Size  Used Avail Use% Mounted on
+</span><span class='line'>/dev/md0         50G   52M   47G   1% /mnt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Install a Specific Python Version on Ubuntu]]></title>
@@ -5050,1186 +5735,6 @@
 <li><a href="https://gist.github.com/swaldman/e58a866eafc4ff043c4099e394901a1e">https://gist.github.com/swaldman/e58a866eafc4ff043c4099e394901a1e</a></li>
 <li><a href="https://ethereum.org/en/developers/tutorials/run-node-raspberry-pi/">Run Geth on a Raspberry Pi - ethereum.org</a></li>
 </ul>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run Docker Containers With Terraform]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform/"/>
-    <updated>2021-11-23T11:06:03-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform</id>
-    <content type="html"><![CDATA[<p>In this post I will demonstrate how to use the terraform <a href="https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container">docker_container</a> resource from the <a href="https://github.com/kreuzwerker/terraform-provider-docker">docker provider</a> to run two docker containers, traefik and nginx and use the random provider to generate a random url for us.</p>
-
-<h2>Pre-Requisites</h2>
-
-<p>You will require <a href="https://www.terraform.io/downloads.html">terraform</a> and <a href="https://docs.docker.com/get-docker/">docker</a> to be installed.</p>
-
-<h2>Project Structure</h2>
-
-<p>The source code for this post is available on my github repository, but the project structure will look like the following:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/143061769-c619e7eb-c5b1-42bc-9fa4-ed59c15448fa.png" alt="image" /></p>
-
-<p>Our <code>providers.tf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>terraform {
-</span><span class='line'>  required_providers {
-</span><span class='line'>    docker = {
-</span><span class='line'>      source  = "kreuzwerker/docker"
-</span><span class='line'>      version = "2.15.0"
-</span><span class='line'>    }
-</span><span class='line'>    random = {
-</span><span class='line'>      version = "~&gt; 3.0"
-</span><span class='line'>    }
-</span><span class='line'>  }
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>provider "docker" {
-</span><span class='line'>  host = "unix:///var/run/docker.sock"
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>provider "random" {}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>variables.tf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>variable "domain" {
-</span><span class='line'>  type    = string
-</span><span class='line'>  default = "localdns.xyz"
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>outputs.tf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>output "nginx_container_name" {
-</span><span class='line'>  value = docker_container.nginx.name
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>output "traefik_container_name" {
-</span><span class='line'>  value = docker_container.traefik.name
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>output "traefik_url" {
-</span><span class='line'>  value = "http://traefik.${var.domain}/"
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>output "nginx_url" {
-</span><span class='line'>  value = "http://www.${random_string.nginx.result}.${var.domain}/"
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>main.tf</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-<span class='line-number'>80</span>
-<span class='line-number'>81</span>
-<span class='line-number'>82</span>
-<span class='line-number'>83</span>
-<span class='line-number'>84</span>
-<span class='line-number'>85</span>
-<span class='line-number'>86</span>
-<span class='line-number'>87</span>
-<span class='line-number'>88</span>
-<span class='line-number'>89</span>
-<span class='line-number'>90</span>
-<span class='line-number'>91</span>
-<span class='line-number'>92</span>
-<span class='line-number'>93</span>
-<span class='line-number'>94</span>
-<span class='line-number'>95</span>
-<span class='line-number'>96</span>
-<span class='line-number'>97</span>
-<span class='line-number'>98</span>
-<span class='line-number'>99</span>
-<span class='line-number'>100</span>
-<span class='line-number'>101</span>
-<span class='line-number'>102</span>
-<span class='line-number'>103</span>
-<span class='line-number'>104</span>
-<span class='line-number'>105</span>
-<span class='line-number'>106</span>
-<span class='line-number'>107</span>
-<span class='line-number'>108</span>
-<span class='line-number'>109</span>
-<span class='line-number'>110</span>
-<span class='line-number'>111</span>
-<span class='line-number'>112</span>
-<span class='line-number'>113</span>
-<span class='line-number'>114</span>
-<span class='line-number'>115</span>
-<span class='line-number'>116</span>
-<span class='line-number'>117</span>
-<span class='line-number'>118</span>
-<span class='line-number'>119</span>
-<span class='line-number'>120</span>
-<span class='line-number'>121</span>
-<span class='line-number'>122</span>
-<span class='line-number'>123</span>
-<span class='line-number'>124</span>
-<span class='line-number'>125</span>
-<span class='line-number'>126</span>
-<span class='line-number'>127</span>
-<span class='line-number'>128</span>
-<span class='line-number'>129</span>
-<span class='line-number'>130</span>
-<span class='line-number'>131</span>
-<span class='line-number'>132</span>
-<span class='line-number'>133</span>
-<span class='line-number'>134</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>resource "random_string" "nginx" {
-</span><span class='line'>  length  = 8
-</span><span class='line'>  upper   = false
-</span><span class='line'>  special = false
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>resource "docker_image" "nginx" {
-</span><span class='line'>  name = "nginx:stable-alpine"
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>resource "docker_image" "traefik" {
-</span><span class='line'>  name = "traefik:1.7.14"
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>resource "docker_network" "nginx" {
-</span><span class='line'>  name   = "docknet"
-</span><span class='line'>  driver = "bridge"
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>resource "docker_container" "traefik" {
-</span><span class='line'>  name  = "traefik"
-</span><span class='line'>  image = docker_image.traefik.name
-</span><span class='line'>
-</span><span class='line'>  networks_advanced {
-</span><span class='line'>    name    = docker_network.nginx.name
-</span><span class='line'>    aliases = ["docknet"]
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  restart = "unless-stopped"
-</span><span class='line'>  destroy_grace_seconds = 30
-</span><span class='line'>  must_run = true
-</span><span class='line'>  memory = 256
-</span><span class='line'>
-</span><span class='line'>  volumes {
-</span><span class='line'>    host_path      = "/var/run/docker.sock"
-</span><span class='line'>    container_path = "/var/run/docker.sock"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  command = [
-</span><span class='line'>    "--api",
-</span><span class='line'>    "--docker",
-</span><span class='line'>    "--docker.watch",
-</span><span class='line'>    "--entrypoints=Name:http Address::80",
-</span><span class='line'>    "--logLevel=INFO"
-</span><span class='line'>  ]
-</span><span class='line'>
-</span><span class='line'>  ports {
-</span><span class='line'>    internal = 80
-</span><span class='line'>    external = 80
-</span><span class='line'>    ip       = "0.0.0.0"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.enable"
-</span><span class='line'>    value = true
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.docker.network"
-</span><span class='line'>    value = "docknet"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.frontend.rule"
-</span><span class='line'>    value = "Host:traefik.${var.domain}"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.port"
-</span><span class='line'>    value = 8080
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>resource "docker_container" "nginx" {
-</span><span class='line'>  name  = "nginx"
-</span><span class='line'>  image = docker_image.nginx.name
-</span><span class='line'>
-</span><span class='line'>  networks_advanced {
-</span><span class='line'>    name    = docker_network.nginx.name
-</span><span class='line'>    aliases = ["docknet"]
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  restart = "unless-stopped"
-</span><span class='line'>  destroy_grace_seconds = 30
-</span><span class='line'>  must_run = true
-</span><span class='line'>  memory = 256
-</span><span class='line'>
-</span><span class='line'>  volumes {
-</span><span class='line'>    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
-</span><span class='line'>    container_path = "/usr/share/nginx/html"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  volumes {
-</span><span class='line'>    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
-</span><span class='line'>    container_path = "/etc/nginx/nginx.conf"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  volumes {
-</span><span class='line'>    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
-</span><span class='line'>    container_path = "/etc/nginx/conf.d/app.conf"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  env = [
-</span><span class='line'>    "PUID=501",
-</span><span class='line'>    "PGID=20"
-</span><span class='line'>  ]
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.enable"
-</span><span class='line'>    value = true
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.docker.network"
-</span><span class='line'>    value = "docknet"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.frontend.rule"
-</span><span class='line'>    value = "Host:www.${random_string.nginx.result}.${var.domain}"
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  labels {
-</span><span class='line'>    label = "traefik.port"
-</span><span class='line'>    value = 80
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  depends_on = [
-</span><span class='line'>    docker_container.traefik,
-</span><span class='line'>    random_string.nginx
-</span><span class='line'>  ]
-</span><span class='line'>
-</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>html/index.html</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'><span class="cp">&lt;!doctype html&gt;</span>
-</span><span class='line'><span class="nt">&lt;html</span> <span class="na">lang=</span><span class="s">&quot;en&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>    <span class="nt">&lt;head&gt;</span>
-</span><span class='line'>        <span class="nt">&lt;meta</span> <span class="na">charset=</span><span class="s">&quot;utf-8&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>        <span class="nt">&lt;meta</span> <span class="na">name=</span><span class="s">&quot;viewport&quot;</span> <span class="na">content=</span><span class="s">&quot;width=device-width, initial-scale=1&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="nt">&lt;title&gt;</span>Welcome<span class="nt">&lt;/title&gt;</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="c">&lt;!-- Fonts --&gt;</span>
-</span><span class='line'>        <span class="nt">&lt;link</span> <span class="na">href=</span><span class="s">&quot;https://fonts.googleapis.com/css?family=Nunito:200,600&quot;</span> <span class="na">rel=</span><span class="s">&quot;stylesheet&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="c">&lt;!-- Styles --&gt;</span>
-</span><span class='line'>        <span class="nt">&lt;style&gt;</span>
-</span><span class='line'>            <span class="nt">html</span><span class="o">,</span> <span class="nt">body</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">background-color</span><span class="o">:</span> <span class="m">#fff</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">color</span><span class="o">:</span> <span class="m">#636b6f</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">font-family</span><span class="o">:</span> <span class="s1">&#39;Nunito&#39;</span><span class="o">,</span> <span class="k">sans-serif</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">font-weight</span><span class="o">:</span> <span class="m">200</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">height</span><span class="o">:</span> <span class="m">100</span><span class="n">vh</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">margin</span><span class="o">:</span> <span class="m">0</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.full-height</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">height</span><span class="o">:</span> <span class="m">100</span><span class="n">vh</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.flex-center</span> <span class="p">{</span>
-</span><span class='line'>                <span class="n">align</span><span class="o">-</span><span class="n">items</span><span class="o">:</span> <span class="k">center</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">display</span><span class="o">:</span> <span class="n">flex</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">justify</span><span class="o">-</span><span class="k">content</span><span class="o">:</span> <span class="k">center</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.position-ref</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">position</span><span class="o">:</span> <span class="k">relative</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.top-right</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">position</span><span class="o">:</span> <span class="k">absolute</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">right</span><span class="o">:</span> <span class="m">10px</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">top</span><span class="o">:</span> <span class="m">18px</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.content</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">text-align</span><span class="o">:</span> <span class="k">center</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.title</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">font-size</span><span class="o">:</span> <span class="m">84px</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.links</span> <span class="o">&gt;</span> <span class="nt">a</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">color</span><span class="o">:</span> <span class="m">#636b6f</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">padding</span><span class="o">:</span> <span class="m">0</span> <span class="m">25px</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">font-size</span><span class="o">:</span> <span class="m">13px</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">font-weight</span><span class="o">:</span> <span class="m">600</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">letter-spacing</span><span class="o">:</span> <span class="o">.</span><span class="m">1</span><span class="n">rem</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">text-decoration</span><span class="o">:</span> <span class="k">none</span><span class="p">;</span>
-</span><span class='line'>                <span class="k">text-transform</span><span class="o">:</span> <span class="k">uppercase</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>            <span class="nc">.m-b-md</span> <span class="p">{</span>
-</span><span class='line'>                <span class="k">margin-bottom</span><span class="o">:</span> <span class="m">30px</span><span class="p">;</span>
-</span><span class='line'>            <span class="p">}</span>
-</span><span class='line'>        <span class="nt">&lt;/style&gt;</span>
-</span><span class='line'>    <span class="nt">&lt;/head&gt;</span>
-</span><span class='line'>    <span class="nt">&lt;body&gt;</span>
-</span><span class='line'>        <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">&quot;flex-center position-ref full-height&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>            <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">&quot;content&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>                <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">&quot;title m-b-md&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>                    Welcome
-</span><span class='line'>                <span class="nt">&lt;/div&gt;</span>
-</span><span class='line'>
-</span><span class='line'>                <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">&quot;links&quot;</span><span class="nt">&gt;</span>
-</span><span class='line'>                    <span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">&quot;https://ruan.dev&quot;</span> <span class="na">target=</span><span class="s">&quot;_blank&quot;</span><span class="nt">&gt;</span>About Me<span class="nt">&lt;/a&gt;</span>
-</span><span class='line'>                <span class="nt">&lt;/div&gt;</span>
-</span><span class='line'>            <span class="nt">&lt;/div&gt;</span>
-</span><span class='line'>        <span class="nt">&lt;/div&gt;</span>
-</span><span class='line'>    <span class="nt">&lt;/body&gt;</span>
-</span><span class='line'><span class="nt">&lt;/html&gt;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our <code>configs/nginx.conf</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>user  nginx;
-</span><span class='line'>worker_processes  auto;
-</span><span class='line'>error_log  /var/log/nginx/error.log notice;
-</span><span class='line'>pid        /var/run/nginx.pid;
-</span><span class='line'>
-</span><span class='line'>events {
-</span><span class='line'>    worker_connections  1024;
-</span><span class='line'>}
-</span><span class='line'>
-</span><span class='line'>http {
-</span><span class='line'>    include       /etc/nginx/mime.types;
-</span><span class='line'>    default_type  application/octet-stream;
-</span><span class='line'>
-</span><span class='line'>    log_format  main  &#39;$remote_addr - $remote_user [$time_local] &quot;$request&quot; &#39;
-</span><span class='line'>                      &#39;$status $body_bytes_sent &quot;$http_referer&quot; &#39;
-</span><span class='line'>                      &#39;&quot;$http_user_agent&quot; &quot;$http_x_forwarded_for&quot;&#39;;
-</span><span class='line'>
-</span><span class='line'>    access_log  /var/log/nginx/access.log  main;
-</span><span class='line'>    sendfile        on;
-</span><span class='line'>    keepalive_timeout  65;
-</span><span class='line'>
-</span><span class='line'>    include /etc/nginx/conf.d/app.conf;
-</span><span class='line'>}
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And lastly, our <code>configs/app.conf</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>server {
-</span><span class='line'>  listen 80;
-</span><span class='line'>  server_name _;
-</span><span class='line'>
-</span><span class='line'>  location / {
-</span><span class='line'>    root   /usr/share/nginx/html;
-</span><span class='line'>    index  index.html;
-</span><span class='line'>  }
-</span><span class='line'>
-</span><span class='line'>  location /healthz {
-</span><span class='line'>    return 200 &#39;up&#39;;
-</span><span class='line'>  }
-</span><span class='line'>}
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Deployment</h2>
-
-<p>Once everything is in place, or if you want to clone my repository, you can do that by:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>git clone https://github.com/ruanbekker/terraform-docker-container-example
-</span><span class='line'>cd terraform-docker-container-example
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then we can initialize terraform by fetching the required plugins:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>terraform init
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once that completes we can run a plan:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>terraform plan
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And that should output something more or less like:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-<span class='line-number'>75</span>
-<span class='line-number'>76</span>
-<span class='line-number'>77</span>
-<span class='line-number'>78</span>
-<span class='line-number'>79</span>
-<span class='line-number'>80</span>
-<span class='line-number'>81</span>
-<span class='line-number'>82</span>
-<span class='line-number'>83</span>
-<span class='line-number'>84</span>
-<span class='line-number'>85</span>
-<span class='line-number'>86</span>
-<span class='line-number'>87</span>
-<span class='line-number'>88</span>
-<span class='line-number'>89</span>
-<span class='line-number'>90</span>
-<span class='line-number'>91</span>
-<span class='line-number'>92</span>
-<span class='line-number'>93</span>
-<span class='line-number'>94</span>
-<span class='line-number'>95</span>
-<span class='line-number'>96</span>
-<span class='line-number'>97</span>
-<span class='line-number'>98</span>
-<span class='line-number'>99</span>
-<span class='line-number'>100</span>
-<span class='line-number'>101</span>
-<span class='line-number'>102</span>
-<span class='line-number'>103</span>
-<span class='line-number'>104</span>
-<span class='line-number'>105</span>
-<span class='line-number'>106</span>
-<span class='line-number'>107</span>
-<span class='line-number'>108</span>
-<span class='line-number'>109</span>
-<span class='line-number'>110</span>
-<span class='line-number'>111</span>
-<span class='line-number'>112</span>
-<span class='line-number'>113</span>
-<span class='line-number'>114</span>
-<span class='line-number'>115</span>
-<span class='line-number'>116</span>
-<span class='line-number'>117</span>
-<span class='line-number'>118</span>
-<span class='line-number'>119</span>
-<span class='line-number'>120</span>
-<span class='line-number'>121</span>
-<span class='line-number'>122</span>
-<span class='line-number'>123</span>
-<span class='line-number'>124</span>
-<span class='line-number'>125</span>
-<span class='line-number'>126</span>
-<span class='line-number'>127</span>
-<span class='line-number'>128</span>
-<span class='line-number'>129</span>
-<span class='line-number'>130</span>
-<span class='line-number'>131</span>
-<span class='line-number'>132</span>
-<span class='line-number'>133</span>
-<span class='line-number'>134</span>
-<span class='line-number'>135</span>
-<span class='line-number'>136</span>
-<span class='line-number'>137</span>
-<span class='line-number'>138</span>
-<span class='line-number'>139</span>
-<span class='line-number'>140</span>
-<span class='line-number'>141</span>
-<span class='line-number'>142</span>
-<span class='line-number'>143</span>
-<span class='line-number'>144</span>
-<span class='line-number'>145</span>
-<span class='line-number'>146</span>
-<span class='line-number'>147</span>
-<span class='line-number'>148</span>
-<span class='line-number'>149</span>
-<span class='line-number'>150</span>
-<span class='line-number'>151</span>
-<span class='line-number'>152</span>
-<span class='line-number'>153</span>
-<span class='line-number'>154</span>
-<span class='line-number'>155</span>
-<span class='line-number'>156</span>
-<span class='line-number'>157</span>
-<span class='line-number'>158</span>
-<span class='line-number'>159</span>
-<span class='line-number'>160</span>
-<span class='line-number'>161</span>
-<span class='line-number'>162</span>
-<span class='line-number'>163</span>
-<span class='line-number'>164</span>
-<span class='line-number'>165</span>
-<span class='line-number'>166</span>
-<span class='line-number'>167</span>
-<span class='line-number'>168</span>
-<span class='line-number'>169</span>
-<span class='line-number'>170</span>
-<span class='line-number'>171</span>
-<span class='line-number'>172</span>
-<span class='line-number'>173</span>
-<span class='line-number'>174</span>
-<span class='line-number'>175</span>
-<span class='line-number'>176</span>
-<span class='line-number'>177</span>
-<span class='line-number'>178</span>
-<span class='line-number'>179</span>
-<span class='line-number'>180</span>
-<span class='line-number'>181</span>
-<span class='line-number'>182</span>
-<span class='line-number'>183</span>
-<span class='line-number'>184</span>
-<span class='line-number'>185</span>
-<span class='line-number'>186</span>
-<span class='line-number'>187</span>
-<span class='line-number'>188</span>
-<span class='line-number'>189</span>
-<span class='line-number'>190</span>
-<span class='line-number'>191</span>
-<span class='line-number'>192</span>
-<span class='line-number'>193</span>
-<span class='line-number'>194</span>
-<span class='line-number'>195</span>
-<span class='line-number'>196</span>
-<span class='line-number'>197</span>
-<span class='line-number'>198</span>
-<span class='line-number'>199</span>
-<span class='line-number'>200</span>
-<span class='line-number'>201</span>
-<span class='line-number'>202</span>
-<span class='line-number'>203</span>
-<span class='line-number'>204</span>
-<span class='line-number'>205</span>
-<span class='line-number'>206</span>
-<span class='line-number'>207</span>
-<span class='line-number'>208</span>
-<span class='line-number'>209</span>
-<span class='line-number'>210</span>
-<span class='line-number'>211</span>
-<span class='line-number'>212</span>
-<span class='line-number'>213</span>
-<span class='line-number'>214</span>
-<span class='line-number'>215</span>
-<span class='line-number'>216</span>
-<span class='line-number'>217</span>
-<span class='line-number'>218</span>
-<span class='line-number'>219</span>
-<span class='line-number'>220</span>
-<span class='line-number'>221</span>
-<span class='line-number'>222</span>
-<span class='line-number'>223</span>
-<span class='line-number'>224</span>
-<span class='line-number'>225</span>
-<span class='line-number'>226</span>
-<span class='line-number'>227</span>
-<span class='line-number'>228</span>
-<span class='line-number'>229</span>
-<span class='line-number'>230</span>
-<span class='line-number'>231</span>
-<span class='line-number'>232</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with
-</span><span class='line'>the following symbols:
-</span><span class='line'>  + create
-</span><span class='line'>
-</span><span class='line'>Terraform will perform the following actions:
-</span><span class='line'>
-</span><span class='line'>  # docker_container.nginx will be created
-</span><span class='line'>  + resource &quot;docker_container&quot; &quot;nginx&quot; {
-</span><span class='line'>      + attach                = false
-</span><span class='line'>      + bridge                = (known after apply)
-</span><span class='line'>      + command               = (known after apply)
-</span><span class='line'>      + container_logs        = (known after apply)
-</span><span class='line'>      + destroy_grace_seconds = 30
-</span><span class='line'>      + entrypoint            = (known after apply)
-</span><span class='line'>      + env                   = [
-</span><span class='line'>          + &quot;PGID=20&quot;,
-</span><span class='line'>          + &quot;PUID=501&quot;,
-</span><span class='line'>        ]
-</span><span class='line'>      + exit_code             = (known after apply)
-</span><span class='line'>      + gateway               = (known after apply)
-</span><span class='line'>      + hostname              = (known after apply)
-</span><span class='line'>      + id                    = (known after apply)
-</span><span class='line'>      + image                 = &quot;nginx:stable-alpine&quot;
-</span><span class='line'>      + init                  = (known after apply)
-</span><span class='line'>      + ip_address            = (known after apply)
-</span><span class='line'>      + ip_prefix_length      = (known after apply)
-</span><span class='line'>      + ipc_mode              = (known after apply)
-</span><span class='line'>      + log_driver            = &quot;json-file&quot;
-</span><span class='line'>      + logs                  = false
-</span><span class='line'>      + memory                = 256
-</span><span class='line'>      + must_run              = true
-</span><span class='line'>      + name                  = &quot;nginx&quot;
-</span><span class='line'>      + network_data          = (known after apply)
-</span><span class='line'>      + read_only             = false
-</span><span class='line'>      + remove_volumes        = true
-</span><span class='line'>      + restart               = &quot;unless-stopped&quot;
-</span><span class='line'>      + rm                    = false
-</span><span class='line'>      + security_opts         = (known after apply)
-</span><span class='line'>      + shm_size              = (known after apply)
-</span><span class='line'>      + start                 = true
-</span><span class='line'>      + stdin_open            = false
-</span><span class='line'>      + tty                   = false
-</span><span class='line'>
-</span><span class='line'>      + healthcheck {
-</span><span class='line'>          + interval     = (known after apply)
-</span><span class='line'>          + retries      = (known after apply)
-</span><span class='line'>          + start_period = (known after apply)
-</span><span class='line'>          + test         = (known after apply)
-</span><span class='line'>          + timeout      = (known after apply)
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.docker.network&quot;
-</span><span class='line'>          + value = &quot;docknet&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.enable&quot;
-</span><span class='line'>          + value = &quot;true&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.frontend.rule&quot;
-</span><span class='line'>          + value = (known after apply)
-</span><span class='line'>        }
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.port&quot;
-</span><span class='line'>          + value = &quot;80&quot;
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + networks_advanced {
-</span><span class='line'>          + aliases = [
-</span><span class='line'>              + &quot;docknet&quot;,
-</span><span class='line'>            ]
-</span><span class='line'>          + name    = &quot;docknet&quot;
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + volumes {
-</span><span class='line'>          + container_path = &quot;/etc/nginx/conf.d/app.conf&quot;
-</span><span class='line'>          + host_path      = &quot;/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + volumes {
-</span><span class='line'>          + container_path = &quot;/etc/nginx/nginx.conf&quot;
-</span><span class='line'>          + host_path      = &quot;/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + volumes {
-</span><span class='line'>          + container_path = &quot;/usr/share/nginx/html&quot;
-</span><span class='line'>          + host_path      = &quot;/Users/ruan/personal/terraform-playground/docker-containers/html&quot;
-</span><span class='line'>        }
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>  # docker_container.traefik will be created
-</span><span class='line'>  + resource &quot;docker_container&quot; &quot;traefik&quot; {
-</span><span class='line'>      + attach                = false
-</span><span class='line'>      + bridge                = (known after apply)
-</span><span class='line'>      + command               = [
-</span><span class='line'>          + &quot;--api&quot;,
-</span><span class='line'>          + &quot;--docker&quot;,
-</span><span class='line'>          + &quot;--docker.watch&quot;,
-</span><span class='line'>          + &quot;--entrypoints=Name:http Address::80&quot;,
-</span><span class='line'>          + &quot;--logLevel=INFO&quot;,
-</span><span class='line'>        ]
-</span><span class='line'>      + container_logs        = (known after apply)
-</span><span class='line'>      + destroy_grace_seconds = 30
-</span><span class='line'>      + entrypoint            = (known after apply)
-</span><span class='line'>      + env                   = (known after apply)
-</span><span class='line'>      + exit_code             = (known after apply)
-</span><span class='line'>      + gateway               = (known after apply)
-</span><span class='line'>      + hostname              = (known after apply)
-</span><span class='line'>      + id                    = (known after apply)
-</span><span class='line'>      + image                 = &quot;traefik:1.7.14&quot;
-</span><span class='line'>      + init                  = (known after apply)
-</span><span class='line'>      + ip_address            = (known after apply)
-</span><span class='line'>      + ip_prefix_length      = (known after apply)
-</span><span class='line'>      + ipc_mode              = (known after apply)
-</span><span class='line'>      + log_driver            = &quot;json-file&quot;
-</span><span class='line'>      + logs                  = false
-</span><span class='line'>      + memory                = 256
-</span><span class='line'>      + must_run              = true
-</span><span class='line'>      + name                  = &quot;traefik&quot;
-</span><span class='line'>      + network_data          = (known after apply)
-</span><span class='line'>      + read_only             = false
-</span><span class='line'>      + remove_volumes        = true
-</span><span class='line'>      + restart               = &quot;unless-stopped&quot;
-</span><span class='line'>      + rm                    = false
-</span><span class='line'>      + security_opts         = (known after apply)
-</span><span class='line'>      + shm_size              = (known after apply)
-</span><span class='line'>      + start                 = true
-</span><span class='line'>      + stdin_open            = false
-</span><span class='line'>      + tty                   = false
-</span><span class='line'>
-</span><span class='line'>      + healthcheck {
-</span><span class='line'>          + interval     = (known after apply)
-</span><span class='line'>          + retries      = (known after apply)
-</span><span class='line'>          + start_period = (known after apply)
-</span><span class='line'>          + test         = (known after apply)
-</span><span class='line'>          + timeout      = (known after apply)
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.docker.network&quot;
-</span><span class='line'>          + value = &quot;docknet&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.enable&quot;
-</span><span class='line'>          + value = &quot;true&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.frontend.rule&quot;
-</span><span class='line'>          + value = &quot;Host:traefik.localdns.xyz&quot;
-</span><span class='line'>        }
-</span><span class='line'>      + labels {
-</span><span class='line'>          + label = &quot;traefik.port&quot;
-</span><span class='line'>          + value = &quot;8080&quot;
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + networks_advanced {
-</span><span class='line'>          + aliases = [
-</span><span class='line'>              + &quot;docknet&quot;,
-</span><span class='line'>            ]
-</span><span class='line'>          + name    = &quot;docknet&quot;
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + ports {
-</span><span class='line'>          + external = 80
-</span><span class='line'>          + internal = 80
-</span><span class='line'>          + ip       = &quot;0.0.0.0&quot;
-</span><span class='line'>          + protocol = &quot;tcp&quot;
-</span><span class='line'>        }
-</span><span class='line'>
-</span><span class='line'>      + volumes {
-</span><span class='line'>          + container_path = &quot;/var/run/docker.sock&quot;
-</span><span class='line'>          + host_path      = &quot;/var/run/docker.sock&quot;
-</span><span class='line'>        }
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>  # docker_image.nginx will be created
-</span><span class='line'>  + resource &quot;docker_image&quot; &quot;nginx&quot; {
-</span><span class='line'>      + id          = (known after apply)
-</span><span class='line'>      + latest      = (known after apply)
-</span><span class='line'>      + name        = &quot;nginx:stable-alpine&quot;
-</span><span class='line'>      + output      = (known after apply)
-</span><span class='line'>      + repo_digest = (known after apply)
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>  # docker_image.traefik will be created
-</span><span class='line'>  + resource &quot;docker_image&quot; &quot;traefik&quot; {
-</span><span class='line'>      + id          = (known after apply)
-</span><span class='line'>      + latest      = (known after apply)
-</span><span class='line'>      + name        = &quot;traefik:1.7.14&quot;
-</span><span class='line'>      + output      = (known after apply)
-</span><span class='line'>      + repo_digest = (known after apply)
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>  # docker_network.nginx will be created
-</span><span class='line'>  + resource &quot;docker_network&quot; &quot;nginx&quot; {
-</span><span class='line'>      + driver      = &quot;bridge&quot;
-</span><span class='line'>      + id          = (known after apply)
-</span><span class='line'>      + internal    = (known after apply)
-</span><span class='line'>      + ipam_driver = &quot;default&quot;
-</span><span class='line'>      + name        = &quot;docknet&quot;
-</span><span class='line'>      + options     = (known after apply)
-</span><span class='line'>      + scope       = (known after apply)
-</span><span class='line'>
-</span><span class='line'>      + ipam_config {
-</span><span class='line'>          + aux_address = (known after apply)
-</span><span class='line'>          + gateway     = (known after apply)
-</span><span class='line'>          + ip_range    = (known after apply)
-</span><span class='line'>          + subnet      = (known after apply)
-</span><span class='line'>        }
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>  # random_string.nginx will be created
-</span><span class='line'>  + resource &quot;random_string&quot; &quot;nginx&quot; {
-</span><span class='line'>      + id          = (known after apply)
-</span><span class='line'>      + length      = 8
-</span><span class='line'>      + lower       = true
-</span><span class='line'>      + min_lower   = 0
-</span><span class='line'>      + min_numeric = 0
-</span><span class='line'>      + min_special = 0
-</span><span class='line'>      + min_upper   = 0
-</span><span class='line'>      + number      = true
-</span><span class='line'>      + result      = (known after apply)
-</span><span class='line'>      + special     = false
-</span><span class='line'>      + upper       = false
-</span><span class='line'>    }
-</span><span class='line'>
-</span><span class='line'>Plan: 6 to add, 0 to change, 0 to destroy.
-</span><span class='line'>
-</span><span class='line'>Changes to Outputs:
-</span><span class='line'>  + nginx_container_name   = &quot;nginx&quot;
-</span><span class='line'>  + nginx_url              = (known after apply)
-</span><span class='line'>  + traefik_container_name = &quot;traefik&quot;
-</span><span class='line'>  + traefik_url            = &quot;http://traefik.localdns.xyz/&quot;
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Which we can see will create 2 containers, traefik and then nginx, map the configs and html in place and also sets the traefik hostname in the labels for our respective containers so that we can reach them via the specific host headers.</p>
-
-<p>The we can deploy our containers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>terraform apply -auto-approve
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Which will provide us the output detail defined from our <code>outputs.tf</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>Apply complete! Resources: 6 added, 0 changed, 0 destroyed.
-</span><span class='line'>
-</span><span class='line'>Outputs:
-</span><span class='line'>
-</span><span class='line'>nginx_container_name = &quot;nginx&quot;
-</span><span class='line'>nginx_url = &quot;http://www.5igjdfq9.localdns.xyz/&quot;
-</span><span class='line'>traefik_container_name = &quot;traefik&quot;
-</span><span class='line'>traefik_url = &quot;http://traefik.localdns.xyz/&quot;
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Access our Containers</h2>
-
-<p>We can access our Traefik Dashboard on <a href="http://traefik.localdns.xyz">http://traefik.localdns.xyz</a> and should look something like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/143064031-23e9dbe4-522b-4f11-96f9-f30a2104ee44.png" alt="image" /></p>
-
-<p>And when we access our Nginx container on <a href="http://www.5igjdfq9.localdns.xyz">http://www.5igjdfq9.localdns.xyz</a> it should look more or less like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/143064228-88107b75-31fc-41eb-aee0-f26ff976c42a.png" alt="image" /></p>
-
-<p>Running a <code>docker ps</code> will show our running containers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>docker ps
-</span><span class='line'>CONTAINER ID   IMAGE                  COMMAND                  CREATED         STATUS                PORTS                NAMES
-</span><span class='line'>e45158ae8cba   nginx:stable-alpine    &quot;/docker-entrypoint   3 minutes ago   Up 3 minutes          80/tcp               nginx
-</span><span class='line'>ebdbe42a0fcb   traefik:1.7.14         &quot;/traefik --api       3 minutes ago   Up 3 minutes          0.0.0.0:80-&gt;80/tcp   traefik
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Cleanup</h2>
-
-<p>We can delete our containers by running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='html'><span class='line'>terraform destroy -auto-approve
-</span></code></pre></td></tr></table></div></figure>
 
 
 <h2>Thank You</h2>

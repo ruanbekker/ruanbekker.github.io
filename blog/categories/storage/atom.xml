@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Storage | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/storage/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-06-23T18:09:22-04:00</updated>
+  <updated>2022-06-30T01:13:04-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,411 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Create a RAID5 Array With Mdadm on Linux]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/06/29/create-a-raid5-array-with-mdadm-on-linux/"/>
+    <updated>2022-06-29T05:02:13-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/06/29/create-a-raid5-array-with-mdadm-on-linux</id>
+    <content type="html"><![CDATA[<p><img src="https://blog.ruanbekker.com/images/ruanbekker-raid5-array-linux.png" alt="setup-raid5-array-ubuntu-linux" /></p>
+
+<p>In this tutorial we will setup a <a href="https://en.wikipedia.org/wiki/Standard_RAID_levels#RAID_5">RAID5</a> array, which is striping across multiple drives with distributed paritiy, which is good for redundancy. We will be using Ubuntu for our Linux Distribution, but the technique applies to other Linux Distributions as well.</p>
+
+<h2>What are we trying to achieve</h2>
+
+<p>We will run a server with one root disk and 6 extra disks, where we will first create our raid5 array with three disks, then I will show you how to expand your raid5 array by adding three other disks.</p>
+
+<p>Things fail all the time, and it&rsquo;s not fun when hard drives breaks, therefore we want to do our best to prevent our applications from going down due to hardware failures. To achieve data redundancy, we want to use three hard drives, which we want to add into a raid configuration that will proviide us:</p>
+
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/Data_striping">striping</a>, which is the technique of segmenting logically sequential data, so that consecutive segments are stored on different physical storage devices.</li>
+<li><a href="https://en.wikipedia.org/wiki/Parity_bit#RAID">distributed parity</a>, where parity data are distributed between the physical disks, where there is only one parity block per disk, this provide protection against one physical disk failure, where the minimum number of disks are three.</li>
+</ul>
+
+
+<p>This is how a RAID5 array looks like (image from diskpart.com):</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/176410333-0ff98867-dfb5-4fe3-a037-cc5d20014ab5.png" alt="raid5" /></p>
+
+<h2>Hardware Overview</h2>
+
+<p>We will have a Linux server with one root disk and six extra disks:</p>
+
+<pre><code class="bash">$ lsblk
+NAME    MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+xvda    202:0    0    8G  0 disk
+└─xvda1 202:1    0    8G  0 part /
+xvdb    202:16   0   10G  0 disk
+xvdc    202:32   0   10G  0 disk
+xvdd    202:48   0   10G  0 disk
+xvde    202:64   0   10G  0 disk
+xvdf    202:80   0   10G  0 disk
+xvdg    202:96   0   10G  0 disk
+</code></pre>
+
+<h2>Dependencies</h2>
+
+<p>We require <code>mdadm</code> to create our raid configuration:</p>
+
+<pre><code class="bash">$ sudo apt update
+$ sudo apt install mdadm -y
+</code></pre>
+
+<h2>Format Disks</h2>
+
+<p>First we will format and partition the following disks: <code>/dev/xvdb</code>, <code>/dev/xvdc</code>, <code>/dev/xvdd</code>, I will demonstrate the process for one disk, but repeat them for the other as well:</p>
+
+<pre><code class="bash">$ fdisk /dev/xvdc
+
+Welcome to fdisk (util-linux 2.34).
+Changes will remain in memory only, until you decide to write them.
+Be careful before using the write command.
+
+The old ext4 signature will be removed by a write command.
+
+Device does not contain a recognized partition table.
+Created a new DOS disklabel with disk identifier 0x26a2d2f6.
+
+Command (m for help): n
+Partition type
+   p   primary (0 primary, 0 extended, 4 free)
+   e   extended (container for logical partitions)
+Select (default p): p
+Partition number (1-4, default 1): 1
+First sector (2048-20971519, default 2048):
+Last sector, +/-sectors or +/-size{K,M,G,T,P} (2048-20971519, default 20971519):
+
+Created a new partition 1 of type 'Linux' and of size 10 GiB.
+
+Command (m for help): t
+Selected partition 1
+Hex code (type L to list all codes): fd
+Changed type of partition 'Linux' to 'Linux raid autodetect'.
+
+Command (m for help): w
+The partition table has been altered.
+Calling ioctl() to re-read partition table.
+Syncing disks.
+</code></pre>
+
+<h2>Create RAID5 Array</h2>
+
+<p>Using <code>mdadm</code>, create the <code>/dev/md0</code> device, by specifying the raid level and the disks that we want to add to the array:</p>
+
+<pre><code class="bash">$ mdadm --create /dev/md0 --level=5 --raid-devices=3 /dev/xvdb1 /dev/xvdc1 /dev/xvdd1
+mdadm: Defaulting to version 1.2 metadata
+mdadm: array /dev/md0 started.
+</code></pre>
+
+<p>Now that our device has been added, we can monitor the process:</p>
+
+<pre><code class="bash">$ cat /proc/mdstat
+Personalities : [raid6] [raid5] [raid4]
+md0 : active raid5 xvdd1[3] xvdc1[1] xvdb1[0]
+      20951040 blocks super 1.2 level 5, 512k chunk, algorithm 2 [3/2] [UU_]
+      [==&gt;..................]  recovery = 11.5% (1212732/10475520) finish=4.7min speed=32103K/sec
+
+unused devices: &lt;none&gt;
+</code></pre>
+
+<p>As you can see, currently its at 11.5%, give it some time to let it complete, you should treat the following as a completed state:</p>
+
+<pre><code class="bash">$ cat /proc/mdstat
+Personalities : [raid6] [raid5] [raid4]
+md0 : active raid5 xvdd1[3] xvdc1[1] xvdb1[0]
+      20951040 blocks super 1.2 level 5, 512k chunk, algorithm 2 [3/3] [UUU]
+
+unused devices: &lt;none&gt;
+</code></pre>
+
+<p>We can also inspect devices with <code>mdadm</code>:</p>
+
+<pre><code class="bash">$ mdadm -E /dev/xvd[b-d]1
+/dev/xvdb1:
+          Magic : a92b4efc
+        Version : 1.2
+    Feature Map : 0x0
+     Array UUID : ea997bce:a530519c:ae41022e:0f4306bf
+           Name : ip-172-31-3-57:0  (local to host ip-172-31-3-57)
+  Creation Time : Wed Jan 12 13:36:39 2022
+     Raid Level : raid5
+   Raid Devices : 3
+
+ Avail Dev Size : 20951040 (9.99 GiB 10.73 GB)
+     Array Size : 20951040 (19.98 GiB 21.45 GB)
+    Data Offset : 18432 sectors
+   Super Offset : 8 sectors
+   Unused Space : before=18280 sectors, after=0 sectors
+          State : clean
+    Device UUID : 8305a179:3ef96520:6c7b41dd:bdc7401f
+
+    Update Time : Wed Jan 12 13:42:14 2022
+  Bad Block Log : 512 entries available at offset 136 sectors
+       Checksum : 1f9b4887 - correct
+         Events : 18
+
+         Layout : left-symmetric
+     Chunk Size : 512K
+
+   Device Role : Active device 0
+   Array State : AAA ('A' == active, '.' == missing, 'R' == replacing)
+</code></pre>
+
+<p>To get information about your raid5 device:</p>
+
+<pre><code>$ mdadm --detail /dev/md0
+/dev/md0:
+           Version : 1.2
+     Creation Time : Wed Jan 12 13:36:39 2022
+        Raid Level : raid5
+        Array Size : 20951040 (19.98 GiB 21.45 GB)
+     Used Dev Size : 10475520 (9.99 GiB 10.73 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Wed Jan 12 13:42:14 2022
+             State : clean
+    Active Devices : 3
+   Working Devices : 3
+    Failed Devices : 0
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : ip-172-31-3-57:0  (local to host ip-172-31-3-57)
+              UUID : ea997bce:a530519c:ae41022e:0f4306bf
+            Events : 18
+
+    Number   Major   Minor   RaidDevice State
+       0     202       17        0      active sync   /dev/xvdb1
+       1     202       33        1      active sync   /dev/xvdc1
+       3     202       49        2      active sync   /dev/xvdd1
+</code></pre>
+
+<h2>Create Filesystems</h2>
+
+<p>We will use our <code>/dev/md0</code> device and create a <code>ext4</code> filesystem:</p>
+
+<pre><code class="bash">$ mkfs.ext4 /dev/md0
+mke2fs 1.45.5 (07-Jan-2020)
+Creating filesystem with 5237760 4k blocks and 1310720 inodes
+Filesystem UUID: 579f045e-d270-4ff2-b36b-8dc506c27c5f
+Superblock backups stored on blocks:
+    32768, 98304, 163840, 229376, 294912, 819200, 884736, 1605632, 2654208,
+    4096000
+
+Allocating group tables: done
+Writing inode tables: done
+Creating journal (32768 blocks): done
+Writing superblocks and filesystem accounting information: done
+</code></pre>
+
+<p>We can then verify that by looking at our block devices using <code>lsblk</code>:</p>
+
+<pre><code class="bash">$ lsblk
+NAME    MAJ:MIN RM  SIZE RO TYPE  MOUNTPOINT
+xvda    202:0    0    8G  0 disk
+└─xvda1 202:1    0    8G  0 part  /
+xvdb    202:16   0   10G  0 disk
+└─xvdb1 202:17   0   10G  0 part
+  └─md0   9:0    0   20G  0 raid5
+xvdc    202:32   0   10G  0 disk
+└─xvdc1 202:33   0   10G  0 part
+  └─md0   9:0    0   20G  0 raid5
+xvdd    202:48   0   10G  0 disk
+└─xvdd1 202:49   0   10G  0 part
+  └─md0   9:0    0   20G  0 raid5
+xvde    202:64   0   10G  0 disk
+xvdf    202:80   0   10G  0 disk
+xvdg    202:96   0   10G  0 disk
+</code></pre>
+
+<p>Now we can mount our device to <code>/mnt</code>:</p>
+
+<pre><code class="bash">$ mount /dev/md0 /mnt
+</code></pre>
+
+<p>We can verify that the device is mounted by using <code>df</code>:</p>
+
+<pre><code class="bash">$ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       7.7G  1.5G  6.3G  19% /
+/dev/md0         20G   45M   19G   1% /mnt
+</code></pre>
+
+<p>To persist the device across reboots, add it to the <code>/etc/fstab</code> file:</p>
+
+<pre><code class="bash">$ cat /etc/fstab
+/dev/md0                /mnt     ext4   defaults                0 0
+</code></pre>
+
+<p>Now our filesystem which is mounted at <code>/mnt</code> is ready to be used.</p>
+
+<h2>RAID Configuration (across reboots)</h2>
+
+<p>By default RAID doesn’t have a config file, therefore we need to save it manually. If this step is not followed RAID device will not be in md0, but perhaps something else.</p>
+
+<p>So, we must have to save the configuration to persist across reboots, when it reboot it gets loaded to the kernel and RAID will also get loaded.</p>
+
+<pre><code class="bash">$ mdadm --detail --scan --verbose &gt;&gt; /etc/mdadm.conf
+</code></pre>
+
+<p>Note: Saving the configuration will keep the RAID level stable in the md0 device.</p>
+
+<h2>Adding Spare Devices</h2>
+
+<p>Earlier I mentioned that we have spare disks that we can use to expand our raid device. After they have been formatted we can add them as spare devices to our raid setup:</p>
+
+<pre><code class="bash">$ mdadm --add /dev/md0 /dev/xvde1 /dev/xvdf1 /dev/xvdg1
+mdadm: added /dev/xvde1
+mdadm: added /dev/xvdf1
+mdadm: added /dev/xvdg1
+</code></pre>
+
+<p>Verify our change by viewing the detail of our device:</p>
+
+<pre><code class="bash">$ mdadm --detail /dev/md0
+/dev/md0:
+           Version : 1.2
+     Creation Time : Wed Jan 12 13:36:39 2022
+        Raid Level : raid5
+        Array Size : 20951040 (19.98 GiB 21.45 GB)
+     Used Dev Size : 10475520 (9.99 GiB 10.73 GB)
+      Raid Devices : 3
+     Total Devices : 6
+       Persistence : Superblock is persistent
+
+       Update Time : Wed Jan 12 14:28:23 2022
+             State : clean
+    Active Devices : 3
+   Working Devices : 6
+    Failed Devices : 0
+     Spare Devices : 3
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : ip-172-31-3-57:0  (local to host ip-172-31-3-57)
+              UUID : ea997bce:a530519c:ae41022e:0f4306bf
+            Events : 27
+
+    Number   Major   Minor   RaidDevice State
+       0     202       17        0      active sync   /dev/xvdb1
+       1     202       33        1      active sync   /dev/xvdc1
+       3     202       49        2      active sync   /dev/xvdd1
+
+       4     202       65        -      spare   /dev/xvde1
+       5     202       81        -      spare   /dev/xvdf1
+       6     202       97        -      spare   /dev/xvdg1
+</code></pre>
+
+<p>As you can see it&rsquo;s only spares at this moment, we can use the spares for data storage, by growing our device:</p>
+
+<pre><code class="bash">$ mdadm --grow --raid-devices=6 /dev/md0
+</code></pre>
+
+<p>Verify:</p>
+
+<pre><code class="bash">$ mdadm --detail /dev/md0
+/dev/md0:
+           Version : 1.2
+     Creation Time : Wed Jan 12 13:36:39 2022
+        Raid Level : raid5
+        Array Size : 20951040 (19.98 GiB 21.45 GB)
+     Used Dev Size : 10475520 (9.99 GiB 10.73 GB)
+      Raid Devices : 6
+     Total Devices : 6
+       Persistence : Superblock is persistent
+
+       Update Time : Wed Jan 12 15:15:31 2022
+             State : clean, reshaping
+    Active Devices : 6
+   Working Devices : 6
+    Failed Devices : 0
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+    Reshape Status : 0% complete
+     Delta Devices : 3, (3-&gt;6)
+
+              Name : ip-172-31-3-57:0  (local to host ip-172-31-3-57)
+              UUID : ea997bce:a530519c:ae41022e:0f4306bf
+            Events : 36
+
+    Number   Major   Minor   RaidDevice State
+       0     202       17        0      active sync   /dev/xvdb1
+       1     202       33        1      active sync   /dev/xvdc1
+       3     202       49        2      active sync   /dev/xvdd1
+       6     202       97        3      active sync   /dev/xvdg1
+       5     202       81        4      active sync   /dev/xvdf1
+       4     202       65        5      active sync   /dev/xvde1
+</code></pre>
+
+<p>Wait for the raid to rebuild, by viewing the <code>mdstat</code>::</p>
+
+<pre><code class="bash">$ cat /proc/mdstat
+Personalities : [raid6] [raid5] [raid4]
+md0 : active raid5 xvdg1[6] xvdf1[5] xvde1[4] xvdd1[3] xvdc1[1] xvdb1[0]
+      20951040 blocks super 1.2 level 5, 512k chunk, algorithm 2 [6/6] [UUUUUU]
+      [&gt;....................]  reshape =  0.7% (76772/10475520) finish=18.0min speed=9596K/sec
+
+unused devices: &lt;none&gt;
+</code></pre>
+
+<h2>Resizing our Filesystem</h2>
+
+<p>Once we added the spares and growed our device, we need to run integrity checks, then we can resize the volume. But first, we need to unmount our filesystem:</p>
+
+<pre><code class="bash">$ umount /mnt
+</code></pre>
+
+<p>Run a integrity check:</p>
+
+<pre><code class="bash">$ e2fsck -f /dev/md0
+e2fsck 1.45.5 (07-Jan-2020)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+/dev/md0: 12/1310720 files (0.0% non-contiguous), 126323/5237760 blocks
+</code></pre>
+
+<p>Once that has passed, resize the file system:</p>
+
+<pre><code class="bash">$ resize2fs /dev/md0
+resize2fs 1.45.5 (07-Jan-2020)
+Resizing the filesystem on /dev/md0 to 13094400 (4k) blocks.
+The filesystem on /dev/md0 is now 13094400 (4k) blocks long.
+</code></pre>
+
+<p>Then we remount our filesystem:</p>
+
+<pre><code class="bash">$ mount /dev/md0 /mnt
+</code></pre>
+
+<p>After the filesystem has been mounted, we can view the disk size and confirm that the size increased:</p>
+
+<pre><code class="bash">$ df -h /mnt
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/md0         50G   52M   47G   1% /mnt
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Reduce Docker Log Size on Disk]]></title>
@@ -393,84 +798,6 @@ echo-58fd7d9b6-x4rxj
 <h2>Housecleaning on your S3 Bucket</h2>
 
 <p>Now 30 days after you created objects on AWS S3, they will be deleted.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Persist Vault Data With Amazon S3 as a Storage Backend]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend/"/>
-    <updated>2019-05-07T16:01:45-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/05/07/persist-vault-data-with-amazon-s3-as-a-storage-backend</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/57256060-f1a27e00-7055-11e9-9a05-77d3fdd6c76f.png" alt="" /></p>
-
-<p>In a previous post we have set up <a href="https://blog.ruanbekker.com/blog/2019/05/06/setup-hashicorp-vault-server-on-docker-and-cli-guide/">the vault server on docker</a>, but using a file backend to persist our data.</p>
-
-<p>In this tutorial we will configure vault to use <a href="https://www.vaultproject.io/docs/configuration/storage/s3.html">amazon s3 as a storage backend</a> to persist our data for vault.</p>
-
-<h2>Provision S3 Bucket</h2>
-
-<p>Create the S3 Bucket where our data will reside:</p>
-
-<pre><code>$ aws s3 mb --region=eu-west-1 s3://somename-vault-backend
-</code></pre>
-
-<h2>Vault Config</h2>
-
-<p>Create the vault config, where we will provide details about our storage backend and configuration for the vault server:</p>
-
-<pre><code>$ vim volumes/config/s3vault.json
-</code></pre>
-
-<p>Populate the config file with the following details, you will just need to provide your own credentials:</p>
-
-<pre><code class="json">{
-  "backend": {
-    "s3": {
-      "region": "eu-west-1",
-      "access_key": "ACCESS_KEY",
-      "secret_key": "SECRET_KEY",
-      "bucket": "somename-vault-backend"
-    }
-  },
-  "listener": {
-    "tcp":{
-      "address": "0.0.0.0:8200",
-      "tls_disable": 1
-    }
-  },
-  "ui": true
-}
-</code></pre>
-
-<h2>Docker Compose</h2>
-
-<p>As we are using docker to deploy our vault server, our docker-compose.yml:</p>
-
-<pre><code>$ cat &gt; docker-compose.yml &lt;&lt; EOF
-version: '2'
-services:
-  vault:
-    image: vault
-    container_name: vault
-    ports:
-      - "8200:8200"
-    restart: always
-    volumes:
-      - ./volumes/logs:/vault/logs
-      - ./volumes/file:/vault/file
-      - ./volumes/config:/vault/config
-    cap_add:
-      - IPC_LOCK
-    entrypoint: vault server -config=/vault/config/s3vault.json
-EOF
-</code></pre>
-
-<p>Deploy the vault server:</p>
-
-<pre><code>$ docker-compose up
-</code></pre>
-
-<p>Go ahead and create some secrets, then deploy the docker container on another host to test out the data persistence.</p>
 ]]></content>
   </entry>
   

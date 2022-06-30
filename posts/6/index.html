@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post I will demonstrate how you can use ansible to automate the task of adding one or more ssh public keys to multiple servers &hellip;">
+  <meta name="description" content="In this tutorial I will demonstrate how to run Loki v2.0.0 behind a Nginx Reverse Proxy with basic http authentication enabled on Nginx and what to &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,729 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/10/29/running-loki-behind-nginx-reverse-proxy/">Running Loki Behind Nginx Reverse Proxy</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-10-29T08:29:13+00:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>29</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>8:29 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial I will demonstrate how to run <strong>Loki v2.0.0</strong> behind a <strong>Nginx Reverse Proxy</strong> with basic http authentication enabled on Nginx and what to do to configure Nginx for <strong>websockets</strong>, which is required when you want to use <strong>tail in logcli</strong> via Nginx.</p>
+
+<h2>Assumptions</h2>
+
+<p>My environment consists of a AWS Application LoadBalancer with a Host entry and a Target Group associated to port 80 of my Nginx/Loki EC2 instance.</p>
+
+<p>Health checks to my EC2 instance are being performed to <code>instance:80/ready</code></p>
+
+<p>I have a S3 bucket and a DynamoDB table already running in my account which Loki will use. But <strong>NOTE</strong> that boltdb-shipper is now production ready since <a href="https://github.com/grafana/loki/blob/v2.0.0/CHANGELOG.md#20">v2.0.0</a>, which is awesome, because now you only require a object store such as S3, so you don&rsquo;t need DynamoDB.</p>
+
+<p>More information on this topic can be found under their <a href="https://github.com/grafana/loki/blob/v2.0.0/CHANGELOG.md#20">changelog</a></p>
+
+<h2>What can you expect from this blogpost</h2>
+
+<p>We will go through the following topics:</p>
+
+<ul>
+<li>Install Loki v2.0.0 and Nginx</li>
+<li>Configure HTTP Basic Authentication to Loki&rsquo;s API Endpoints</li>
+<li>Bypass HTTP Basic Authentication to the <code>/ready</code> endpoint for our Load Balancer to perform healthchecks</li>
+<li>Enable Nginx to upgrade websocket connections so that we can use <code>logcli --tail</code></li>
+<li>Test out access to Loki via our Nginx Reverse Proxy</li>
+<li>Install and use LogCLI</li>
+</ul>
+
+
+<h2>Install Software</h2>
+
+<p>First we will install <code>nginx</code> and <code>apache2-utils</code>. In my use-case I will be using Ubuntu 20 as my operating system:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo apt update && sudo apt install nginx apache2-utils -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Next we will install Loki v2.0.0, if you are upgrading from a previous version of Loki, I would recommend checking out the <a href="https://github.com/grafana/loki/releases/tag/v2.0.0">upgrade guide</a> mentioned on their releases page.</p>
+
+<p>Download the package:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -O -L "https://github.com/grafana/loki/releases/download/v2.0.0/loki-linux-amd64.zip"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Unzip the archive:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ unzip loki-linux-amd64.zip</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Move the binary to your $PATH:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo mv loki-linux-amd64 /usr/local/bin/loki</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And ensure that the binary is executable:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo chmod a+x /usr/local/bin/loki</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Configuration</h2>
+
+<p>Create the user that will be responsible for running loki:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ useradd --no-create-home --shell /bin/false loki</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the directory where we will place the loki configuration:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /etc/loki</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the loki configuration file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/loki/loki-config.yml
+</span><span class='line'>auth_enabled: false
+</span><span class='line'>
+</span><span class='line'>server:
+</span><span class='line'>  http_listen_port: 3100
+</span><span class='line'>  http_listen_address: 127.0.0.1
+</span><span class='line'>  http_server_read_timeout: 1000s
+</span><span class='line'>  http_server_write_timeout: 1000s
+</span><span class='line'>  http_server_idle_timeout: 1000s
+</span><span class='line'>  log_level: info
+</span><span class='line'>
+</span><span class='line'>ingester:
+</span><span class='line'>  lifecycler:
+</span><span class='line'>    address: 127.0.0.1
+</span><span class='line'>    ring:
+</span><span class='line'>      kvstore:
+</span><span class='line'>        store: inmemory
+</span><span class='line'>      replication_factor: 1
+</span><span class='line'>    final_sleep: 0s
+</span><span class='line'>  chunk_encoding: snappy
+</span><span class='line'>  chunk_idle_period: 1h
+</span><span class='line'>  chunk_target_size: 1048576
+</span><span class='line'>  chunk_retain_period: 30s
+</span><span class='line'>  max_transfer_retries: 0
+</span><span class='line'>
+</span><span class='line'># https://grafana.com/docs/loki/latest/configuration/#schema_config
+</span><span class='line'>schema_config:
+</span><span class='line'>  configs:
+</span><span class='line'>    - from: 2020-05-15
+</span><span class='line'>      store: aws
+</span><span class='line'>      object_store: s3
+</span><span class='line'>      schema: v11
+</span><span class='line'>      index:
+</span><span class='line'>        prefix: loki-logging-index
+</span><span class='line'>
+</span><span class='line'>storage_config:
+</span><span class='line'>  aws:
+</span><span class='line'>    http_config:
+</span><span class='line'>      idle_conn_timeout: 90s
+</span><span class='line'>      response_header_timeout: 0s
+</span><span class='line'>    s3: s3://myak:mysk@eu-west-1/loki-logs-datastore
+</span><span class='line'>
+</span><span class='line'>    dynamodb:
+</span><span class='line'>      dynamodb_url: dynamodb://myak:mysk@eu-west-1
+</span><span class='line'>
+</span><span class='line'>limits_config:
+</span><span class='line'>  enforce_metric_name: false
+</span><span class='line'>  reject_old_samples: true
+</span><span class='line'>  reject_old_samples_max_age: 168h
+</span><span class='line'>  ingestion_rate_mb: 30
+</span><span class='line'>  ingestion_burst_size_mb: 60
+</span><span class='line'>
+</span><span class='line'># https://grafana.com/docs/loki/latest/operations/storage/retention/
+</span><span class='line'># To avoid querying of data beyond the retention period, max_look_back_period config in chunk_store_config
+</span><span class='line'># must be set to a value less than or equal to what is set in table_manager.retention_period
+</span><span class='line'>chunk_store_config:
+</span><span class='line'>  max_look_back_period: 720h
+</span><span class='line'>
+</span><span class='line'># https://grafana.com/docs/loki/latest/operations/storage/retention/
+</span><span class='line'>table_manager:
+</span><span class='line'>  retention_deletes_enabled: true
+</span><span class='line'>  retention_period: 720h
+</span><span class='line'>  chunk_tables_provisioning:
+</span><span class='line'>    inactive_read_throughput: 10
+</span><span class='line'>    inactive_write_throughput: 10
+</span><span class='line'>    provisioned_read_throughput: 50
+</span><span class='line'>    provisioned_write_throughput: 20
+</span><span class='line'>  index_tables_provisioning:
+</span><span class='line'>    inactive_read_throughput: 10
+</span><span class='line'>    inactive_write_throughput: 10
+</span><span class='line'>    provisioned_read_throughput: 50
+</span><span class='line'>    provisioned_write_throughput: 20</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Apply permissions so that the loki user has access to it&rsquo;s configuration:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chown -R loki:loki /etc/loki</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create a systemd unit file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/systemd/system/loki.service
+</span><span class='line'>[Unit]
+</span><span class='line'>Description=Loki
+</span><span class='line'>Wants=network-online.target
+</span><span class='line'>After=network-online.target
+</span><span class='line'>
+</span><span class='line'>[Service]
+</span><span class='line'>User=loki
+</span><span class='line'>Group=loki
+</span><span class='line'>Type=simple
+</span><span class='line'>Restart=on-failure
+</span><span class='line'>ExecStart=/usr/local/bin/loki -config.file /etc/loki/loki-config.yml
+</span><span class='line'>
+</span><span class='line'>[Install]
+</span><span class='line'>WantedBy=multi-user.target</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the main nginx config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/nginx/nginx.conf
+</span><span class='line'>user www-data;
+</span><span class='line'>worker_processes auto;
+</span><span class='line'>pid /run/nginx.pid;
+</span><span class='line'>include /etc/nginx/modules-enabled/*.conf;
+</span><span class='line'>worker_rlimit_nofile 100000;
+</span><span class='line'>
+</span><span class='line'>events {
+</span><span class='line'>        worker_connections 4000;
+</span><span class='line'>        use epoll;
+</span><span class='line'>        multi_accept on;
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>http {
+</span><span class='line'>
+</span><span class='line'>  # basic settings
+</span><span class='line'>  sendfile on;
+</span><span class='line'>  tcp_nopush on;
+</span><span class='line'>  tcp_nodelay on;
+</span><span class='line'>  keepalive_timeout 65;
+</span><span class='line'>  types_hash_max_size 2048;
+</span><span class='line'>        open_file_cache_valid 30s;
+</span><span class='line'>        open_file_cache_min_uses 2;
+</span><span class='line'>        open_file_cache_errors on;
+</span><span class='line'>
+</span><span class='line'>  include /etc/nginx/mime.types;
+</span><span class='line'>  default_type application/octet-stream;
+</span><span class='line'>
+</span><span class='line'>        # ssl settings
+</span><span class='line'>  ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+</span><span class='line'>  ssl_prefer_server_ciphers on;
+</span><span class='line'>
+</span><span class='line'>  # websockets config
+</span><span class='line'>  map $http_upgrade $connection_upgrade {
+</span><span class='line'>            default upgrade;
+</span><span class='line'>            '' close;
+</span><span class='line'>        }
+</span><span class='line'>
+</span><span class='line'>  # logging settings
+</span><span class='line'>  access_log off;
+</span><span class='line'>  access_log /var/log/nginx/access.log;
+</span><span class='line'>  error_log /var/log/nginx/error.log;
+</span><span class='line'>
+</span><span class='line'>  # gzip settings
+</span><span class='line'>  gzip on;
+</span><span class='line'>      gzip_min_length 10240;
+</span><span class='line'>      gzip_comp_level 1;
+</span><span class='line'>      gzip_vary on;
+</span><span class='line'>      gzip_disable msie6;
+</span><span class='line'>      gzip_proxied expired no-cache no-store private auth;
+</span><span class='line'>      gzip_types
+</span><span class='line'>      text/css
+</span><span class='line'>      text/javascript
+</span><span class='line'>      text/xml
+</span><span class='line'>      text/plain
+</span><span class='line'>      text/x-component
+</span><span class='line'>      application/javascript
+</span><span class='line'>      application/x-javascript
+</span><span class='line'>      application/json
+</span><span class='line'>      application/xml
+</span><span class='line'>      application/rss+xml
+</span><span class='line'>      application/atom+xml
+</span><span class='line'>      font/truetype
+</span><span class='line'>      font/opentype
+</span><span class='line'>      application/vnd.ms-fontobject
+</span><span class='line'>      image/svg+xml;
+</span><span class='line'>      reset_timedout_connection on;
+</span><span class='line'>      client_body_timeout 10;
+</span><span class='line'>      send_timeout 2;
+</span><span class='line'>      keepalive_requests 100000;
+</span><span class='line'>        
+</span><span class='line'>        # virtual host configs
+</span><span class='line'>      include /etc/nginx/conf.d/loki.conf;
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the virtual host config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/nginx/conf.d/loki.conf
+</span><span class='line'>upstream loki {
+</span><span class='line'>  server 127.0.0.1:3100;
+</span><span class='line'>  keepalive 15;
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>server {
+</span><span class='line'>  listen 80;
+</span><span class='line'>  server_name loki.localdns.xyz;
+</span><span class='line'>
+</span><span class='line'>  auth_basic "loki auth";
+</span><span class='line'>  auth_basic_user_file /etc/nginx/passwords;
+</span><span class='line'>
+</span><span class='line'>  location / {
+</span><span class='line'>    proxy_read_timeout 1800s;
+</span><span class='line'>    proxy_connect_timeout 1600s;
+</span><span class='line'>    proxy_pass http://loki;
+</span><span class='line'>    proxy_http_version 1.1;
+</span><span class='line'>    proxy_set_header Upgrade $http_upgrade;
+</span><span class='line'>    proxy_set_header Connection $connection_upgrade;
+</span><span class='line'>    proxy_set_header Connection "Keep-Alive";
+</span><span class='line'>    proxy_set_header Proxy-Connection "Keep-Alive";
+</span><span class='line'>    proxy_redirect off;
+</span><span class='line'>  }
+</span><span class='line'>
+</span><span class='line'>  location /ready {
+</span><span class='line'>    proxy_pass http://loki;
+</span><span class='line'>    proxy_http_version 1.1;
+</span><span class='line'>    proxy_set_header Connection "Keep-Alive";
+</span><span class='line'>    proxy_set_header Proxy-Connection "Keep-Alive";
+</span><span class='line'>    proxy_redirect off;
+</span><span class='line'>    auth_basic "off";
+</span><span class='line'>  }
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you&rsquo;ve noticed, we are providing a <code>auth_basic_user_file</code> to <code>/etc/nginx/passwords</code>, so let&rsquo;s create a user that we will be using to authenticate against loki:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ htpasswd -c /etc/nginx/passwords lokiisamazing</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Enable and Start Services</h2>
+
+<p>Because we created a systemd unit file, we need to reload the systemd daemon:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo systemctl daemon-reload</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then enable nginx and loki on boot:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo systemctl enable nginx
+</span><span class='line'>$ sudo systemctl enable loki</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then start or restart both services:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo systemctl restart nginx
+</span><span class='line'>$ sudo systemctl restart loki</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You should see both ports, 80 and 3100 are listening:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo netstat -tulpn | grep -E '(3100|80)'
+</span><span class='line'>tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      8949/nginx: master
+</span><span class='line'>tcp        0      0 127.0.0.1:3100          0.0.0.0:*               LISTEN      23498/loki</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test Access</h2>
+
+<p>You will notice that I have a <code>/ready</code> endpoint that I am proxy passing to loki, which bypasses authentication, this has been setup for my AWS Application Load Balancer&rsquo;s Target Group to perform health checks against.</p>
+
+<p>We can verify if we are getting a 200 response code without passing authentication:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -i http://loki.localdns.xyz/ready
+</span><span class='line'>HTTP/1.1 200 OK
+</span><span class='line'>Server: nginx/1.14.0 (Ubuntu)
+</span><span class='line'>Date: Thu, 29 Oct 2020 09:15:52 GMT
+</span><span class='line'>Content-Type: text/plain; charset=utf-8
+</span><span class='line'>Content-Length: 6
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>X-Content-Type-Options: nosniff
+</span><span class='line'>
+</span><span class='line'>ready</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we try to make a request to Loki&rsquo;s labels API endpoint, you will notice that we are returned with a 401 unauthorized response:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -i http://loki.localdns.xyz/loki/api/v1/labels
+</span><span class='line'>HTTP/1.1 401 Unauthorized
+</span><span class='line'>Server: nginx/1.14.0 (Ubuntu)
+</span><span class='line'>Date: Thu, 29 Oct 2020 09:16:52 GMT
+</span><span class='line'>Content-Type: text/html
+</span><span class='line'>Content-Length: 204
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>WWW-Authenticate: Basic realm="loki auth"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>So let&rsquo;s access the labels API endpoint by passing our basic auth credentials. To leave no leaking passwords behind, create a file and save your password content in that file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ vim /tmp/.pass
+</span><span class='line'>-&gt; then enter your password and save the file &lt;-</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Expose the content as an environment variable:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ pass=$(cat /tmp/.pass)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now make a request to Loki&rsquo;s labels endpoint by passing authentication:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl -i -u lokiisawesome:$pass http://loki.localdns.xyz/loki/api/v1/labels
+</span><span class='line'>HTTP/1.1 200 OK
+</span><span class='line'>Server: nginx/1.14.0 (Ubuntu)
+</span><span class='line'>Date: Thu, 29 Oct 2020 09:20:20 GMT
+</span><span class='line'>Content-Type: application/json; charset=UTF-8
+</span><span class='line'>Content-Length: 277
+</span><span class='line'>Connection: keep-alive
+</span><span class='line'>
+</span><span class='line'>{"status":"success","data":["__name__","aws_account","cluster_name","container_name","environment","filename","job","service","team"]}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then ensure that your remove the password file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ rm -rf /tmp/.pass</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And unset your pass environment variable, to clean up your tracks:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ unset pass</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>LogCLI</h2>
+
+<p>Now for my favorite part, using logcli to interact with Loki, but more specifically using <code>--tail</code> as it requires websockets, nginx will now be able to upgrade those connections:</p>
+
+<p>Install logcli, in my case I am using a mac, so I will be using darwin:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/grafana/loki/releases/download/v2.0.0/logcli-darwin-amd64.zip
+</span><span class='line'>$ unzip logcli-darwin-amd64.zip
+</span><span class='line'>$ mv logcli-darwin-amd64 /usr/local/bin/logcli</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set your environment variables for logcli:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export LOKI_ADDR=https://loki.yourdomain.com # im doing ssl termination on the aws alb
+</span><span class='line'>$ export LOKI_USERNAME=lokiisawesome
+</span><span class='line'>$ export LOKI_PASSWORD=$pass </span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now for that sweetness of tailing ALL THE LOGS!! :-D . Let&rsquo;s first discover the label that we want to select:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli labels --quiet container_name | grep deadman
+</span><span class='line'>ecs-deadmanswitch-4-deadmanswitch-01234567890abcdefghi</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then tail for the win!</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query --quiet --output raw --tail '{job="prod/dockerlogs", container_name=~"ecs-deadmanswitch.*"}'
+</span><span class='line'>time="2020-10-29T09:03:36Z" level=info msg="timerID: xxxxxxxxxxxxxxxxxxxx"
+</span><span class='line'>time="2020-10-29T09:03:36Z" level=info msg="POST - /ping/xxxxxxxxxxxxxxxxxxx"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Awesome right?</p>
+
+<p><img src="https://media.giphy.com/media/3ohzdIuqJoo8QdKlnW/giphy.gif" alt="" /></p>
+
+<h2>Thank You</h2>
+
+<p>Hope that you found this useful, make sure to follow Grafana&rsquo;s blog for more awesome content:</p>
+
+<ul>
+<li><a href="https://grafana.com/blog/">https://grafana.com/blog/</a></li>
+</ul>
+
+
+<p>If you liked this content, please make sure to share or come say hi on my website or twitter:</p>
+
+<ul>
+<li><a href="https://ruan.dev">w: ruan.dev</a></li>
+<li><a href="https://ruan.dev">t: @ruanbekker</a></li>
+</ul>
+
+
+<p>For other content of mine on Loki:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/categories/loki/">https://blog.ruanbekker.com/blog/categories/loki/</a></li>
+<li><a href="https://github.com/ruanbekker/docker-loki-distributed-minio">https://github.com/ruanbekker/docker-loki-distributed-minio</a></li>
+<li><a href="https://github.com/ruanbekker/loki-docker-nginx-example">https://github.com/ruanbekker/loki-docker-nginx-example</a></li>
+<li><a href="https://github.com/ruanbekker/loki-minio-docker">https://github.com/ruanbekker/loki-minio-docker</a></li>
+<li><a href="https://github.com/ruanbekker/cheatsheets/tree/master/loki">https://github.com/ruanbekker/cheatsheets/tree/master/loki</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2135,435 +2858,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/08/13/getting-started-on-logging-with-loki-using-docker/">Getting Started on Logging With Loki Using Docker</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-08-13T13:39:28+00:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>13</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>1:39 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Logging with Loki is AMAZING!</p>
-
-<p>In the past couple of months i&rsquo;ve been working a lot with logging, but more specifically logging with loki. As most of my metrics reside in prometheus, I use grafana quite extensively and logging was always the one that stood out a bit as I pushed my logs to elasticsearch and consumed them from grafana. Which worked pretty well, but the maintenance and resource costs was a bit too much for what I was looking for.</p>
-
-<p>And then grafana released Loki, which is like prometheus, but for logs. And that was just super, exactly what I was looking for. For my use case, I was looking for something that can be consumed by grafana as a presentation layer, central based so I can push all sorts of logs, and want a easy way to grep for logs and a bonus would be to have a cli tool.</p>
-
-<p>And Loki checked all those boxes!</p>
-
-<div class="tenor-gif-embed" data-postid="7644619" data-share-method="host" data-width="100%" data-aspect-ratio="1.1971153846153846"><a href="https://tenor.com/view/oh-yeah-gif-7644619">Oh Yeah Parks And Recreation GIF</a> from <a href="https://tenor.com/search/ohyeah-gifs">Ohyeah GIFs</a></div>
-
-
-<script type="text/javascript" async src="https://tenor.com/embed.js"></script>
-
-
-<h2>What can you expect from this blog</h2>
-
-<p>In this post will be a getting started guide to Loki, we will provision Loki, Grafana and Nginx using Docker to get our environment up and running, so that we can push our nginx container logs to the loki datasource, and access the logs via grafana.</p>
-
-<p>We will then generate some logs so that we can show a couple of query examples using the log query language (LogQL) and use the LogCLI to access our logs via cli.</p>
-
-<p>In a <a href="">future post</a>, I will demonstrate how to setup Loki for a non-docker deployment.</p>
-
-<h2>Some useful information about Loki</h2>
-
-<p>Let&rsquo;s first talk about Loki compared with Elasticsearch, as they are not the same:</p>
-
-<ol>
-<li>Loki does not index the text of the logs, instead grouping entries into streams and index those with labels</li>
-<li>Things like full text search engines tokenizes your text into k/v pairs and gets written to an inverted index, which over time in my opinion gets complex to maintain, expensive to scale, storage retention, etc.</li>
-<li>Loki is advertised as easy to scale, affordable to operate as it uses DynamoDB for Indexing and S3 for Storage</li>
-<li>When using Loki, you may need to forget what you know and look to see how the problem can be solved differently with parallelization. Loki’s superpower is breaking up queries into small pieces and dispatching them in parallel so that you can query huge amounts of log data in small amounts of time.</li>
-</ol>
-
-
-<p>If we look at the <strong>Loki Log Model</strong>, we can see that the timestamp and the labels are indexed and the content of the logs are not indexed:</p>
-
-<p><img src="https://img.sysadmins.co.za/cpr6n7.png" alt="loki" /></p>
-
-<p>A <strong>log stream</strong> is a stream of log entries with the same exact label set:</p>
-
-<p><img src="https://img.sysadmins.co.za/el6djk.png" alt="loki" /></p>
-
-<p>For the <strong>storage</strong> side, inside each chunk, log entries are sorted by timestamp. Loki only indexes minimum and maximum timestamps of a chunk. Storage options support local storage, AWS S3, Google Cloud Storage and Azure</p>
-
-<p><img src="https://img.sysadmins.co.za/959pjw.png" alt="loki" /></p>
-
-<p>For <strong>chunks and querying</strong>, chunks are filled per stream and they are flushed of a few criterias such as age and size:</p>
-
-<p><img src="https://img.sysadmins.co.za/ekm8cy.png" alt="loki" /></p>
-
-<p>And one of the most important parts are the <strong>labels</strong>, labels define the stream and therefore its very important.</p>
-
-<p>High cardinality is bad for labels, as something like a IP address can reduce your performance a lot, as it will create a stream for every unique IP label.</p>
-
-<p>Static defined labels such as environment, hostnames are good, you can read more up about it <a href="https://grafana.com/blog/2020/04/21/how-labels-in-loki-can-make-log-queries-faster-and-easier/">here</a></p>
-
-<p>Here is a info graphic on how one log line can be split up into 36 streams:</p>
-
-<p><img src="https://img.sysadmins.co.za/g119oq.png" alt="" /></p>
-
-<p>So with that being said, <strong>good labels</strong> will be considered as cluster, job, namespace, environment, etc where as <strong>bad labels</strong> will be things such as userid, ip address, url path, etc</p>
-
-<h2>Selecting logstreams with Loki</h2>
-
-<p>Selecting logstreams, is done by using <strong>label matchers</strong> and <strong>filter expressions</strong>, such as this example:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs", environment="development"} |= "POST" |~ "196.35.64.+"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Label Matchers and Filter Expressions support:</p>
-
-<ul>
-<li><code>=</code> Contains string</li>
-<li><code>!=</code> Does not contain string</li>
-<li><code>=~</code> Matches regular expression</li>
-<li><code>!~</code> Does not match regular expression</li>
-</ul>
-
-
-<h2>Supported Clients</h2>
-
-<p>At the moment of writing, loki supports the following log clients:</p>
-
-<ul>
-<li>Promtail (tails logs and ships to Loki)</li>
-<li>Docker Driver</li>
-<li>Fluentd</li>
-<li>Fluent Bit</li>
-<li>Logstash</li>
-</ul>
-
-
-<p>We will be going into more detail on using promtail in a <a href="">future post</a>, but you can read more up about it <a href="https://github.com/grafana/loki/tree/master/cmd">here</a></p>
-
-<h2>Loki in Action</h2>
-
-<p>Time to get to the fun part, clone my <a href="https://github.com/ruanbekker/loki-docker-nginx-example">github repo</a>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/ruanbekker/loki-docker-nginx-example
-</span><span class='line'>$ cd loki-docker-nginx-example</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You can inspect the docker-compose.yml:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat docker-compose.yml
-</span><span class='line'>version: "3.4"
-</span><span class='line'>
-</span><span class='line'>services:
-</span><span class='line'>  my-nginx-service:
-</span><span class='line'>    image: nginx
-</span><span class='line'>    container_name: my-nginx-service
-</span><span class='line'>    ports:
-</span><span class='line'>      - 8000:80
-</span><span class='line'>    environment:
-</span><span class='line'>      - FOO=bar
-</span><span class='line'>    logging:
-</span><span class='line'>      driver: loki
-</span><span class='line'>      options:
-</span><span class='line'>        loki-url: http://localhost:3100/loki/api/v1/push
-</span><span class='line'>        loki-external-labels: job=dockerlogs,owner=ruan,environment=development
-</span><span class='line'>
-</span><span class='line'>  grafana:
-</span><span class='line'>    image: grafana/grafana:7.1.1
-</span><span class='line'>    volumes:
-</span><span class='line'>    - ./config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
-</span><span class='line'>    ports:
-</span><span class='line'>    - "3000:3000"
-</span><span class='line'>
-</span><span class='line'>  loki:
-</span><span class='line'>   image: grafana/loki:v1.3.0
-</span><span class='line'>   volumes:
-</span><span class='line'>     - ./config/loki.yaml:/etc/config/loki.yaml
-</span><span class='line'>   entrypoint:
-</span><span class='line'>     - /usr/bin/loki
-</span><span class='line'>     - -config.file=/etc/config/loki.yaml
-</span><span class='line'>   ports:
-</span><span class='line'>     - "3100:3100"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see loki will be the datasource where we will be pushing our logs to from our nginx container and we are defining our logging section where it should find loki and we are also setting labels to that log stream using <code>loki-external-labels</code>. Then we are using grafana to auto configure the loki datasource from the <code>./config/datasource.yml</code> section so that we can visualize our logs.</p>
-
-<p>If you don&rsquo;t want to define the logging section per container, you can always set the defaults using the <code>/etc/docker/daemon.json</code> by following <a href="https://grafana.com/docs/loki/latest/clients/docker-driver/configuration/#change-the-default-logging-driver">this guide</a></p>
-
-<p>Let&rsquo;s boot up our stack:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker-compose up</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After everything is up, you should be able to access nginx by visiting: <code>http://nginx.localdns.xyz:8000/</code>, after you received a response, visit Grafana on <code>http://grafana.localdns.xyz:3000</code> using the username and password: <code>admin/admin</code>.</p>
-
-<p>If you head over to datasources, you should see the loki datasource which was provisioned for you:</p>
-
-<p><img src="https://img.sysadmins.co.za/tyn0ny.png" alt="loki-grafana" /></p>
-
-<p>When you head to the left on explore and you select the loki datasource on <code>http://grafana.localdns.xyz:3000/explore</code> you should see the following:</p>
-
-<p><img src="https://img.sysadmins.co.za/5kp07m.png" alt="loki-grafana" /></p>
-
-<p>You will see that grafana discovers logstreams with the label <code>job</code> as you can see that our <code>job="dockerlogs"</code> can be seen there. We can either click on it, select the log labels from the left and browse the label we want to select or manually enter the query.</p>
-
-<p>I will be using the query manually:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs"}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>So now we will get all the logs that has that label associated and as you can see, we see our request that we made:</p>
-
-<p><img src="https://img.sysadmins.co.za/gra0oe.png" alt="nginx-grafana-loki" /></p>
-
-<p>We can see one error due to the favicon.ico that it could not find, but let&rsquo;s first inspect our first log line:</p>
-
-<p><img src="https://img.sysadmins.co.za/6dbuqn.png" alt="loki" /></p>
-
-<p>Here we can see the labels assigned to that log event, which we can include in our query, like if we had multiple services and different environments, we can use a query like the following to only see logs for a specific service and environment:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{job="dockerlogs", environment="development", compose_service="my-nginx-service"}</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In the example above we used the selectors to select the logs we want to see, now we can use our filter expressions, to &ldquo;grep&rdquo; our logs.</p>
-
-<p>Let&rsquo;s say we want to focus only on one service, and we want to filter for any logs with GET requests, so first we select to service then apply the filter expression:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET"</span></code></pre></td></tr></table></div></figure>
-
-
-<p><img src="https://img.sysadmins.co.za/vv609g.png" alt="loki-logs" /></p>
-
-<p>As you can see we can see the ones we were looking for, we can also chain them, so we want to se GET&rsquo;s and errors:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And lets say for some reason we only want to see the logs that comes from a 192.168.32 subnet:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32."</span></code></pre></td></tr></table></div></figure>
-
-
-<p>But we dont want to see requests from &ldquo;nginx.localdns.xyz&rdquo;:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32." != "nginx.localdns.xyz"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Make two extra get requests to &ldquo;foo.localdns.xyz:8000&rdquo; and &ldquo;bar.localdns.xyz:8000&rdquo; and then we change the query to say that we only want to see errors and hostnames coming from the 2 requests that we made:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>{compose_service="my-nginx-service"} |= "error" |~ "(foo|bar).localdns.xyz"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If we expand one of the log lines, we can do a ad-hoc analysis to see the percentage of logs by source for example:</p>
-
-<p><img src="https://img.sysadmins.co.za/9ctz6d.png" alt="loki-logs" /></p>
-
-<h2>LogCLI</h2>
-
-<p>If you prefer the cli to query logs, logcli is the command line client for loki, allows you to query logs from your terminal and has clients for linux, mac and windows.</p>
-
-<p>Check the releases for the latest version:</p>
-
-<ul>
-<li><a href="https://github.com/grafana/loki/releases">https://github.com/grafana/loki/releases</a></li>
-</ul>
-
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wget https://github.com/grafana/loki/releases/download/v1.5.0/logcli-darwin-amd64.zip
-</span><span class='line'>$ unzip logcli-darwin-amd64.zip
-</span><span class='line'>$ mv logcli-darwin-amd64 /usr/local/bin/logcli</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Set your environment details, in our case we dont have a username and password for loki:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ #export LOKI_USERNAME=${MYUSER}
-</span><span class='line'>$ #export LOKI_PASSWORD=${MYPASS}
-</span><span class='line'>$ export LOKI_ADDR=http://localhost:3001</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can view all our labels, let’s view all the job labels:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli labels job
-</span><span class='line'>http://localhost:3001/loki/api/v1/label/job/values
-</span><span class='line'>dockerlogs</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Let’s look at family apps nginx logs:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query '{job="dockerlogs"}'
-</span><span class='line'>http://localhost:3001/loki/api/v1/query_range?direction=BACKWARD&end=1587727924005496000&limit=30&query=%7Bjob%3D%22dockerlogs%22%2C&start=1587724324005496000
-</span><span class='line'>Common labels: {environment="development", owner="ruan", compose_service="my-nginx-service", job="dockerlogs", host="docker-desktop", compose_project="loki-nginx-docker"}
-</span><span class='line'>2020-08-13 17:08:40 192.168.32.1 - - [13/Aug/2020:15:08:40 +0000] "GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:79.0) Gecko/20100101 Firefox/79.0" "-"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can also pipe that output to grep, awk, etc:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query '{job="dockerlogs"}' | grep GREP | awk -F 'X' '{print  $1}'</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Supported arguments:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ logcli query --help
-</span><span class='line'>usage: logcli query [&lt;flags&gt;] &lt;query&gt;
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Run a LogQL query.
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Flags:
-</span><span class='line'>      --help             Show context-sensitive help (also try --help-long and --help-man).
-</span><span class='line'>      --version          Show application version.
-</span><span class='line'>  -q, --quiet            suppress everything but log lines
-</span><span class='line'>      --stats            show query statistics
-</span><span class='line'>  -o, --output=default   specify output mode [default, raw, jsonl]
-</span><span class='line'>  -z, --timezone=Local   Specify the timezone to use when formatting output timestamps [Local, UTC]
-</span><span class='line'>      --addr="http://localhost:3100"
-</span><span class='line'>                         Server address. Can also be set using LOKI_ADDR env var.
-</span><span class='line'>      --username=""      Username for HTTP basic auth. Can also be set using LOKI_USERNAME env var.
-</span><span class='line'>      --password=""      Password for HTTP basic auth. Can also be set using LOKI_PASSWORD env var.
-</span><span class='line'>      --ca-cert=""       Path to the server Certificate Authority. Can also be set using LOKI_CA_CERT_PATH env var.
-</span><span class='line'>      --tls-skip-verify  Server certificate TLS skip verify.
-</span><span class='line'>      --cert=""          Path to the client certificate. Can also be set using LOKI_CLIENT_CERT_PATH env var.
-</span><span class='line'>      --key=""           Path to the client certificate key. Can also be set using LOKI_CLIENT_KEY_PATH env var.
-</span><span class='line'>      --org-id=ORG-ID    org ID header to be substituted for auth
-</span><span class='line'>      --limit=30         Limit on number of entries to print.
-</span><span class='line'>      --since=1h         Lookback window.
-</span><span class='line'>      --from=FROM        Start looking for logs at this absolute time (inclusive)
-</span><span class='line'>      --to=TO            Stop looking for logs at this absolute time (exclusive)
-</span><span class='line'>      --step=STEP        Query resolution step width
-</span><span class='line'>      --forward          Scan forwards through logs.
-</span><span class='line'>      --no-labels        Do not print any labels
-</span><span class='line'>      --exclude-label=EXCLUDE-LABEL ...
-</span><span class='line'>                         Exclude labels given the provided key during output.
-</span><span class='line'>      --include-label=INCLUDE-LABEL ...
-</span><span class='line'>                         Include labels given the provided key during output.
-</span><span class='line'>      --labels-length=0  Set a fixed padding to labels
-</span><span class='line'>  -t, --tail             Tail the logs
-</span><span class='line'>      --delay-for=0      Delay in tailing by number of seconds to accumulate logs for re-ordering
-</span><span class='line'>
-</span><span class='line'>
-</span><span class='line'>Args:
-</span><span class='line'>  &lt;query&gt;  eg '{foo="bar",baz=~".*blip"} |~ ".*error.*"'</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank you</h2>
-
-<p>I hope this was useful</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -2632,6 +2926,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/06/29/create-a-raid5-array-with-mdadm-on-linux/">Create a RAID5 Array With Mdadm on Linux</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/06/23/install-a-specific-python-version-on-ubuntu/">Install a Specific Python Version on Ubuntu</a>
       </li>
     
@@ -2645,10 +2943,6 @@
     
       <li class="post">
         <a href="/blog/2022/05/31/setup-linkding-bookmarks-manager-on-docker/">Setup Linkding Bookmarks Manager on Docker</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/05/31/python-flask-forms-with-jinja-templating/">Python Flask Forms With Jinja Templating</a>
       </li>
     
   </ul>

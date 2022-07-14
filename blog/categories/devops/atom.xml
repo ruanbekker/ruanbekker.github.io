@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Devops | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/devops/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-06-30T01:13:04-04:00</updated>
+  <updated>2022-07-14T02:01:37-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,141 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Remote Builds With Docker Contexts]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/07/14/remote-builds-with-docker-contexts/"/>
+    <updated>2022-07-14T01:57:34-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/07/14/remote-builds-with-docker-contexts</id>
+    <content type="html"><![CDATA[<p><img src="https://blog.ruanbekker.com/images/ruanbekker-docker-contexts.png" alt="using-docker-contexts" /></p>
+
+<p>Often you want to save some battery life when you are doing docker builds and leverage a remote host to do the intensive work and we can utilise docker context over ssh to do just that.</p>
+
+<h2>About</h2>
+
+<p>In this tutorial I will show you how to use a remote docker engine to do docker builds, so you still run the docker client locally, but the context of your build will be sent to a remote docker engine via ssh.</p>
+
+<p>We will setup password-less ssh, configure our ssh config, create the remote docker context, then use the remote docker context.</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/178909518-26f580e9-2b96-41b3-bacd-a5ea5f848ebf.png" alt="image" /></p>
+
+<h2>Password-less SSH</h2>
+
+<p>I will be copying my public key to the remote host:</p>
+
+<pre><code class="bash">$ ssh-copy-id ruan@192.168.2.18
+</code></pre>
+
+<p>Setup my ssh config:</p>
+
+<pre><code class="bash">$ cat ~/.ssh/config
+Host home-server
+    Hostname 192.168.2.18
+    User ruan
+    IdentityFile ~/.ssh/id_rsa
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+</code></pre>
+
+<p>Test:</p>
+
+<pre><code>$ ssh home-server whoami
+ruan
+</code></pre>
+
+<h2>Docker Context</h2>
+
+<p>On the target host (192.168.2.18) we can verify that docker is installed:</p>
+
+<pre><code class="bash">$ docker version
+Client: Docker Engine - Community
+ Version:           20.10.12
+ API version:       1.41
+ Go version:        go1.16.12
+ Git commit:        e91ed57
+ Built:             Mon Dec 13 11:45:37 2021
+ OS/Arch:           linux/amd64
+ Context:           default
+ Experimental:      true
+
+Server: Docker Engine - Community
+ Engine:
+  Version:          20.10.12
+  API version:      1.41 (minimum version 1.12)
+  Go version:       go1.16.12
+  Git commit:       459d0df
+  Built:            Mon Dec 13 11:43:46 2021
+  OS/Arch:          linux/amd64
+  Experimental:     false
+ containerd:
+  Version:          1.4.12
+  GitCommit:        7b11cfaabd73bb80907dd23182b9347b4245eb5d
+ runc:
+  Version:          1.0.2
+  GitCommit:        v1.0.2-0-g52b36a2
+ docker-init:
+  Version:          0.19.0
+  GitCommit:        de40ad0
+</code></pre>
+
+<p>On the client (my laptop in this example), we will create a docker context called &ldquo;home-server&rdquo; and point it to our target host:</p>
+
+<pre><code class="bash">$ docker context create home-server --docker "host=ssh://home-server"
+home-server
+Successfully created context "home-server"
+</code></pre>
+
+<p>Now we can list our contexts:</p>
+
+<pre><code class="bash">docker context ls
+NAME                TYPE                DESCRIPTION                               DOCKER ENDPOINT               KUBERNETES ENDPOINT                                  ORCHESTRATOR
+default *           moby                Current DOCKER_HOST based configuration   unix:///var/run/docker.sock   https://k3d-master.127.0.0.1.nip.io:6445 (default)   swarm
+home-server         moby                                                          ssh://home-server
+</code></pre>
+
+<h2>Using Contexts</h2>
+
+<p>We can verify if this works by listing our cached docker images locally and on our remote host:</p>
+
+<pre><code class="bash">$ docker --context=default images | wc -l
+ 16
+</code></pre>
+
+<p>And listing the remote images by specifying the context:</p>
+
+<pre><code class="bash">$ docker --context=home-server images | wc -l
+ 70
+</code></pre>
+
+<p>We can set the default context to our target host:</p>
+
+<pre><code>$ docker context use home-server
+home-server
+</code></pre>
+
+<h2>Running Containers over Contexts</h2>
+
+<p>So running containers with remote contexts essentially becomes running containers on remote hosts. In the past, I had to setup a ssh tunnel, point the docker host env var to that endpoint, then run containers on the remote host.</p>
+
+<p>Thats something of the past, we can just point our docker context to our remote host and run the container. If you haven&rsquo;t set the default context, you can specify the context, so running a docker container on a remote host with your docker client locally:</p>
+
+<pre><code class="bash">$ docker --context=home-server run -it -p 8002:8080 ruanbekker/hostname
+2022/07/14 05:44:04 Server listening on port 8080
+</code></pre>
+
+<p>Now from our client (laptop), we can test our container on our remote host:</p>
+
+<pre><code class="bash">$ curl http://192.168.2.18:8002
+Hostname: 8605d292e2b4
+</code></pre>
+
+<p>The same way can be used to do remote docker builds, you have your Dockerfile locally, but when you build, you point the context to the remote host, and your context (dockerfile and files referenced in your dockerfile) will be sent to the remote host. This way you can save a lot of battery life as the computation is done on the remote docker engine.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Prometheus Relabel Config Examples]]></title>
@@ -748,203 +883,6 @@ subnet = "subnet-04b3xxxxxxxxxxxxx"
 <h2>Thank You</h2>
 
 <p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Create DNS Records With Terraform on Cloudflare]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/02/20/create-dns-records-with-terraform-on-cloudflare/"/>
-    <updated>2022-02-20T13:11:06-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/02/20/create-dns-records-with-terraform-on-cloudflare</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will use <strong>Terraform</strong> to create DNS records on <strong>Cloudflare</strong>.</p>
-
-<h2>Installing Terraform</h2>
-
-<p>I will be installing terraform for linux, but you can follow terraform&rsquo;s documentation if you are using a different operating system:
-- <a href="https://learn.hashicorp.com/tutorials/terraform/install-cli">https://learn.hashicorp.com/tutorials/terraform/install-cli</a></p>
-
-<pre><code class="bash">&gt; curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
-&gt; sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
-&gt; sudo apt update &amp;&amp; sudo apt install terraform -y
-</code></pre>
-
-<p>Verify that terraform was installed:</p>
-
-<pre><code class="bash">&gt; terraform version
-Terraform v1.1.6
-on linux_amd64
-</code></pre>
-
-<h2>Cloudflare Authentication</h2>
-
-<p>We need to create an API Token in order to authenticate terraform to make the required API calls to create the DNS Record.</p>
-
-<p>They have a great post on this, which you can follow below:
-- <a href="https://developers.cloudflare.com/api/tokens/create">https://developers.cloudflare.com/api/tokens/create</a></p>
-
-<p>You will need access to &ldquo;Edit DNS Zones&rdquo; and also include the Domain that you would like to edit.</p>
-
-<p>Ensure that you save the API Token in a safe place.</p>
-
-<h2>Terraform Code</h2>
-
-<p>First we will create a project directory:</p>
-
-<pre><code class="bash">&gt; mkdir terraform-cloudflare-dns
-&gt; cd terraform-cloudflare-dns
-</code></pre>
-
-<p>First we will create the <code>providers.tf</code> which we define our provider and the required parameters for the provider:</p>
-
-<pre><code>terraform {
-  required_providers {
-    cloudflare = {
-      source = "cloudflare/cloudflare"
-      version = "~&gt; 3.0"
-    }
-  }
-}
-
-provider "cloudflare" {
-  email   = var.cloudflare_email
-  api_token = var.cloudflare_api_token
-}
-</code></pre>
-
-<p>As you can see, we are referencing <code>email</code> and <code>api_token</code> as variables, therefore we need to define those variables in <code>variables.tf</code>:</p>
-
-<pre><code>variable "cloudflare_email" {
-  type        = string
-  description = "clouflare email address"
-}
-
-variable "cloudflare_api_token" {
-  type        = string
-  description = "cloudflare api token"
-}
-</code></pre>
-
-<p>In our <code>main.tf</code>, we are first using a data resource to query cloudflare for our domain <code>rbkr.xyz</code> and then access the attribute <code>id</code> which we will be using in our <code>cloudflare_record</code> resource so that it knows which domain to add the DNS record for.</p>
-
-<p>Then we are going to create the A record <code>foobar</code> and provide the value of <code>127.0.0.1</code>:</p>
-
-<pre><code>data "cloudflare_zone" "this" {
-  name = "rbkr.xyz"
-}
-
-resource "cloudflare_record" "foobar" {
-  zone_id = data.cloudflare_zone.this.id
-  name    = "foobar"
-  value   = "127.0.0.1"
-  type    = "A"
-  proxied = false
-}
-</code></pre>
-
-<p>Then we are defining our outputs in <code>outputs.tf</code>:</p>
-
-<pre><code>output "record" {
-  value = cloudflare_record.foobar.hostname
-}
-
-output "metadata" {
-  value       = cloudflare_record.foobar.metadata
-  sensitive   = true
-}
-</code></pre>
-
-<h2>Creating the Record</h2>
-
-<p>Once our configuration code is in place we can run a <code>init</code> which will download the providers:</p>
-
-<pre><code class="bash">&gt; terraform init
-</code></pre>
-
-<p>Once that is done, we can run a <code>plan</code> so we can see what will be deployed, but since our <code>variables.tf</code> has no <code>default</code> values, we will either have to define this in <code>terraform.tfvars</code> or use it in-line.</p>
-
-<p>I will be using it in-line for this demonstration:</p>
-
-<pre><code class="bash">&gt; terraform plan -var "cloudflare_email=$EMAIL" -var "cloudflare_api_token=$API_TOKEN"
-</code></pre>
-
-<p>Once you are happy, you can run a <code>apply</code> which will deploy the changes:</p>
-
-<pre><code class="bash">&gt; terraform apply -var "cloudflare_email=$EMAIL" -var "cloudflare_api_token=$API_TOKEN"
-
-Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
-  + create
-
-Terraform will perform the following actions:
-
-  # cloudflare_record.foobar will be created
-  + resource "cloudflare_record" "foobar" {
-      + allow_overwrite = false
-      + created_on      = (known after apply)
-      + hostname        = (known after apply)
-      + id              = (known after apply)
-      + metadata        = (known after apply)
-      + modified_on     = (known after apply)
-      + name            = "foobar"
-      + proxiable       = (known after apply)
-      + proxied         = false
-      + ttl             = (known after apply)
-      + type            = "A"
-      + value           = "127.0.0.1"
-      + zone_id         = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-    }
-
-Plan: 1 to add, 0 to change, 0 to destroy.
-
-Changes to Outputs:
-  + metadata = (sensitive value)
-  + record   = (known after apply)
-
-Do you want to perform these actions?
-  Terraform will perform the actions described above.
-  Only 'yes' will be accepted to approve.
-
-  Enter a value: yes
-
-cloudflare_record.foobar: Creating...
-cloudflare_record.foobar: Creation complete after 4s [id=xxxxxxxxxxxxxxxxxxxxx]
-
-Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
-
-Outputs:
-
-metadata = &lt;sensitive&gt;
-record = "foobar.rbkr.xyz"
-</code></pre>
-
-<h2>Test DNS</h2>
-
-<p>We can now test if this is working as expected with a dns utility like dig:</p>
-
-<pre><code class="bash">&gt; dig foobar.rbkr.xyz
-
-; &lt;&lt;&gt;&gt; DiG 9.10.6 &lt;&lt;&gt;&gt; foobar.rbkr.xyz
-;; global options: +cmd
-;; Got answer:
-;; -&gt;&gt;HEADER&lt;&lt;- opcode: QUERY, status: NOERROR, id: 20800
-;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
-
-;; OPT PSEUDOSECTION:
-; EDNS: version: 0, flags:; udp: 4096
-;; QUESTION SECTION:
-;foobar.rbkr.xyz.       IN      A
-
-;; ANSWER SECTION:
-foobar.rbkr.xyz. 300    IN      A       127.0.0.1
-
-;; Query time: 262 msec
-;; SERVER: 172.31.0.2#53(172.31.0.2)
-;; WHEN: Wed Feb 02 13:57:59 SAST 2022
-;; MSG SIZE  rcvd: 68
-</code></pre>
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
 ]]></content>
   </entry>
   

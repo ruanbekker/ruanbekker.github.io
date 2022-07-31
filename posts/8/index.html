@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="I was working with curl to get data from a api, and wanted to get a specific url for a specific name within an array. I got it working using jq, and &hellip;">
+  <meta name="description" content="This is a getting started on python-rq tutorial and I will demonstrate how to work with asynchronous tasks using python redis queue (python-rq). What &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,425 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/05/16/using-python-rq-for-task-queues-in-python/">Using Python RQ for Task Queues in Python</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-05-16T21:12:36+02:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>16</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>9:12 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>This is a getting started on python-rq tutorial and I will demonstrate how to work with asynchronous tasks using python redis queue (python-rq).</p>
+
+<h2>What will we be doing</h2>
+
+<p>We want a client to submit 1000&rsquo;s of jobs in a non-blocking asynchronous fashion, and then we will have workers which will consume these jobs from our redis queue, and process those tasks at the rate of what our consumer can handle.</p>
+
+<p>The nice thing about this is that, if our consumer is unavailable for processing the tasks will remain in the queue and once the consumer is ready to consume, the tasks will be executed. It&rsquo;s also nice that its asynchronous, so the client don&rsquo;t have to wait until the task has finished.</p>
+
+<p>We will run a redis server using docker, which will be used to queue all our jobs, then we will go through the basics in python and python-rq such as:</p>
+
+<ul>
+<li>Writing a Task</li>
+<li>Enqueueing a Job</li>
+<li>Getting information from our queue, listing jobs, job statuses</li>
+<li>Running our workers to consume from the queue and action our tasks</li>
+<li>Basic application which queues jobs to the queue, consumes and action them and monitors the queue</li>
+</ul>
+
+
+<h2>Redis Server</h2>
+
+<p>You will require docker for this next step, to start the redis server:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker run --rm -itd --name redis -p 6379:6379 redis:alpine</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Python RQ</h2>
+
+<p>Install python-rq:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ pip install rq</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the task which will be actioned by our workers, in our case it will just be a simple function that adds all the numbers from a given string to a list, then adds them up and return the total value.</p>
+
+<p>This is however a very basic task, but its just for demonstration.</p>
+
+<p>Our <code>tasks.py</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>def sum_numbers_from_string(string):
+</span><span class='line'>    numbers = []
+</span><span class='line'>    for each_character in string:
+</span><span class='line'>        if each_character.isdigit():
+</span><span class='line'>            numbers.append(int(each_character))
+</span><span class='line'>    total = 0
+</span><span class='line'>    for each_number in numbers:
+</span><span class='line'>        total=total+each_number
+</span><span class='line'>
+</span><span class='line'>    return total</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To test this locally:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; from tasks import sum_numbers_from_string
+</span><span class='line'>&gt;&gt;&gt; sum_numbers_from_string('adje-fje5-sjfdu1s-gdj9-asd1fg')
+</span><span class='line'>16</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now, lets import redis and redis-queue, with our tasks and instantiate a queue object:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; from redis import Redis
+</span><span class='line'>&gt;&gt;&gt; from rq import Connection, Queue, Worker
+</span><span class='line'>&gt;&gt;&gt; from tasks import sum_numbers_from_string
+</span><span class='line'>&gt;&gt;&gt; redis_connection = Redis(host='localhost', port=6379, db=0)
+</span><span class='line'>&gt;&gt;&gt; q = Queue(connection=redis_connection)</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Submit a Task to the Queue</h2>
+
+<p>Let&rsquo;s submit a task to the queue:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result = q.enqueue(sum_numbers_from_string, 'hbj2-plg5-2xf4r1s-f2lf-9sx4ff')</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We have a couple of properties from <code>result</code> which we can inspect, first let&rsquo;s have a look at the id that we got back when we submitted our task to the queue:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.get_id()
+</span><span class='line'>'5a607474-cf1b-4fa5-9adb-f8437555a7e7'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also get the status from our task:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.get_status()
+</span><span class='line'>'queued'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also view our results in json format:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; import json
+</span><span class='line'>&gt;&gt;&gt; print(json.dumps(result.to_dict(), indent=2, default=str))
+</span><span class='line'>{
+</span><span class='line'>  "created_at": "2020-05-16T11:56:49.892713Z",
+</span><span class='line'>  "data": "b'..\\x00\\x99\\xa0\\x16\\xfe..'",
+</span><span class='line'>  "origin": "default",
+</span><span class='line'>  "description": "tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff')",
+</span><span class='line'>  "enqueued_at": "2020-05-16T11:56:49.893252Z",
+</span><span class='line'>  "started_at": "",
+</span><span class='line'>  "ended_at": "",
+</span><span class='line'>  "timeout": 180,
+</span><span class='line'>  "status": "queued"
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we dont have context of the job id, we can use <code>get_jobs</code> to get all the jobs which is queued:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; list_jobs = q.get_jobs
+</span><span class='line'>&gt;&gt;&gt; list_jobs()
+</span><span class='line'>[Job('5a607474-cf1b-4fa5-9adb-f8437555a7e7', enqueued_at=datetime.datetime(2020, 5, 16, 12, 30, 22, 699609))]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we can loop through the results and get the id like below:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; for j in list_jobs():
+</span><span class='line'>...     j.id
+</span><span class='line'>...
+</span><span class='line'>'5a607474-cf1b-4fa5-9adb-f8437555a7e7'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Or to get the job id&rsquo;s in a list:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; list_job_ids = q.get_job_ids()
+</span><span class='line'>&gt;&gt;&gt; list_job_ids
+</span><span class='line'>['5a607474-cf1b-4fa5-9adb-f8437555a7e7']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since we received the job id, we can use <code>fetch_job</code> to get more info about the job:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+</span><span class='line'>&gt;&gt;&gt; fetched_job
+</span><span class='line'>Job('5a607474-cf1b-4fa5-9adb-f8437555a7e7', enqueued_at=datetime.datetime(2020, 5, 16, 12, 30, 22, 699609))</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And as before we can view it in json format:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; fetched_job.to_dict()
+</span><span class='line'>{'created_at': '2020-05-16T12:30:22.698728Z', 'data': b'..x\x9c6\xfe..', 'origin': 'queue1', 'description': "tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff')", 'enqueued_at': '2020-05-16T12:30:22.699609Z', 'started_at': '', 'ended_at': '', 'timeout': 180, 'status': 'queued'}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We can also view the key in redis by passing the job_id:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.key_for(job_id='5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+</span><span class='line'>b'rq:job:5a607474-cf1b-4fa5-9adb-f8437555a7e7'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To view how many jobs are in our queue, we can either do:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; len(q)
+</span><span class='line'>1</span></code></pre></td></tr></table></div></figure>
+
+
+<p>or:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q.get_job_ids()
+</span><span class='line'>['5a607474-cf1b-4fa5-9adb-f8437555a7e7']</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Consuming from the Queue</h2>
+
+<p>Now that our task is queued, let&rsquo;s fire of our worker to consume the job from the queue and action the task:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; w = Worker([q], connection=redis_connection)
+</span><span class='line'>&gt;&gt;&gt; w.work()
+</span><span class='line'>14:05:35 Worker rq:worker:49658973741d4085961e34e9641227dd: started, version 1.4.1
+</span><span class='line'>14:05:35 Listening on default...
+</span><span class='line'>14:05:35 Cleaning registries for queue: default
+</span><span class='line'>14:05:35 default: tasks.sum_numbers_from_string('hbj2-plg5-2xf4r1s-f2lf-9sx4ff') (5a607474-cf1b-4fa5-9adb-f8437555a7e7)
+</span><span class='line'>14:05:40 default: Job OK (5a607474-cf1b-4fa5-9adb-f8437555a7e7)
+</span><span class='line'>14:05:40 Result is kept for 500 seconds
+</span><span class='line'>14:05:59 Warm shut down requested
+</span><span class='line'>True</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now, when we get the status of our job, you will see that it finished:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.get_status()
+</span><span class='line'>'finished'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And to get the result from our worker:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result.result
+</span><span class='line'>29</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And like before, if you dont have context of your job id, you can get the job id, then return the result:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; result = fetched_job = q.fetch_job('5a607474-cf1b-4fa5-9adb-f8437555a7e7')
+</span><span class='line'>&gt;&gt;&gt; result.result
+</span><span class='line'>29</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Naming Queues</h2>
+
+<p>We can namespace our tasks into specific queues, for example if we want to create <code>queue1</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q1 = Queue('queue1', connection=redis_connection)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To verify the queue name:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q1
+</span><span class='line'>Queue('queue1')</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As we can see our queue is empty:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q1.get_job_ids()
+</span><span class='line'>[]</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s submit 10 jobs to our queue:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; from uuid import uuid4
+</span><span class='line'>&gt;&gt;&gt; for attempt in range(0,10):
+</span><span class='line'>...     random_string = uuid4().hex
+</span><span class='line'>...     q1.enqueue(sum_numbers_from_string, random_string)
+</span><span class='line'>...
+</span><span class='line'>Job('c3f2369d-5b27-40e0-97be-8fe26989a78e', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 472508))
+</span><span class='line'>Job('06b93517-5dae-4133-8131-e8d35b8dd780', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 475604))
+</span><span class='line'>Job('81f05aef-4bd6-421b-912d-78b5d419b10a', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 478071))
+</span><span class='line'>Job('8f14e81f-74fa-44d9-9fc7-e8e7b8c7b76f', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 480438))
+</span><span class='line'>Job('e8552750-89d2-4538-8c3e-a48c4c3e9a51', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 483106))
+</span><span class='line'>Job('bf19a0a3-eb0c-4692-b452-67c5ad954094', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 486193))
+</span><span class='line'>Job('0da3688a-cffa-4ba6-a272-b6cc90942ef6', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 488545))
+</span><span class='line'>Job('717bd147-615c-458d-8386-9ea6a198e137', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 491074))
+</span><span class='line'>Job('7cdac5aa-8dc3-40be-a8fc-b273ce61b03b', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 493618))
+</span><span class='line'>Job('4f7ea527-0695-4e2b-bc8b-3d8807a86390', enqueued_at=datetime.datetime(2020, 5, 16, 13, 1, 14, 496930))</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To verify the number of jobs in our queue:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q1.get_job_ids()
+</span><span class='line'>['c3f2369d-5b27-40e0-97be-8fe26989a78e', '06b93517-5dae-4133-8131-e8d35b8dd780', '81f05aef-4bd6-421b-912d-78b5d419b10a', '8f14e81f-74fa-44d9-9fc7-e8e7b8c7b76f', 'e8552750-89d2-4538-8c3e-a48c4c3e9a51', 'bf19a0a3-eb0c-4692-b452-67c5ad954094', '0da3688a-cffa-4ba6-a272-b6cc90942ef6', '717bd147-615c-458d-8386-9ea6a198e137', '7cdac5aa-8dc3-40be-a8fc-b273ce61b03b', '4f7ea527-0695-4e2b-bc8b-3d8807a86390']</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And to count them:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; len(q1)
+</span><span class='line'>10</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Cleaning the Queue</h2>
+
+<p>Cleaning the queue can either be done with:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q.empty()
+</span><span class='line'>10</span></code></pre></td></tr></table></div></figure>
+
+
+<p>or</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q.delete(delete_jobs=True)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then to verify that our queue is clean:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; q.get_job_ids()
+</span><span class='line'>[]</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Naming Workers</h2>
+
+<p>The same way that we defined a name for our queue, we can define a name for our workers:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; worker = Worker([q1], connection=redis_connection, name='worker1')
+</span><span class='line'>&gt;&gt;&gt; worker.work()</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Which means you can have different workers consuming jobs from specific queues.</p>
+
+<h2>Resources</h2>
+
+<p>Documentation:</p>
+
+<ul>
+<li><a href="https://python-rq.org/docs/">https://python-rq.org/docs/</a></li>
+<li><a href="https://python-rq.org/docs/workers/">https://python-rq.org/docs/workers/</a></li>
+<li><a href="https://python-rq.org/docs/monitoring/">https://python-rq.org/docs/monitoring/</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>I hope this was usful, if you enjoyed this come say hi on Twitter <a href="https://twitter.com/ruanbekker">@ruanbekker</a> or visit my website at <a href="https://ruan.dev">ruan.dev</a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3000,301 +3419,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/02/21/persistent-volumes-with-k3d-kubernetes/">Persistent Volumes With K3d Kubernetes</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-02-21T00:07:48+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>21</span><span class='date-suffix'>st</span>, <span class='date-year'>2020</span></span> <span class='time'>12:07 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>With k3d we can mount the host to container path, and with persistent volumes we can set a hostPath for our persistent volumes. With k3d, all the nodes will be using the same volume mapping which maps back to the host.</p>
-
-<p>We will test the data persistence by writing a file inside a container, kill the pod, then exec into the pod again and test if the data persisted</p>
-
-<h2>The k3d Cluster</h2>
-
-<p>Create the directory on the host where we will persist the data:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; mkdir -p /tmp/k3dvol</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the cluster:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; k3d create --name "k3d-cluster" --volume /tmp/k3dvol:/tmp/k3dvol --publish "80:80" --workers 2
-</span><span class='line'>&gt; export KUBECONFIG="$(k3d get-kubeconfig --name='k3d-cluster')"</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our application will be a busybox container which will keep running with a ping command, map the persistent volume to <code>/data</code> inside the pod.</p>
-
-<p>Our <code>app.yml</code></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>apiVersion: v1
-</span><span class='line'>kind: PersistentVolume
-</span><span class='line'>metadata:
-</span><span class='line'>  name: task-pv-volume
-</span><span class='line'>  labels:
-</span><span class='line'>    type: local
-</span><span class='line'>spec:
-</span><span class='line'>  storageClassName: manual
-</span><span class='line'>  capacity:
-</span><span class='line'>    storage: 1Gi
-</span><span class='line'>  accessModes:
-</span><span class='line'>    - ReadWriteOnce
-</span><span class='line'>  hostPath:
-</span><span class='line'>    path: "/tmp/k3dvol"
-</span><span class='line'>---
-</span><span class='line'>apiVersion: v1
-</span><span class='line'>kind: PersistentVolumeClaim
-</span><span class='line'>metadata:
-</span><span class='line'>  name: task-pv-claim
-</span><span class='line'>spec:
-</span><span class='line'>  storageClassName: manual
-</span><span class='line'>  accessModes:
-</span><span class='line'>    - ReadWriteOnce
-</span><span class='line'>  resources:
-</span><span class='line'>    requests:
-</span><span class='line'>      storage: 1Gi
-</span><span class='line'>---
-</span><span class='line'>apiVersion: apps/v1
-</span><span class='line'>kind: Deployment
-</span><span class='line'>metadata:
-</span><span class='line'>  name: echo
-</span><span class='line'>spec:
-</span><span class='line'>  selector:
-</span><span class='line'>    matchLabels:
-</span><span class='line'>      app: echo
-</span><span class='line'>  strategy:
-</span><span class='line'>    type: Recreate
-</span><span class='line'>  template:
-</span><span class='line'>    metadata:
-</span><span class='line'>      labels:
-</span><span class='line'>        app: echo
-</span><span class='line'>    spec:
-</span><span class='line'>      volumes:
-</span><span class='line'>        - name: task-pv-storage
-</span><span class='line'>          persistentVolumeClaim:
-</span><span class='line'>            claimName: task-pv-claim
-</span><span class='line'>      containers:
-</span><span class='line'>      - image: busybox
-</span><span class='line'>        name: echo
-</span><span class='line'>        volumeMounts:
-</span><span class='line'>          - mountPath: "/data"
-</span><span class='line'>            name: task-pv-storage
-</span><span class='line'>        command: ["ping", "127.0.0.1"]</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Deploy the workload:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl apply -f app.yml
-</span><span class='line'>persistentvolume/task-pv-volume created
-</span><span class='line'>persistentvolumeclaim/task-pv-claim created
-</span><span class='line'>deployment.apps/echo created</span></code></pre></td></tr></table></div></figure>
-
-
-<p>View the persistent volumes:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl get pv
-</span><span class='line'>NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                    STORAGECLASS   REASON   AGE
-</span><span class='line'>task-pv-volume                             1Gi        RWO            Retain           Bound    default/task-pv-claim    manual                  6s</span></code></pre></td></tr></table></div></figure>
-
-
-<p>View the Persistent Volume Claims:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl get pvc
-</span><span class='line'>NAME             STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-</span><span class='line'>task-pv-claim    Bound    task-pv-volume                             1Gi        RWO            manual         11s</span></code></pre></td></tr></table></div></figure>
-
-
-<p>View the pods:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl get pods
-</span><span class='line'>NAME                   READY   STATUS    RESTARTS   AGE
-</span><span class='line'>echo-58fd7d9b6-x4rxj   1/1     Running   0          16s</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Exec into the pod:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl exec -it echo-58fd7d9b6-x4rxj sh
-</span><span class='line'>/ # df -h
-</span><span class='line'>Filesystem                Size      Used Available Use% Mounted on
-</span><span class='line'>overlay                  58.4G     36.1G     19.3G  65% /
-</span><span class='line'>osxfs                   233.6G    139.7G     86.3G  62% /data
-</span><span class='line'>/dev/sda1                58.4G     36.1G     19.3G  65% /etc/hosts
-</span><span class='line'>/dev/sda1                58.4G     36.1G     19.3G  65% /dev/termination-log
-</span><span class='line'>/dev/sda1                58.4G     36.1G     19.3G  65% /etc/hostname
-</span><span class='line'>/dev/sda1                58.4G     36.1G     19.3G  65% /etc/resolv.conf</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Write the hostname of the current pod to the persistent volume path:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>/ # echo $(hostname)
-</span><span class='line'>echo-58fd7d9b6-x4rxj
-</span><span class='line'>/ # echo $(hostname) &gt; /data/hostname.txt
-</span><span class='line'>/ # exit</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Exit the pod and read the content from the host (workstation/laptop):</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; cat /tmp/k3dvol/hostname.txt
-</span><span class='line'>echo-58fd7d9b6-x4rxj</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Look at the host where the pod is running on:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl get nodes -o wide
-</span><span class='line'>NAME                       STATUS   ROLES    AGE   VERSION        INTERNAL-IP    EXTERNAL-IP   OS-IMAGE   KERNEL-VERSION     CONTAINER-RUNTIME
-</span><span class='line'>k3d-k3d-cluster-server     Ready    master   13m   v1.17.2+k3s1   192.168.32.2   &lt;none&gt;        Unknown    4.9.184-linuxkit   containerd://1.3.3-k3s1
-</span><span class='line'>k3d-k3d-cluster-worker-1   Ready    &lt;none&gt;   13m   v1.17.2+k3s1   192.168.32.4   &lt;none&gt;        Unknown    4.9.184-linuxkit   containerd://1.3.3-k3s1
-</span><span class='line'>k3d-k3d-cluster-worker-0   Ready    &lt;none&gt;   13m   v1.17.2+k3s1   192.168.32.3   &lt;none&gt;        Unknown    4.9.184-linuxkit   containerd://1.3.3-k3s1</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Delete the pod:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl delete pod/echo-58fd7d9b6-x4rxj
-</span><span class='line'>pod "echo-58fd7d9b6-x4rxj" deleted</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Wait until the pod is rescheduled again and verify if the pod is running on a different node:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl get pods -o wide
-</span><span class='line'>NAME                   READY   STATUS    RESTARTS   AGE   IP          NODE                       NOMINATED NODE   READINESS GATES
-</span><span class='line'>echo-58fd7d9b6-fkvbs   1/1     Running   0          35s   10.42.2.9   k3d-k3d-cluster-worker-1   &lt;none&gt;           &lt;none&gt;</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Exec into the new pod:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>&gt; kubectl exec -it echo-58fd7d9b6-fkvbs sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>View if the data is persisted:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>/ # hostname
-</span><span class='line'>echo-58fd7d9b6-fkvbs
-</span><span class='line'>
-</span><span class='line'>/ # cat /data/hostname.txt
-</span><span class='line'>echo-58fd7d9b6-x4rxj</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/9">&larr; Older</a>
@@ -3363,6 +3487,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/07/31/docker-multistage-builds-for-hugo/">Docker Multistage Builds for Hugo</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/07/14/remote-builds-with-docker-contexts/">Remote Builds With Docker Contexts</a>
       </li>
     
@@ -3376,10 +3504,6 @@
     
       <li class="post">
         <a href="/blog/2022/06/15/how-to-persist-iptables-rules-after-reboots/">How to Persist Iptables Rules After Reboots</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/06/14/how-to-read-and-write-json-data-with-python/">How to Read and Write Json Data With Python</a>
       </li>
     
   </ul>

@@ -154,7 +154,7 @@ docker run -it -p 80:80 ruanbekker/hashnode-docs-blogpost:latest
 
 When you don't have port 80 already listening prior to running the previous command, when you head to [http://localhost](http://localhost) (if you are running this locally), you should see our documentation site up and running:
 
-![blog-ruanbekker-multistage-builds](https://user-images.githubusercontent.com/567298/182013196-aff6e76f-2cf3-4ec2-bfcc-3e977915a6aa.png)
+![image](https://user-images.githubusercontent.com/567298/182018773-ecf3cd6c-ce2c-487a-a1bf-4a84fe1b6a09.png)
 
 ## Thank You
 

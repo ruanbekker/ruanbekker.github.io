@@ -3,12 +3,10 @@ layout: post
 title: "Unmask a Masked Service in Systemd"
 date: 2017-12-09 02:02:21 -0500
 comments: true
-categories: ["systemd", "linux"] 
+categories: ["systemd", "linux", "ubuntu", "sysadmin"] 
 ---
 
 I was busy setting up a `docker-volume-netshare` plugin to use NFS Volumes for Docker, which relies on the `nfs-utils/nfs-common` package, and when trying to start the service, I found that the `nfs-common` service is `masked`:
-
-<script async type="text/javascript" src="//cdn.carbonads.com/carbon.js?serve=CEAIP2JL&placement=blogruanbekkercom" id="_carbonads_js"></script>
 
 ```bash
 $ sudo systemctl start docker-volume-netshare.service

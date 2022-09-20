@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="As up untill today, there&rsquo;s currently no VPC Support for Amazon&rsquo;s Elasticsearch Service. So for scenarios where you would like to allow &hellip;">
+  <meta name="description" content="We will setup a Postfix Relay Servcer which our clients will use to send out mail, the Postfix server will use Amazon&rsquo;s SES Service to send out &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,106 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2017/09/16/setup-a-postfix-relay-server-that-uses-ses-to-relay-outbound-mail/">Setup a Postfix Relay Server That Uses SES to Relay Outbound Mail</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-09-16T18:01:49-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>16</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>6:01 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>We will setup a Postfix Relay Servcer which our clients will use to send out mail, the Postfix server will use Amazon&rsquo;s SES Service to send out mail, which we will configure as a relay host in Postfix.</p>
+
+<h2>Setup EC2 Instance to Relay through AWS SES:</h2>
+
+<p>Install Postfix and SASL:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>apt install postfix mailutils libsasl2-2 sasl2-bin libsasl2-modules ca-certificates -y
+</span><span class='line'><span class="nv">$ </span>update-ca-certificates
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Section we need to configure in <code>/etc/postfix/main.cf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">relayhost</span> <span class="o">=</span> <span class="o">[</span>email-smtp.eu-west-1.amazonaws.com<span class="o">]</span>:587
+</span><span class='line'><span class="nv">smtp_use_tls</span> <span class="o">=</span> yes
+</span><span class='line'><span class="nv">smtp_sasl_auth_enable</span> <span class="o">=</span> yes
+</span><span class='line'><span class="nv">smtp_sasl_security_options</span> <span class="o">=</span>
+</span><span class='line'><span class="nv">smtp_sasl_password_maps</span> <span class="o">=</span> <span class="nb">hash</span>:/etc/postfix/sasl_passwd
+</span><span class='line'><span class="nv">smtp_tls_CAfile</span> <span class="o">=</span> /etc/ssl/certs/ca-certificates.crt
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Populate SASL Passwd:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /etc/postfix/sasl_passwd
+</span><span class='line'><span class="o">[</span>email-smtp.eu-west-1.amazonaws.com<span class="o">]</span>:587    AKIAABCDEFGHIJKLM:SomeRandomSecretString
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Postmap the changes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>postmap /etc/postfix/sasl_passwd
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart Postfix:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>sudo /etc/init.d/postfix restart
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test the Mail Flow:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">echo test</span> <span class="p">|</span> mail -r ruan@ruanbekker.com -s <span class="s1">&#39;ses test mail &#39;</span> ruan@ruanbekker.com <span class="o">&amp;&amp;</span> tail -f /var/log/mail.log
+</span><span class='line'>
+</span><span class='line'>Jul <span class="m">18</span> 11:29:06 ip-10-1-4-250 postfix/smtp<span class="o">[</span>5056<span class="o">]</span>: 9FDCB469AA: <span class="nv">to</span><span class="o">=</span>&lt;ruan@ruanbekker.com&gt;, <span class="nv">relay</span><span class="o">=</span>email-smtp.eu-west-1.amazonaws.com<span class="o">[</span>52.10.20.30<span class="o">]</span>:587, <span class="nv">delay</span><span class="o">=</span>0.29, <span class="nv">delays</span><span class="o">=</span>0.02/0.03/0.12/0.13, <span class="nv">dsn</span><span class="o">=</span>2.0.0, <span class="nv">status</span><span class="o">=</span>sent <span class="o">(</span><span class="m">250</span> Ok 0234567d557572f2-76f56252-0a00-4d94-af87-38bd213914d2-000000<span class="o">)</span>
+</span><span class='line'>Jul <span class="m">18</span> 11:29:06 ip-10-1-4-250 postfix/qmgr<span class="o">[</span>4392<span class="o">]</span>: 9FDCB469AA: removed
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If your output looks more or less like the snippet from above, your mail should be working fine.</p>
+
+<center>
+<script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
+</center>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1819,164 +1919,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2017/09/08/run-your-self-hosted-s3-service-with-minio-on-docker-swarm/">Run Your Self-Hosted S3 Service With Minio on Docker Swarm</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-09-08T15:29:29-04:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>8</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>3:29 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>Minio is a distributed object storage server built for cloud applications, which is similar to Amazon&rsquo;s S3 Service.</p>
-
-<p>Today, we will create the server on docker swarm, as I don&rsquo;t currently have a external data store like GlusterFS / NFS etc, I will host the data on the manager node, and set a constraint for the service so that the service can only run on the manager node.</p>
-
-<h2>Prepare the Data Directory:</h2>
-
-<p>I will only rely on the manager node for my data, so on my manager node:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /mnt/data</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the Service:</h2>
-
-<p>If you have a Replicated Gluster Volume or NFS which is mounted throughout your docker swarm, you can create the directory path for it, and the update your <code>--mount</code> source path to your external data store. In my case, I will just point it to my manager node&rsquo;s <code>/mnt/data</code> path as I have setup the service to only run on the one manager node in my swarm:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker service create \
-</span><span class='line'>--name minio \
-</span><span class='line'>--network appnet \
-</span><span class='line'>--replicas 1 \
-</span><span class='line'>--publish 9000:9000 \
-</span><span class='line'>--constraint 'node.role==manager' \
-</span><span class='line'>-e "MINIO_ACCESS_KEY=AKIAASDKJASDL" \
-</span><span class='line'>-e "MINIO_SECRET_KEY=AKIAASDKJASDL" \
-</span><span class='line'>--mount "type=bind,source=/mnt/data,target=/data" \
-</span><span class='line'>minio/minio server /data</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Install the AWS CLI Tools:</h2>
-
-<p>We will use the awscli tools to interact with our Minio Server:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ pip install awscli</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Configure the Client:</h2>
-
-<p>Configure the awscli client with the access details that we passed in our docker service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws configure --profile minio
-</span><span class='line'>AWS Access Key ID []: AKIAASDKJASDL
-</span><span class='line'>AWS Secret Access Key []: ASLDKJASDLKJASDLKJ
-</span><span class='line'>Default region name []: us-west-1
-</span><span class='line'>Default output format []: json</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Create the Bucket:</h2>
-
-<p>Create a New Bucket, in this case <code>news3bucket</code></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>aws --profile minio --endpoint-url http://MINIO-IP:9000 s3 mb s3://news3bucket
-</span><span class='line'>make_bucket: news3bucket</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>List Buckets:</h2>
-
-<p>List our endpoint, to see the buckets on our server:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile minio --endpoint-url http://MINIO-IP:9000 s3 ls /
-</span><span class='line'>2017-09-08 15:01:40 news3bucket</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Upload an Object to your Bucket:</h2>
-
-<p>We will upload an image <code>awsddb-1.png</code> to our new bucket:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile minio --endpoint-url http://MINIO-IP:9000 s3 cp awsddb-1.png s3://news3bucket/
-</span><span class='line'>upload: ./awsddb-1.png to s3://news3bucket/awsddb-1.png</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>List Bucket:</h2>
-
-<p>List your bucket, to see the uploaded object:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile minio --endpoint-url http://MINIO-IP:9000 s3 ls s3://news3bucket
-</span><span class='line'>2017-09-08 15:03:11      19851 awsddb-1.png</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Download Object:</h2>
-
-<p>Download the image from your Bucket, and set the local file to <code>file.png</code>:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ aws --profile minio --endpoint-url http://MINIO-IP:9000 s3 cp s3://news3bucket/awsddb-1.png file.png
-</span><span class='line'>download: s3://news3bucket/awsddb-1.png to ./file.png</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Web Access:</h2>
-
-<p>You can also access Minio&rsquo;s Web Interface on the port that you have exposed, in my case: <code>http://MINIO-IP:9000/minio/</code></p>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.minio.io/">https://www.minio.io/</a></li>
-<li><a href="https://docs.minio.io/docs/minio-docker-quickstart-guide">https://docs.minio.io/docs/minio-docker-quickstart-guide</a></li>
-<li><a href="https://github.com/minio/minio/blob/master/README.md">https://github.com/minio/minio/blob/master/README.md</a></li>
-<li><a href="https://github.com/arschles/minio-howto/blob/master/aws-cli-with-minio-server.md">https://github.com/arschles/minio-howto/blob/master/aws-cli-with-minio-server.md</a></li>
-</ul>
-
-
-<center>
-    <script type='text/javascript' src='https://ko-fi.com/widgets/widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Buy Me a Coffee', '#46b798', 'A6423ZIQ');kofiwidget2.draw();</script> 
-</center>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/34">&larr; Older</a>
@@ -2050,6 +1992,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2022/09/20/kind-for-local-kubernetes-clusters/">KinD for Local Kubernetes Clusters</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/08/28/ansible-playbook-for-your-macbook-homebrew-packages/">Ansible Playbook for Your Macbook Homebrew Packages</a>
       </li>
     
@@ -2063,10 +2009,6 @@
     
       <li class="post">
         <a href="/blog/2022/06/29/create-a-raid5-array-with-mdadm-on-linux/">Create a RAID5 Array With Mdadm on Linux</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/06/23/install-a-specific-python-version-on-ubuntu/">Install a Specific Python Version on Ubuntu</a>
       </li>
     
   </ul>

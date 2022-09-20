@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Kubernetes | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/kubernetes/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-08-28T19:37:25-04:00</updated>
+  <updated>2022-09-20T03:07:55-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,242 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[KinD for Local Kubernetes Clusters]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/"/>
+    <updated>2022-09-20T02:18:16-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/191189852-44f2fd39-7ad7-4d0a-a36b-c2889a838649.png" alt="kubernetes-kind" /></p>
+
+<p>In this tutorial we will demonstrate how to use KinD (Kubernetes in Docker) to provision local kubernetes clusters for local development.</p>
+
+<h2>About</h2>
+
+<p>KinD uses container images to run as &ldquo;nodes&rdquo;, so spinning up and tearing down clusters becomes really easy or running multiple or different versions, is as easy as pointing to a different container image.</p>
+
+<p>Configuration such as node count, ports, volumes, image versions can either be controlled via the command line or via configuration, more information on that can be found on their documentation:</p>
+
+<ul>
+<li><a href="https://kind.sigs.k8s.io/docs/user/quick-start/">https://kind.sigs.k8s.io/docs/user/quick-start/</a></li>
+<li><a href="https://kind.sigs.k8s.io/docs/user/configuration/">https://kind.sigs.k8s.io/docs/user/configuration/</a></li>
+</ul>
+
+
+<h2>Installation</h2>
+
+<p>Follow the <a href="https://kind.sigs.k8s.io/docs/user/quick-start/#installing-with-a-package-manager">docs</a> for more information, but for mac:</p>
+
+<pre><code class="bash">brew install kind
+</code></pre>
+
+<p>To verify if kind was installed, you can run:</p>
+
+<pre><code class="bash">kind version
+</code></pre>
+
+<h2>Create a Cluster</h2>
+
+<p>Create the cluster with command line arguments, such as cluster name, the container image:</p>
+
+<pre><code class="bash">kind create cluster --name cluster-1 --image kindest/node:v1.24.0
+</code></pre>
+
+<p>And the output will look something like this:</p>
+
+<pre><code class="bash">Creating cluster "cluster-1" ...
+ ✓ Ensuring node image (kindest/node:v1.24.0) 🖼
+ ✓ Preparing nodes 📦
+ ✓ Writing configuration 📜
+ ✓ Starting control-plane 🕹️
+ ✓ Installing CNI 🔌
+ ✓ Installing StorageClass 💾
+Set kubectl context to "kind-cluster-1"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-cluster-1
+
+Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+</code></pre>
+
+<p>I <strong>highly recommend</strong> installing <a href="https://github.com/ahmetb/kubectx">kubectx</a>, which makes it easy to switch between kubernetes contexts.</p>
+
+<h2>Create a Cluster with Config</h2>
+
+<p>If you would like to define your cluster configuration as config, you can create a file <code>default-config.yaml</code> with the following as a 2 node cluster, and specifying version 1.24.0:</p>
+
+<pre><code class="yaml">---
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e
+- role: worker
+  image: kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e
+</code></pre>
+
+<p>Then create the cluster and point the config:</p>
+
+<pre><code class="bash">kind create cluster --name kind-cluster --config default-config.yaml
+</code></pre>
+
+<h2>Interact with the Cluster</h2>
+
+<p>View the cluster info:</p>
+
+<pre><code class="bash">kubectl cluster-info --context kind-kind-cluster
+</code></pre>
+
+<p>View cluster contexts:</p>
+
+<pre><code class="bash">kubectl config get-contexts
+</code></pre>
+
+<p>Use context:</p>
+
+<pre><code class="bash">kubectl config use-context kind-kind-cluster
+</code></pre>
+
+<p>View nodes:</p>
+
+<pre><code class="bash">kubectl get nodes -o wide
+
+NAME                         STATUS   ROLES           AGE     VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE       KERNEL-VERSION      CONTAINER-RUNTIME
+kind-cluster-control-plane   Ready    control-plane   2m11s   v1.24.0   172.20.0.5    &lt;none&gt;        Ubuntu 21.10   5.10.104-linuxkit   containerd://1.6.4
+kind-cluster-worker          Ready    &lt;none&gt;          108s    v1.24.0   172.20.0.4    &lt;none&gt;        Ubuntu 21.10   5.10.104-linuxkit   containerd://1.6.4
+</code></pre>
+
+<h2>Deploy Sample Application</h2>
+
+<p>We will create a deployment, a service and port-forward to our service to access our application. You can also specify port configuration to your cluster so that you don&rsquo;t need to port-forward, which you can find in their <a href="https://kind.sigs.k8s.io/docs/user/configuration/#extra-port-mappings">port mappings documentation</a></p>
+
+<p>I will be using the following commands to generate the manifests, but will also add them to this post:</p>
+
+<pre><code class="bash">kubectl create deployment hostname --namespace default --replicas 2 --image ruanbekker/containers:hostname --port 8080 --dry-run=client -o yaml &gt; hostname-deployment.yaml
+kubectl expose deployment hostname --namespace default --port=80 --target-port=8080 --name=hostname-http --dry-run=client -o yaml &gt; hostname-service.yaml
+</code></pre>
+
+<p>The manifest:</p>
+
+<pre><code class="yaml">---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: hostname
+  name: hostname
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hostname
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: hostname
+    spec:
+      containers:
+      - image: ruanbekker/containers:hostname
+        name: containers
+        ports:
+        - containerPort: 8080
+        resources: {}
+status: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  labels:
+    app: hostname
+  name: hostname-http
+  namespace: default
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: hostname
+status:
+  loadBalancer: {}
+</code></pre>
+
+<p>Then apply them with:</p>
+
+<pre><code class="bash">kubectl apply -f &lt;name-of-manifest&gt;.yaml
+</code></pre>
+
+<p>Or if you used kubectl to create them:</p>
+
+<pre><code class="bash">kubectl apply -f hostname-deployment.yaml
+kubectl apply -f hostname-service.yaml
+</code></pre>
+
+<p>You can then view your resources with:</p>
+
+<pre><code class="bash">kubectl get deployment,pod,service
+
+NAME                       READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/hostname   2/2     2            2           9m27s
+
+NAME                            READY   STATUS    RESTARTS   AGE
+pod/hostname-7ff58c5644-67vhq   1/1     Running   0          9m27s
+pod/hostname-7ff58c5644-wjjbw   1/1     Running   0          9m27s
+
+NAME                    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+service/hostname-http   ClusterIP   10.96.218.58   &lt;none&gt;        80/TCP    5m48s
+service/kubernetes      ClusterIP   10.96.0.1      &lt;none&gt;        443/TCP   24m
+</code></pre>
+
+<p>Port forward to your service:</p>
+
+<pre><code class="bash">kubectl port-forward svc/hostname-http 8080:80
+</code></pre>
+
+<p>Then access your application:</p>
+
+<pre><code class="bash">curl http://localhost:8080/
+
+Hostname: hostname-7ff58c5644-wjjbw
+</code></pre>
+
+<h2>Delete Kind Cluster</h2>
+
+<p>View the clusters:</p>
+
+<pre><code class="bash">kind get clusters
+</code></pre>
+
+<p>Delete a cluster:</p>
+
+<pre><code class="bash">kind delete cluster --name kind-cluster
+</code></pre>
+
+<h2>Extras</h2>
+
+<p>I highly recommend using <code>kubectx</code> to switch contexts and <code>kubens</code> to set the default namespace, and aliases:</p>
+
+<pre><code class="bash">alias k=kubectl
+alias kx=kubectx
+alias kns=kubens
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Persistent Volumes With K3d Kubernetes]]></title>
@@ -593,176 +829,6 @@ Hostname: k3d-demo-f76d866b9-qxltk
 </code></pre>
 
 <h2>Thank You</h2>
-
-<p>Thank you for reading. If you like my content, feel free to visit me at <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
-
-<p><a href="https://twitter.com/ruanbekker"><img src="https://user-images.githubusercontent.com/567298/71188576-e2410f80-2289-11ea-8667-08f0c14ab7b5.png" alt="" /></a></p>
-
-<p><a href="https://ko-fi.com/A6423ZIQ"><img src="https://www.ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" /></a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run Kubernetes (K3s) as a Service Container on Drone CI]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/02/04/run-kubernetes-k3s-as-a-service-container-on-drone-ci/"/>
-    <updated>2020-02-04T22:37:06+02:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/02/04/run-kubernetes-k3s-as-a-service-container-on-drone-ci</id>
-    <content type="html"><![CDATA[<p><a href="https://docs.drone.io/pipeline/docker/syntax/services/">Drone services</a> allow you to run a service container and will be available for the duration of your build, which is great if you want a ephemeral service to test your applications against.</p>
-
-<p>Today we will experiment with services on <a href="https://github.com/drone/drone">drone</a>  and will deploy a <a href="https://github.com/rancher/k3s">k3s</a> (a kubernetes distribution built by rancher) cluster as a drone service and interact with our cluster using kubectl.</p>
-
-<p>I will be using multiple pipelines, where we will first deploy our &ldquo;dev cluster&rdquo;, when it&rsquo;s up, we will use kubectl to interact with the cluster, once that is done, we will deploy our &ldquo;staging cluster&rdquo; and do the same.</p>
-
-<p>This is very basic and we are not doing anything special, but this is a starting point and you can do pretty much whatever you want.</p>
-
-<h2>What is Drone</h2>
-
-<p>If you are not aware of Drone, Drone is a container-native continious deliver platform built on Go and you can check them out <a href="https://github.com/drone/drone">here: github.com/drone</a></p>
-
-<h2>Setup Gitea and Drone</h2>
-
-<p>If you don&rsquo;t have the stack setup, have a look at <a href="https://blog.ruanbekker.com/blog/2020/02/04/setup-gitea-and-drone-on-docker-2020-edition/">this post</a> where I go into detail on how to get that setup.</p>
-
-<h2>Create your Git Repo</h2>
-
-<p>Go ahead and create a git repo, you can name it anything, then it should look something like this:</p>
-
-<p><img width="1171" alt="image" src="https://user-images.githubusercontent.com/567298/73783555-90ead200-479c-11ea-8386-12518fb21b22.png"></p>
-
-<p>Create a drone configuration, <code>.drone.yml</code> my pipeline will look like this:</p>
-
-<pre><code>---
-kind: pipeline
-type: docker
-name: dev
-
-platform:
-  os: linux
-  arch: amd64
-
-steps:
-  - name: wait-for-k3s
-    image: ruanbekker/build-tools
-    commands:
-      - sleep 30
-
-  - name: prepare-k3s-kubeconfig
-    image: alpine
-    volumes:
-      - name: k3s-kubeconfig
-        path: /k3s-kubeconfig
-    detach: false
-    commands:
-      - sed -i -e "s/127.0.0.1/k3s/g" /k3s-kubeconfig/kubeconfig.yaml
-
-  - name: test-kubernetes
-    image: ruanbekker/kubectl
-    volumes:
-      - name: k3s-kubeconfig
-        path: /tmp
-    environment:
-      KUBECONFIG: /tmp/kubeconfig.yaml
-    commands:
-      - kubectl get nodes -o wide
-
-services:
-  - name: k3s
-    image: rancher/k3s:v0.9.1
-    privileged: true
-    command:
-      - server
-    environment:
-      K3S_KUBECONFIG_OUTPUT: /k3s-kubeconfig/kubeconfig.yaml
-      K3S_KUBECONFIG_MODE: 777
-    volumes:
-      - name: k3s-kubeconfig
-        path: /k3s-kubeconfig
-    ports:
-      - 6443
-
-volumes:
-- name: k3s-kubeconfig
-  temp: {}
-
----
-kind: pipeline
-type: docker
-name: staging
-
-platform:
-  os: linux
-  arch: amd64
-
-steps:
-  - name: wait-for-k3s
-    image: ruanbekker/build-tools
-    commands:
-      - sleep 30
-
-  - name: prepare-k3s-kubeconfig
-    image: alpine
-    volumes:
-      - name: k3s-kubeconfig
-        path: /k3s-kubeconfig
-    detach: false
-    commands:
-      - sed -i -e "s/127.0.0.1/k3s/g" /k3s-kubeconfig/kubeconfig.yaml
-
-  - name: test-kubernetes
-    image: ruanbekker/kubectl
-    volumes:
-      - name: k3s-kubeconfig
-        path: /tmp
-    environment:
-      KUBECONFIG: /tmp/kubeconfig.yaml
-    commands:
-      - kubectl get nodes -o wide
-
-
-services:
-  - name: k3s
-    image: rancher/k3s:v0.9.1
-    privileged: true
-    command:
-      - server
-    environment:
-      K3S_KUBECONFIG_OUTPUT: /k3s-kubeconfig/kubeconfig.yaml
-      K3S_KUBECONFIG_MODE: 777
-    volumes:
-      - name: k3s-kubeconfig
-        path: /k3s-kubeconfig
-    ports:
-      - 6443
-
-volumes:
-- name: k3s-kubeconfig
-  temp: {}
-
-depends_on:
-- dev
-</code></pre>
-
-<p>In this pipeline you can see that the staging pipeline depends on dev, so dev pipeline will start by creating the k3s service container, once its up I am using a step just to sleep for 30 seconds to allow it to boot.</p>
-
-<p>Then I have defined a volume that will be persistent during the build time, which we will use to dump our kubeconfig file and update the hostname of our kubernetes endpoint. Once that is done our last step will set that file to the environment and use kubectl to interact with kubernetes.</p>
-
-<p>Once our dev pipeline has finished, our staging pipeline will start.</p>
-
-<h2>Activate the Repo in Drone</h2>
-
-<p>Head over to drone on port <code>80</code> and activate the newly created git repo (and make sure that you select &ldquo;Trusted&rdquo;) and you will see the activity feed being empty:</p>
-
-<p><img width="1008" alt="image" src="https://user-images.githubusercontent.com/567298/73784085-80872700-479d-11ea-9005-4cac54ac000d.png"></p>
-
-<p>Commit a dummy file to git and you should see your pipeline being triggered:</p>
-
-<p><img width="1013" alt="image" src="https://user-images.githubusercontent.com/567298/73784286-dd82dd00-479d-11ea-93f4-6363da53c1c1.png"></p>
-
-<p>Once your pipeline has finished and everything succeeded, you should see the output of your nodes in your kubernetes service container:</p>
-
-<p><img width="1068" alt="image" src="https://user-images.githubusercontent.com/567298/73784435-220e7880-479e-11ea-8f9d-a9856632302d.png"></p>
-
-<p>As I mentioned earlier, we are not doing anything special but service containers allows us to do some awesome things.</p>
 
 <p>Thank you for reading. If you like my content, feel free to visit me at <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
 

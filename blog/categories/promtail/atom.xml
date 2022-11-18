@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Promtail | Ruan Bekker's Blog]]></title>
+  <link href="https://blog.ruanbekker.com/blog/categories/promtail/atom.xml" rel="self"/>
+  <link href="https://blog.ruanbekker.com/"/>
+  <updated>2022-11-18T00:58:37-05:00</updated>
+  <id>https://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Logging With Docker Promtail and Grafana Loki]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/"/>
+    <updated>2022-11-18T00:42:49-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png" alt="grafana-loki-promtail" /></p>
+
+<p>In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki.</p>
+
+<h2>About</h2>
+
+<p>We will be using Docker Compose and mount the docker socket to Grafana Promtail so that it is aware of all the docker events and configure it that only containers with docker labels <code>logging=promtail</code> needs to be enabled for logging, which will then scrape those logs and send it to Grafana Loki where we will visualize it in Grafana.</p>
+
+<h2>Promtail</h2>
+
+<p>In our promtail configuration <code>config/promtail.yaml</code>:</p>
+
+<pre><code class="yaml"># https://grafana.com/docs/loki/latest/clients/promtail/configuration/
+# https://docs.docker.com/engine/api/v1.41/#operation/ContainerList
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: flog_scrape 
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["logging=promtail"] 
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'logstream'
+      - source_labels: ['__meta_docker_container_label_logging_jobname']
+        target_label: 'job'
+</code></pre>
+
+<p>You can see we are using the <code>docker_sd_configs</code> provider and filter only docker containers with the docker labels <code>logging=promtail</code> and once we have those logs we relabel our labels to have the container name and we also use docker labels like <code>log_stream</code> and <code>logging_jobname</code> to add labels to our logs.</p>
+
+<h2>Grafana Config</h2>
+
+<p>We would like to auto configure our datasources for Grafana and in <code>config/grafana-datasources.yml</code> we have:</p>
+
+<pre><code class="yaml">apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    version: 1
+    editable: false
+    isDefault: true
+</code></pre>
+
+<h2>Docker Compose</h2>
+
+<p>Then lastly we have our <code>docker-compose.yml</code> that wire up all our containers:</p>
+
+<pre><code class="yaml">version: '3.8'
+
+services:
+  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+    ports:
+      - 8080:80
+    networks:
+      - app
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    volumes:
+      - ./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    networks:
+      - app
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - 3100:3100
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - app
+
+  promtail:
+    image:  grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - ./config/promtail.yaml:/etc/promtail/docker-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/docker-config.yaml
+    depends_on:
+      - loki
+    networks:
+      - app
+
+networks:
+  app:
+    name: app
+</code></pre>
+
+<p>As you can see with our nginx container we define our labels:</p>
+
+<pre><code class="yaml">  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+</code></pre>
+
+<p>Which uses <code>logging: "promtail"</code> to let promtail know this log container&rsquo;s log to be scraped and <code>logging_jobname: "containerlogs"</code> which will assign containerlogs to the job label.</p>
+
+<h2>Start the stack</h2>
+
+<p>If you are following along all this configuration is available in my github repository <a href="https://github.com/ruanbekker/docker-promtail-loki">https://github.com/ruanbekker/docker-promtail-loki</a> .</p>
+
+<p>Once you have everything in place you can start it with:</p>
+
+<pre><code class="bash">docker-compose up -d
+</code></pre>
+
+<p>Access nginx on <a href="http://localhost:8080">http://localhost:8080</a></p>
+
+<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/202505252-3cbc2d03-d1d2-48e6-bea7-5db54233b9a2.png"></p>
+
+<p>Then navigate to grafana on <a href="http://localhost:3000">http://localhost:3000</a> and select explore on the left and select the container:</p>
+
+<p><img width="560" alt="image" src="https://user-images.githubusercontent.com/567298/202504989-e05a08a2-eb2f-41a1-85f4-9a11a8affd7c.png"></p>
+
+<p>And you will see the logs:</p>
+
+<p><img width="1425" alt="image" src="https://user-images.githubusercontent.com/567298/202505099-c47b76cc-3090-4eb9-8459-db659d0aac18.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

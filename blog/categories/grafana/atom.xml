@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Grafana | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/grafana/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-09-20T03:07:55-04:00</updated>
+  <updated>2022-11-18T00:58:37-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,173 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Logging With Docker Promtail and Grafana Loki]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/"/>
+    <updated>2022-11-18T00:42:49-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png" alt="grafana-loki-promtail" /></p>
+
+<p>In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki.</p>
+
+<h2>About</h2>
+
+<p>We will be using Docker Compose and mount the docker socket to Grafana Promtail so that it is aware of all the docker events and configure it that only containers with docker labels <code>logging=promtail</code> needs to be enabled for logging, which will then scrape those logs and send it to Grafana Loki where we will visualize it in Grafana.</p>
+
+<h2>Promtail</h2>
+
+<p>In our promtail configuration <code>config/promtail.yaml</code>:</p>
+
+<pre><code class="yaml"># https://grafana.com/docs/loki/latest/clients/promtail/configuration/
+# https://docs.docker.com/engine/api/v1.41/#operation/ContainerList
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: flog_scrape 
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["logging=promtail"] 
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'logstream'
+      - source_labels: ['__meta_docker_container_label_logging_jobname']
+        target_label: 'job'
+</code></pre>
+
+<p>You can see we are using the <code>docker_sd_configs</code> provider and filter only docker containers with the docker labels <code>logging=promtail</code> and once we have those logs we relabel our labels to have the container name and we also use docker labels like <code>log_stream</code> and <code>logging_jobname</code> to add labels to our logs.</p>
+
+<h2>Grafana Config</h2>
+
+<p>We would like to auto configure our datasources for Grafana and in <code>config/grafana-datasources.yml</code> we have:</p>
+
+<pre><code class="yaml">apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    version: 1
+    editable: false
+    isDefault: true
+</code></pre>
+
+<h2>Docker Compose</h2>
+
+<p>Then lastly we have our <code>docker-compose.yml</code> that wire up all our containers:</p>
+
+<pre><code class="yaml">version: '3.8'
+
+services:
+  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+    ports:
+      - 8080:80
+    networks:
+      - app
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    volumes:
+      - ./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    networks:
+      - app
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - 3100:3100
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - app
+
+  promtail:
+    image:  grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - ./config/promtail.yaml:/etc/promtail/docker-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/docker-config.yaml
+    depends_on:
+      - loki
+    networks:
+      - app
+
+networks:
+  app:
+    name: app
+</code></pre>
+
+<p>As you can see with our nginx container we define our labels:</p>
+
+<pre><code class="yaml">  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+</code></pre>
+
+<p>Which uses <code>logging: "promtail"</code> to let promtail know this log container&rsquo;s log to be scraped and <code>logging_jobname: "containerlogs"</code> which will assign containerlogs to the job label.</p>
+
+<h2>Start the stack</h2>
+
+<p>If you are following along all this configuration is available in my github repository <a href="https://github.com/ruanbekker/docker-promtail-loki">https://github.com/ruanbekker/docker-promtail-loki</a> .</p>
+
+<p>Once you have everything in place you can start it with:</p>
+
+<pre><code class="bash">docker-compose up -d
+</code></pre>
+
+<p>Access nginx on <a href="http://localhost:8080">http://localhost:8080</a></p>
+
+<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/202505252-3cbc2d03-d1d2-48e6-bea7-5db54233b9a2.png"></p>
+
+<p>Then navigate to grafana on <a href="http://localhost:3000">http://localhost:3000</a> and select explore on the left and select the container:</p>
+
+<p><img width="560" alt="image" src="https://user-images.githubusercontent.com/567298/202504989-e05a08a2-eb2f-41a1-85f4-9a11a8affd7c.png"></p>
+
+<p>And you will see the logs:</p>
+
+<p><img width="1425" alt="image" src="https://user-images.githubusercontent.com/567298/202505099-c47b76cc-3090-4eb9-8459-db659d0aac18.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Generate Grafana Loki Log Links From Metric Label Values]]></title>
@@ -972,316 +1139,6 @@ time="2020-10-29T09:03:36Z" level=info msg="POST - /ping/xxxxxxxxxxxxxxxxxxx"
 <li><a href="https://github.com/ruanbekker/cheatsheets/tree/master/loki">https://github.com/ruanbekker/cheatsheets/tree/master/loki</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Getting Started on Logging With Loki Using Docker]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/08/13/getting-started-on-logging-with-loki-using-docker/"/>
-    <updated>2020-08-13T13:39:28+00:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/08/13/getting-started-on-logging-with-loki-using-docker</id>
-    <content type="html"><![CDATA[<p>Logging with Loki is AMAZING!</p>
-
-<p>In the past couple of months i&rsquo;ve been working a lot with logging, but more specifically logging with loki. As most of my metrics reside in prometheus, I use grafana quite extensively and logging was always the one that stood out a bit as I pushed my logs to elasticsearch and consumed them from grafana. Which worked pretty well, but the maintenance and resource costs was a bit too much for what I was looking for.</p>
-
-<p>And then grafana released Loki, which is like prometheus, but for logs. And that was just super, exactly what I was looking for. For my use case, I was looking for something that can be consumed by grafana as a presentation layer, central based so I can push all sorts of logs, and want a easy way to grep for logs and a bonus would be to have a cli tool.</p>
-
-<p>And Loki checked all those boxes!</p>
-
-<div class="tenor-gif-embed" data-postid="7644619" data-share-method="host" data-width="100%" data-aspect-ratio="1.1971153846153846"><a href="https://tenor.com/view/oh-yeah-gif-7644619">Oh Yeah Parks And Recreation GIF</a> from <a href="https://tenor.com/search/ohyeah-gifs">Ohyeah GIFs</a></div>
-
-
-<script type="text/javascript" async src="https://tenor.com/embed.js"></script>
-
-
-<h2>What can you expect from this blog</h2>
-
-<p>In this post will be a getting started guide to Loki, we will provision Loki, Grafana and Nginx using Docker to get our environment up and running, so that we can push our nginx container logs to the loki datasource, and access the logs via grafana.</p>
-
-<p>We will then generate some logs so that we can show a couple of query examples using the log query language (LogQL) and use the LogCLI to access our logs via cli.</p>
-
-<p>In a <a href="">future post</a>, I will demonstrate how to setup Loki for a non-docker deployment.</p>
-
-<h2>Some useful information about Loki</h2>
-
-<p>Let&rsquo;s first talk about Loki compared with Elasticsearch, as they are not the same:</p>
-
-<ol>
-<li>Loki does not index the text of the logs, instead grouping entries into streams and index those with labels</li>
-<li>Things like full text search engines tokenizes your text into k/v pairs and gets written to an inverted index, which over time in my opinion gets complex to maintain, expensive to scale, storage retention, etc.</li>
-<li>Loki is advertised as easy to scale, affordable to operate as it uses DynamoDB for Indexing and S3 for Storage</li>
-<li>When using Loki, you may need to forget what you know and look to see how the problem can be solved differently with parallelization. Loki’s superpower is breaking up queries into small pieces and dispatching them in parallel so that you can query huge amounts of log data in small amounts of time.</li>
-</ol>
-
-
-<p>If we look at the <strong>Loki Log Model</strong>, we can see that the timestamp and the labels are indexed and the content of the logs are not indexed:</p>
-
-<p><img src="https://img.sysadmins.co.za/cpr6n7.png" alt="loki" /></p>
-
-<p>A <strong>log stream</strong> is a stream of log entries with the same exact label set:</p>
-
-<p><img src="https://img.sysadmins.co.za/el6djk.png" alt="loki" /></p>
-
-<p>For the <strong>storage</strong> side, inside each chunk, log entries are sorted by timestamp. Loki only indexes minimum and maximum timestamps of a chunk. Storage options support local storage, AWS S3, Google Cloud Storage and Azure</p>
-
-<p><img src="https://img.sysadmins.co.za/959pjw.png" alt="loki" /></p>
-
-<p>For <strong>chunks and querying</strong>, chunks are filled per stream and they are flushed of a few criterias such as age and size:</p>
-
-<p><img src="https://img.sysadmins.co.za/ekm8cy.png" alt="loki" /></p>
-
-<p>And one of the most important parts are the <strong>labels</strong>, labels define the stream and therefore its very important.</p>
-
-<p>High cardinality is bad for labels, as something like a IP address can reduce your performance a lot, as it will create a stream for every unique IP label.</p>
-
-<p>Static defined labels such as environment, hostnames are good, you can read more up about it <a href="https://grafana.com/blog/2020/04/21/how-labels-in-loki-can-make-log-queries-faster-and-easier/">here</a></p>
-
-<p>Here is a info graphic on how one log line can be split up into 36 streams:</p>
-
-<p><img src="https://img.sysadmins.co.za/g119oq.png" alt="" /></p>
-
-<p>So with that being said, <strong>good labels</strong> will be considered as cluster, job, namespace, environment, etc where as <strong>bad labels</strong> will be things such as userid, ip address, url path, etc</p>
-
-<h2>Selecting logstreams with Loki</h2>
-
-<p>Selecting logstreams, is done by using <strong>label matchers</strong> and <strong>filter expressions</strong>, such as this example:</p>
-
-<pre><code>{job="dockerlogs", environment="development"} |= "POST" |~ "196.35.64.+"
-</code></pre>
-
-<p>Label Matchers and Filter Expressions support:</p>
-
-<ul>
-<li><code>=</code> Contains string</li>
-<li><code>!=</code> Does not contain string</li>
-<li><code>=~</code> Matches regular expression</li>
-<li><code>!~</code> Does not match regular expression</li>
-</ul>
-
-
-<h2>Supported Clients</h2>
-
-<p>At the moment of writing, loki supports the following log clients:</p>
-
-<ul>
-<li>Promtail (tails logs and ships to Loki)</li>
-<li>Docker Driver</li>
-<li>Fluentd</li>
-<li>Fluent Bit</li>
-<li>Logstash</li>
-</ul>
-
-
-<p>We will be going into more detail on using promtail in a <a href="">future post</a>, but you can read more up about it <a href="https://github.com/grafana/loki/tree/master/cmd">here</a></p>
-
-<h2>Loki in Action</h2>
-
-<p>Time to get to the fun part, clone my <a href="https://github.com/ruanbekker/loki-docker-nginx-example">github repo</a>:</p>
-
-<pre><code>$ git clone https://github.com/ruanbekker/loki-docker-nginx-example
-$ cd loki-docker-nginx-example
-</code></pre>
-
-<p>You can inspect the docker-compose.yml:</p>
-
-<pre><code>$ cat docker-compose.yml
-version: "3.4"
-
-services:
-  my-nginx-service:
-    image: nginx
-    container_name: my-nginx-service
-    ports:
-      - 8000:80
-    environment:
-      - FOO=bar
-    logging:
-      driver: loki
-      options:
-        loki-url: http://localhost:3100/loki/api/v1/push
-        loki-external-labels: job=dockerlogs,owner=ruan,environment=development
-
-  grafana:
-    image: grafana/grafana:7.1.1
-    volumes:
-    - ./config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
-    ports:
-    - "3000:3000"
-
-  loki:
-   image: grafana/loki:v1.3.0
-   volumes:
-     - ./config/loki.yaml:/etc/config/loki.yaml
-   entrypoint:
-     - /usr/bin/loki
-     - -config.file=/etc/config/loki.yaml
-   ports:
-     - "3100:3100"
-</code></pre>
-
-<p>As you can see loki will be the datasource where we will be pushing our logs to from our nginx container and we are defining our logging section where it should find loki and we are also setting labels to that log stream using <code>loki-external-labels</code>. Then we are using grafana to auto configure the loki datasource from the <code>./config/datasource.yml</code> section so that we can visualize our logs.</p>
-
-<p>If you don&rsquo;t want to define the logging section per container, you can always set the defaults using the <code>/etc/docker/daemon.json</code> by following <a href="https://grafana.com/docs/loki/latest/clients/docker-driver/configuration/#change-the-default-logging-driver">this guide</a></p>
-
-<p>Let&rsquo;s boot up our stack:</p>
-
-<pre><code>$ docker-compose up
-</code></pre>
-
-<p>After everything is up, you should be able to access nginx by visiting: <code>http://nginx.localdns.xyz:8000/</code>, after you received a response, visit Grafana on <code>http://grafana.localdns.xyz:3000</code> using the username and password: <code>admin/admin</code>.</p>
-
-<p>If you head over to datasources, you should see the loki datasource which was provisioned for you:</p>
-
-<p><img src="https://img.sysadmins.co.za/tyn0ny.png" alt="loki-grafana" /></p>
-
-<p>When you head to the left on explore and you select the loki datasource on <code>http://grafana.localdns.xyz:3000/explore</code> you should see the following:</p>
-
-<p><img src="https://img.sysadmins.co.za/5kp07m.png" alt="loki-grafana" /></p>
-
-<p>You will see that grafana discovers logstreams with the label <code>job</code> as you can see that our <code>job="dockerlogs"</code> can be seen there. We can either click on it, select the log labels from the left and browse the label we want to select or manually enter the query.</p>
-
-<p>I will be using the query manually:</p>
-
-<pre><code>{job="dockerlogs"}
-</code></pre>
-
-<p>So now we will get all the logs that has that label associated and as you can see, we see our request that we made:</p>
-
-<p><img src="https://img.sysadmins.co.za/gra0oe.png" alt="nginx-grafana-loki" /></p>
-
-<p>We can see one error due to the favicon.ico that it could not find, but let&rsquo;s first inspect our first log line:</p>
-
-<p><img src="https://img.sysadmins.co.za/6dbuqn.png" alt="loki" /></p>
-
-<p>Here we can see the labels assigned to that log event, which we can include in our query, like if we had multiple services and different environments, we can use a query like the following to only see logs for a specific service and environment:</p>
-
-<pre><code>{job="dockerlogs", environment="development", compose_service="my-nginx-service"}
-</code></pre>
-
-<p>In the example above we used the selectors to select the logs we want to see, now we can use our filter expressions, to &ldquo;grep&rdquo; our logs.</p>
-
-<p>Let&rsquo;s say we want to focus only on one service, and we want to filter for any logs with GET requests, so first we select to service then apply the filter expression:</p>
-
-<pre><code>{compose_service="my-nginx-service"} |= "GET"
-</code></pre>
-
-<p><img src="https://img.sysadmins.co.za/vv609g.png" alt="loki-logs" /></p>
-
-<p>As you can see we can see the ones we were looking for, we can also chain them, so we want to se GET&rsquo;s and errors:</p>
-
-<pre><code>{compose_service="my-nginx-service"} |= "GET" |= "error"
-</code></pre>
-
-<p>And lets say for some reason we only want to see the logs that comes from a 192.168.32 subnet:</p>
-
-<pre><code>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32."
-</code></pre>
-
-<p>But we dont want to see requests from &ldquo;nginx.localdns.xyz&rdquo;:</p>
-
-<pre><code>{compose_service="my-nginx-service"} |= "GET" |= "error" |~ "192.168.32." != "nginx.localdns.xyz"
-</code></pre>
-
-<p>Make two extra get requests to &ldquo;foo.localdns.xyz:8000&rdquo; and &ldquo;bar.localdns.xyz:8000&rdquo; and then we change the query to say that we only want to see errors and hostnames coming from the 2 requests that we made:</p>
-
-<pre><code>{compose_service="my-nginx-service"} |= "error" |~ "(foo|bar).localdns.xyz"
-</code></pre>
-
-<p>If we expand one of the log lines, we can do a ad-hoc analysis to see the percentage of logs by source for example:</p>
-
-<p><img src="https://img.sysadmins.co.za/9ctz6d.png" alt="loki-logs" /></p>
-
-<h2>LogCLI</h2>
-
-<p>If you prefer the cli to query logs, logcli is the command line client for loki, allows you to query logs from your terminal and has clients for linux, mac and windows.</p>
-
-<p>Check the releases for the latest version:</p>
-
-<ul>
-<li><a href="https://github.com/grafana/loki/releases">https://github.com/grafana/loki/releases</a></li>
-</ul>
-
-
-<pre><code>$ wget https://github.com/grafana/loki/releases/download/v1.5.0/logcli-darwin-amd64.zip
-$ unzip logcli-darwin-amd64.zip
-$ mv logcli-darwin-amd64 /usr/local/bin/logcli
-</code></pre>
-
-<p>Set your environment details, in our case we dont have a username and password for loki:</p>
-
-<pre><code>$ #export LOKI_USERNAME=${MYUSER}
-$ #export LOKI_PASSWORD=${MYPASS}
-$ export LOKI_ADDR=http://localhost:3001
-</code></pre>
-
-<p>We can view all our labels, let’s view all the job labels:</p>
-
-<pre><code>$ logcli labels job
-http://localhost:3001/loki/api/v1/label/job/values
-dockerlogs
-</code></pre>
-
-<p>Let’s look at family apps nginx logs:</p>
-
-<pre><code>$ logcli query '{job="dockerlogs"}'
-http://localhost:3001/loki/api/v1/query_range?direction=BACKWARD&amp;end=1587727924005496000&amp;limit=30&amp;query=%7Bjob%3D%22dockerlogs%22%2C&amp;start=1587724324005496000
-Common labels: {environment="development", owner="ruan", compose_service="my-nginx-service", job="dockerlogs", host="docker-desktop", compose_project="loki-nginx-docker"}
-2020-08-13 17:08:40 192.168.32.1 - - [13/Aug/2020:15:08:40 +0000] "GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:79.0) Gecko/20100101 Firefox/79.0" "-"
-</code></pre>
-
-<p>We can also pipe that output to grep, awk, etc:</p>
-
-<pre><code>$ logcli query '{job="dockerlogs"}' | grep GREP | awk -F 'X' '{print  $1}'
-</code></pre>
-
-<p>Supported arguments:</p>
-
-<pre><code>$ logcli query --help
-usage: logcli query [&lt;flags&gt;] &lt;query&gt;
-
-
-Run a LogQL query.
-
-
-Flags:
-      --help             Show context-sensitive help (also try --help-long and --help-man).
-      --version          Show application version.
-  -q, --quiet            suppress everything but log lines
-      --stats            show query statistics
-  -o, --output=default   specify output mode [default, raw, jsonl]
-  -z, --timezone=Local   Specify the timezone to use when formatting output timestamps [Local, UTC]
-      --addr="http://localhost:3100"
-                         Server address. Can also be set using LOKI_ADDR env var.
-      --username=""      Username for HTTP basic auth. Can also be set using LOKI_USERNAME env var.
-      --password=""      Password for HTTP basic auth. Can also be set using LOKI_PASSWORD env var.
-      --ca-cert=""       Path to the server Certificate Authority. Can also be set using LOKI_CA_CERT_PATH env var.
-      --tls-skip-verify  Server certificate TLS skip verify.
-      --cert=""          Path to the client certificate. Can also be set using LOKI_CLIENT_CERT_PATH env var.
-      --key=""           Path to the client certificate key. Can also be set using LOKI_CLIENT_KEY_PATH env var.
-      --org-id=ORG-ID    org ID header to be substituted for auth
-      --limit=30         Limit on number of entries to print.
-      --since=1h         Lookback window.
-      --from=FROM        Start looking for logs at this absolute time (inclusive)
-      --to=TO            Stop looking for logs at this absolute time (exclusive)
-      --step=STEP        Query resolution step width
-      --forward          Scan forwards through logs.
-      --no-labels        Do not print any labels
-      --exclude-label=EXCLUDE-LABEL ...
-                         Exclude labels given the provided key during output.
-      --include-label=INCLUDE-LABEL ...
-                         Include labels given the provided key during output.
-      --labels-length=0  Set a fixed padding to labels
-  -t, --tail             Tail the logs
-      --delay-for=0      Delay in tailing by number of seconds to accumulate logs for re-ordering
-
-
-Args:
-  &lt;query&gt;  eg '{foo="bar",baz=~".*blip"} |~ ".*error.*"'
-</code></pre>
-
-<h2>Thank you</h2>
-
-<p>I hope this was useful</p>
 ]]></content>
   </entry>
   

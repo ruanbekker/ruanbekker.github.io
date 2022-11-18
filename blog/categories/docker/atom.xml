@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Docker | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/docker/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-09-20T03:07:55-04:00</updated>
+  <updated>2022-11-18T00:58:37-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,173 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Logging With Docker Promtail and Grafana Loki]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/"/>
+    <updated>2022-11-18T00:42:49-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png" alt="grafana-loki-promtail" /></p>
+
+<p>In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki.</p>
+
+<h2>About</h2>
+
+<p>We will be using Docker Compose and mount the docker socket to Grafana Promtail so that it is aware of all the docker events and configure it that only containers with docker labels <code>logging=promtail</code> needs to be enabled for logging, which will then scrape those logs and send it to Grafana Loki where we will visualize it in Grafana.</p>
+
+<h2>Promtail</h2>
+
+<p>In our promtail configuration <code>config/promtail.yaml</code>:</p>
+
+<pre><code class="yaml"># https://grafana.com/docs/loki/latest/clients/promtail/configuration/
+# https://docs.docker.com/engine/api/v1.41/#operation/ContainerList
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: flog_scrape 
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["logging=promtail"] 
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'logstream'
+      - source_labels: ['__meta_docker_container_label_logging_jobname']
+        target_label: 'job'
+</code></pre>
+
+<p>You can see we are using the <code>docker_sd_configs</code> provider and filter only docker containers with the docker labels <code>logging=promtail</code> and once we have those logs we relabel our labels to have the container name and we also use docker labels like <code>log_stream</code> and <code>logging_jobname</code> to add labels to our logs.</p>
+
+<h2>Grafana Config</h2>
+
+<p>We would like to auto configure our datasources for Grafana and in <code>config/grafana-datasources.yml</code> we have:</p>
+
+<pre><code class="yaml">apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    version: 1
+    editable: false
+    isDefault: true
+</code></pre>
+
+<h2>Docker Compose</h2>
+
+<p>Then lastly we have our <code>docker-compose.yml</code> that wire up all our containers:</p>
+
+<pre><code class="yaml">version: '3.8'
+
+services:
+  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+    ports:
+      - 8080:80
+    networks:
+      - app
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    volumes:
+      - ./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    networks:
+      - app
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - 3100:3100
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - app
+
+  promtail:
+    image:  grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - ./config/promtail.yaml:/etc/promtail/docker-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/docker-config.yaml
+    depends_on:
+      - loki
+    networks:
+      - app
+
+networks:
+  app:
+    name: app
+</code></pre>
+
+<p>As you can see with our nginx container we define our labels:</p>
+
+<pre><code class="yaml">  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+</code></pre>
+
+<p>Which uses <code>logging: "promtail"</code> to let promtail know this log container&rsquo;s log to be scraped and <code>logging_jobname: "containerlogs"</code> which will assign containerlogs to the job label.</p>
+
+<h2>Start the stack</h2>
+
+<p>If you are following along all this configuration is available in my github repository <a href="https://github.com/ruanbekker/docker-promtail-loki">https://github.com/ruanbekker/docker-promtail-loki</a> .</p>
+
+<p>Once you have everything in place you can start it with:</p>
+
+<pre><code class="bash">docker-compose up -d
+</code></pre>
+
+<p>Access nginx on <a href="http://localhost:8080">http://localhost:8080</a></p>
+
+<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/202505252-3cbc2d03-d1d2-48e6-bea7-5db54233b9a2.png"></p>
+
+<p>Then navigate to grafana on <a href="http://localhost:3000">http://localhost:3000</a> and select explore on the left and select the container:</p>
+
+<p><img width="560" alt="image" src="https://user-images.githubusercontent.com/567298/202504989-e05a08a2-eb2f-41a1-85f4-9a11a8affd7c.png"></p>
+
+<p>And you will see the logs:</p>
+
+<p><img width="1425" alt="image" src="https://user-images.githubusercontent.com/567298/202505099-c47b76cc-3090-4eb9-8459-db659d0aac18.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[KinD for Local Kubernetes Clusters]]></title>
@@ -665,206 +832,6 @@ networks:
 <h2>Thank You</h2>
 
 <p>Thanks for reading, feel free to check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Prometheus Relabel Config Examples]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/05/30/prometheus-relabel-config-examples/"/>
-    <updated>2022-05-30T03:01:01-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/05/30/prometheus-relabel-config-examples</id>
-    <content type="html"><![CDATA[<p>This is a quick demonstration on how to use prometheus relabel configs, when you have scenarios for when example, you want to use a part of your hostname and assign it to a prometheus label.</p>
-
-<h2>Prometheus Relabling</h2>
-
-<p>Using a standard prometheus config to scrape two targets:
-- <code>ip-192-168-64-29.multipass:9100</code>
-- <code>ip-192-168-64-30.multipass:9100</code></p>
-
-<pre><code>global:
-  scrape_interval:     15s
-  evaluation_interval: 15s
-  external_labels:
-    cluster: 'local'
-
-scrape_configs:
-  - job_name: 'prometheus'
-    scrape_interval: 15s
-    static_configs:
-    - targets: ['localhost:9090']
-
-  - job_name: 'multipass-nodes'
-    static_configs:
-    - targets: ['ip-192-168-64-29.multipass:9100']
-      labels:
-        test: 1
-    - targets: ['ip-192-168-64-30.multipass:9100']
-      labels:
-        test: 1
-</code></pre>
-
-<p>The Result:</p>
-
-<p><img width="924" alt="image" src="https://user-images.githubusercontent.com/567298/170823370-f2c6b3a3-68a8-4f5a-ad43-2f1b832c95e0.png"></p>
-
-<p>When we want to relabel one of the source the prometheus <a href="https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/#internal-labels">internal labels</a>, <code>__address__</code> which will be the given target including the port, then we apply regex: <code>(.*)</code> to catch everything from the source label, and since there is only one group we use the <code>replacement</code> as <code>${1}-randomtext</code> and use that value to apply it as the value of the given <code>target_label</code> which in this case is for <code>randomlabel</code>, which will be in this case:</p>
-
-<pre><code>global:
-  scrape_interval:     15s
-  evaluation_interval: 15s
-  external_labels:
-    cluster: 'local'
-
-scrape_configs:
-  - job_name: 'prometheus'
-    scrape_interval: 15s
-    static_configs:
-    - targets: ['localhost:9090']
-
-  - job_name: 'multipass-nodes'
-    static_configs:
-    - targets: ['ip-192-168-64-29.multipass:9100']
-      labels:
-        test: 3
-    - targets: ['ip-192-168-64-30.multipass:9100']
-      labels:
-        test: 3
-    relabel_configs:
-    - source_labels: [__address__]
-      regex: '(.+)'
-      replacement: '${1}-randomtext'
-      target_label: randomlabel
-</code></pre>
-
-<p>The Result:</p>
-
-<p><img width="1107" alt="image" src="https://user-images.githubusercontent.com/567298/170824588-44a79c3d-5131-4311-bcca-f5137d6acdad.png"></p>
-
-<p>In this case we want to relabel the <code>__address__</code> and apply the value to the <code>instance</code> label, but we want to exclude the <code>:9100</code> from the <code>__address__</code> label:</p>
-
-<pre><code># Config: https://github.com/prometheus/prometheus/blob/release-2.36/config/testdata/conf.good.yml
-global:
-  scrape_interval:     15s
-  evaluation_interval: 15s
-  external_labels:
-    cluster: 'local'
-
-scrape_configs:
-  - job_name: 'prometheus'
-    scrape_interval: 15s
-    static_configs:
-    - targets: ['localhost:9090']
-
-  - job_name: 'multipass-nodes'
-    static_configs:
-    - targets: ['ip-192-168-64-29.multipass:9100']
-      labels:
-        test: 4
-    - targets: ['ip-192-168-64-30.multipass:9100']
-      labels:
-        test: 4
-    relabel_configs:
-    - source_labels: [__address__]
-      separator: ':'
-      regex: '(.*):(.*)'
-      replacement: '${1}'
-      target_label: instance
-</code></pre>
-
-<p>The Result:</p>
-
-<p><img width="950" alt="image" src="https://user-images.githubusercontent.com/567298/170824806-45f0f243-5fe7-4635-9e9a-335616a322da.png"></p>
-
-<h2>AWS EC2 SD Configs</h2>
-
-<p>On AWS EC2 you can make use of the <a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config">ec2_sd_config</a> where you can make use of EC2 Tags, to set the values of your tags to prometheus label values.</p>
-
-<p>In this scenario, on my EC2 instances I have 3 tags:
-- Key: PrometheusScrape, Value: Enabled
-- Key: Name, Value: pdn-server-1
-- Key: Environment, Value: dev</p>
-
-<p>In our config, we only apply a node-exporter scrape config to instances which are tagged <code>PrometheusScrape=Enabled</code>, then we use the <code>Name</code> tag, and assign it&rsquo;s value to the <code>instance</code> tag, and the similarly we assign the <code>Environment</code> tag value to the <code>environment</code> promtheus label value.</p>
-
-<p>Because this prometheus instance resides in the same VPC, I am using the <code>__meta_ec2_private_ip</code> which is the private ip address of the EC2 instance to assign it to the address where it needs to scrape the node exporter metrics endpoint:</p>
-
-<pre><code class="yaml">scrape_configs:
-  - job_name: node-exporter
-    scrape_interval: 15s
-    ec2_sd_configs:
-    - region: eu-west-1
-      port: 9100
-      filters:
-        - name: tag:PrometheusScrape
-          values:
-            - Enabled
-    relabel_configs:
-    - source_labels: [__meta_ec2_private_ip]
-      replacement: '${1}:9100'
-      target_label: __address__
-    - source_labels: [__meta_ec2_tag_Name]
-      target_label: instance
-    - source_labels: [__meta_ec2_tag_Environment]
-      target_label: environment
-</code></pre>
-
-<p>You will need a EC2 Ready Only instance role (or access keys on the configuration) in order for prometheus to read the EC2 tags on your account.</p>
-
-<p>See their <a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config">documentation</a> for more info.</p>
-
-<h2>Stack</h2>
-
-<p>The docker-compose used:</p>
-
-<pre><code class="yaml">version: '3.8'
-
-services:
-  prometheus:
-    image: prom/prometheus
-    container_name: 'prometheus'
-    user: root
-    restart: unless-stopped
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention=14d'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.external-url=http://prometheus.127.0.0.1.nip.io'
-    ports:
-      - 9090:9090
-    networks:
-      - public
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "1m"
-
-networks:
-  public:
-    name: public
-
-volumes:
-  prometheus-data: {}
-</code></pre>
-
-<h2>References</h2>
-
-<p>Usful docs:</p>
-
-<ul>
-<li><a href="https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/#internal-labels">https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/#internal-labels</a></li>
-<li><a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config">https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config</a></li>
-<li><a href="https://regexr.com/">https://regexr.com/</a></li>
-</ul>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
 ]]></content>
   </entry>
   

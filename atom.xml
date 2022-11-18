@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2022-09-20T03:07:55-04:00</updated>
+  <updated>2022-11-18T00:58:37-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,274 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Logging With Docker Promtail and Grafana Loki]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/"/>
+    <updated>2022-11-18T00:42:49-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png" alt="grafana-loki-promtail" /></p>
+
+<p>In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki.</p>
+
+<h2>About</h2>
+
+<p>We will be using Docker Compose and mount the docker socket to Grafana Promtail so that it is aware of all the docker events and configure it that only containers with docker labels <code>logging=promtail</code> needs to be enabled for logging, which will then scrape those logs and send it to Grafana Loki where we will visualize it in Grafana.</p>
+
+<h2>Promtail</h2>
+
+<p>In our promtail configuration <code>config/promtail.yaml</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="c1"># https://grafana.com/docs/loki/latest/clients/promtail/configuration/</span>
+</span><span class='line'><span class="c1"># https://docs.docker.com/engine/api/v1.41/#operation/ContainerList</span>
+</span><span class='line'><span class="l-Scalar-Plain">server</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">http_listen_port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">9080</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">grpc_listen_port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">0</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">positions</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">filename</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/tmp/positions.yaml</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">clients</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://loki:3100/loki/api/v1/push</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">scrape_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">job_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">flog_scrape</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">docker_sd_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">unix:///var/run/docker.sock</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">refresh_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">5s</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">filters</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">label</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">values</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&quot;logging=promtail&quot;</span><span class="p-Indicator">]</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">relabel_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_name&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">regex</span><span class="p-Indicator">:</span> <span class="s">&#39;/(.*)&#39;</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;container&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_log_stream&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;logstream&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_label_logging_jobname&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;job&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can see we are using the <code>docker_sd_configs</code> provider and filter only docker containers with the docker labels <code>logging=promtail</code> and once we have those logs we relabel our labels to have the container name and we also use docker labels like <code>log_stream</code> and <code>logging_jobname</code> to add labels to our logs.</p>
+
+<h2>Grafana Config</h2>
+
+<p>We would like to auto configure our datasources for Grafana and in <code>config/grafana-datasources.yml</code> we have:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">datasources</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Loki</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">loki</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">access</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">proxy</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://loki:3100</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">editable</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">isDefault</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Docker Compose</h2>
+
+<p>Then lastly we have our <code>docker-compose.yml</code> that wire up all our containers:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.8&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">nginx-app</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-app</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span> <span class="s">&quot;promtail&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging_jobname</span><span class="p-Indicator">:</span> <span class="s">&quot;containerlogs&quot;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">8080:80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">grafana</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">grafana/grafana:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3000:3000</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_ANONYMOUS_ENABLED=true</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_ANONYMOUS_ORG_ROLE=Admin</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_DISABLE_LOGIN_FORM=true</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">loki</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">grafana/loki:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3100:3100</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-config.file=/etc/loki/local-config.yaml</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">promtail</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span>  <span class="l-Scalar-Plain">grafana/promtail:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">promtail</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./config/promtail.yaml:/etc/promtail/docker-config.yaml</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/lib/docker/containers:/var/lib/docker/containers:ro</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-config.file=/etc/promtail/docker-config.yaml</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">depends_on</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">loki</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">app</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see with our nginx container we define our labels:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'>  <span class="l-Scalar-Plain">nginx-app</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-app</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span> <span class="s">&quot;promtail&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging_jobname</span><span class="p-Indicator">:</span> <span class="s">&quot;containerlogs&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Which uses <code>logging: "promtail"</code> to let promtail know this log container&rsquo;s log to be scraped and <code>logging_jobname: "containerlogs"</code> which will assign containerlogs to the job label.</p>
+
+<h2>Start the stack</h2>
+
+<p>If you are following along all this configuration is available in my github repository <a href="https://github.com/ruanbekker/docker-promtail-loki">https://github.com/ruanbekker/docker-promtail-loki</a> .</p>
+
+<p>Once you have everything in place you can start it with:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker-compose up -d
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Access nginx on <a href="http://localhost:8080">http://localhost:8080</a></p>
+
+<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/202505252-3cbc2d03-d1d2-48e6-bea7-5db54233b9a2.png"></p>
+
+<p>Then navigate to grafana on <a href="http://localhost:3000">http://localhost:3000</a> and select explore on the left and select the container:</p>
+
+<p><img width="560" alt="image" src="https://user-images.githubusercontent.com/567298/202504989-e05a08a2-eb2f-41a1-85f4-9a11a8affd7c.png"></p>
+
+<p>And you will see the logs:</p>
+
+<p><img width="1425" alt="image" src="https://user-images.githubusercontent.com/567298/202505099-c47b76cc-3090-4eb9-8459-db659d0aac18.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[KinD for Local Kubernetes Clusters]]></title>
@@ -5114,238 +5382,6 @@
 </pre></td><td class='code'><pre><code class='bash'><span class='line'>Name: foo, Owner: bar
 </span></code></pre></td></tr></table></div></figure>
 
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run a Basic Python Flask Restful API]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/03/20/run-a-basic-python-flask-restful-api/"/>
-    <updated>2022-03-20T17:33:17-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/03/20/run-a-basic-python-flask-restful-api</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will run a basic api using flask-restful, it will only have two routes which will be a get and post method for the purpose of demonstration.</p>
-
-<h2>What is Flask Restful</h2>
-
-<p><a href="https://flask-restful.readthedocs.io/en/latest/index.html">Flask-RESTful</a> is an extension for <a href="https://flask.palletsprojects.com/en/2.0.x/">Flask</a> that adds support for quickly building REST APIs. It is a lightweight abstraction that works with your existing ORM/libraries. Flask-RESTful encourages best practices with minimal setup.</p>
-
-<p>If you want to see a basic Flask API post, you can follow the link below:
-- <a href="https://blog.ruanbekker.com/blog/2018/11/27/python-flask-tutorial-series-create-a-hello-world-app-p1/">https://blog.ruanbekker.com/blog/2018/11/27/python-flask-tutorial-series-create-a-hello-world-app-p1/</a></p>
-
-<h2>Installation</h2>
-
-<p>Install Flask and Flask Restful:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>python3 -m pip install flask
-</span><span class='line'>python3 -m pip install flask-restful
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Code</h2>
-
-<p>The basic code that we have, is to have two methods available (get and post):</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">flask</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">flask_restful</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">flask</span><span class="o">.</span><span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
-</span><span class='line'><span class="n">api</span> <span class="o">=</span> <span class="n">flask_restful</span><span class="o">.</span><span class="n">Api</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">class</span> <span class="nc">HelloWorld</span><span class="p">(</span><span class="n">flask_restful</span><span class="o">.</span><span class="n">Resource</span><span class="p">):</span>
-</span><span class='line'>    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span class='line'>        <span class="k">return</span> <span class="p">{</span><span class="s">&#39;hello&#39;</span><span class="p">:</span> <span class="s">&#39;world&#39;</span><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="k">def</span> <span class="nf">post</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span class='line'>        <span class="n">json_data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">(</span><span class="n">force</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
-</span><span class='line'>        <span class="n">firstname</span> <span class="o">=</span> <span class="n">json_data</span><span class="p">[</span><span class="s">&#39;firstname&#39;</span><span class="p">]</span>
-</span><span class='line'>        <span class="n">lastname</span> <span class="o">=</span> <span class="n">json_data</span><span class="p">[</span><span class="s">&#39;lastname&#39;</span><span class="p">]</span>
-</span><span class='line'>        <span class="k">return</span> <span class="n">jsonify</span><span class="p">(</span><span class="n">firstname</span><span class="o">=</span><span class="n">firstname</span><span class="p">,</span> <span class="n">lastname</span><span class="o">=</span><span class="n">lastname</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">api</span><span class="o">.</span><span class="n">add_resource</span><span class="p">(</span><span class="n">HelloWorld</span><span class="p">,</span> <span class="s">&#39;/&#39;</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&quot;__main__&quot;</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Run the Server</h2>
-
-<p>Run the server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>python api.py
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then make a get request:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl http://localhost:5000/
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The response should be the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
-</span><span class='line'>    <span class="nt">&quot;hello&quot;</span><span class="p">:</span> <span class="s2">&quot;world&quot;</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then make a post request:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl -XPOST http://localhost:5000/ -d <span class="s1">&#39;{&quot;firstname&quot;: &quot;ruan&quot;, &quot;lastname&quot;: &quot;bekker&quot;}&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The response should look something like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
-</span><span class='line'>  <span class="nt">&quot;firstname&quot;</span><span class="p">:</span> <span class="s2">&quot;ruan&quot;</span><span class="p">,</span>
-</span><span class='line'>  <span class="nt">&quot;lastname&quot;</span><span class="p">:</span> <span class="s2">&quot;bekker&quot;</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Integration Tests</h2>
-
-<p>We can setup integration tests with <code>unittest</code> by creating <code>test_api.py</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">unittest</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">app</span> <span class="kn">as</span> <span class="nn">api</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">class</span> <span class="nc">TestFlaskApi</span><span class="p">(</span><span class="n">unittest</span><span class="o">.</span><span class="n">TestCase</span><span class="p">):</span>
-</span><span class='line'>    <span class="k">def</span> <span class="nf">setUp</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span class='line'>        <span class="bp">self</span><span class="o">.</span><span class="n">app</span> <span class="o">=</span> <span class="n">api</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">test_client</span><span class="p">()</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="k">def</span> <span class="nf">test_get_method</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span class='line'>        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">)</span>
-</span><span class='line'>        <span class="bp">self</span><span class="o">.</span><span class="n">assertEqual</span><span class="p">(</span>
-</span><span class='line'>            <span class="n">response</span><span class="o">.</span><span class="n">get_json</span><span class="p">(),</span>
-</span><span class='line'>            <span class="p">{</span><span class="s">&quot;hello&quot;</span><span class="p">:</span> <span class="s">&quot;world&quot;</span><span class="p">},</span>
-</span><span class='line'>        <span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="k">def</span> <span class="nf">test_post_method</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span class='line'>        <span class="c"># request payload</span>
-</span><span class='line'>        <span class="n">payload</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
-</span><span class='line'>            <span class="s">&quot;firstname&quot;</span><span class="p">:</span> <span class="s">&quot;ruan&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;lastname&quot;</span><span class="p">:</span> <span class="s">&quot;bekker&quot;</span>
-</span><span class='line'>        <span class="p">})</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="c"># make request</span>
-</span><span class='line'>        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">payload</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s">&quot;Content-Type&quot;</span><span class="p">:</span> <span class="s">&quot;application/json&quot;</span><span class="p">})</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="c"># assert</span>
-</span><span class='line'>        <span class="bp">self</span><span class="o">.</span><span class="n">assertEqual</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">[</span><span class="s">&#39;lastname&#39;</span><span class="p">]))</span>
-</span><span class='line'>        <span class="bp">self</span><span class="o">.</span><span class="n">assertEqual</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="k">def</span> <span class="nf">tearDown</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span class='line'>        <span class="c"># delete if anything was created</span>
-</span><span class='line'>        <span class="k">pass</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">unittest</span><span class="o">.</span><span class="n">main</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then we can run our test with:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>python -m unittest discover -p test_app.py -v
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Since our first test is expecting <code>{"hello": "world"}</code> our test will pass, and our second test we are validating that our post request returns a 200 response code and that our lastname field is of string type.</p>
-
-<p>The output of our tests will show something like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>test_get_request <span class="o">(</span>test_app.TestFlaskApi<span class="o">)</span> ... ok
-</span><span class='line'>test_post_request <span class="o">(</span>test_app.TestFlaskApi<span class="o">)</span> ... ok
-</span><span class='line'>
-</span><span class='line'>----------------------------------------------------------------------
-</span><span class='line'>Ran <span class="m">2</span> tests in 0.009s
-</span><span class='line'>
-</span><span class='line'>OK
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>More on Flask-Restful</h2>
-
-<p>This was a very basic example and their <a href="https://flask-restful.readthedocs.io/en/latest/quickstart.html">documentation</a> provides a great tutorial on how to extend from this example. This is also a <a href="https://dev.to/paurakhsharma/flask-rest-api-part-6-testing-rest-apis-4lla">great blogpost</a> on testing rest api&rsquo;s.</p>
 
 <h2>Thank You</h2>
 

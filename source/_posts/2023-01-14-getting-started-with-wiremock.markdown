@@ -17,10 +17,7 @@ In this tutorial we will use docker to run an instance of wiremock to setup a mo
 Run a wiremock instance with docker:
 
 ```bash
-docker run -it --rm \
-  -p 8080:8080 \
-  --name wiremock \
-  wiremock/wiremock:2.34.0
+docker run -it --rm -p 8080:8080 --name wiremock wiremock/wiremock:2.34.0
 ```
 
 Then our wiremock instance will be exposed on port 8080 locally, which we can use to make a request against to create a api mapping:
@@ -95,3 +92,4 @@ Thanks for reading, feel free to check out my [website](https://ruan.dev/), feel
 
 - Linktree: https://go.ruan.dev/links
 - Patreon: https://go.ruan.dev/patreon
+

@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="You can use SSM Session Manager to connect to your EC2 instances, as long as your EC2 instance has the associated IAM Role which includes the &hellip;">
+  <meta name="description" content="In this tutorial we will setup a Wireguard VPN with Unbound DNS Server with some additional configuration to block ads for any clients using the DNS &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,339 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2021/03/10/wireguard-vpn-with-unbound-ads-blocking-dns/">Wireguard VPN With Unbound ADS Blocking DNS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2021-03-10T00:59:51-05:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2021</span></span> <span class='time'>12:59 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial we will setup a Wireguard VPN with Unbound DNS Server with some additional configuration to block ads for any clients using the DNS Server while connected to the VPN.</p>
+
+<p>A massive thank you to <a href="https://github.com/complexorganizations/wireguard-manager/blob/main/wireguard-server.sh">complexorganizations</a> for providing the source where this tuturial is based off.</p>
+
+<h2>Install Packages</h2>
+
+<p>I will be using Debian Buster for this installation:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update
+</span><span class='line'>$ apt upgrade -y
+</span><span class='line'>$ apt update && apt install iptables curl coreutils bc jq sed e2fsprogs -y
+</span><span class='line'>$ apt install linux-headers-"$(uname -r)" -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I want to disable IPv6, in my case I had to apply a couple of kernel parameter tweaks:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo net.ipv6.conf.all.disable_ipv6 = 1 &gt; /etc/sysctl.d/70-disable-ipv6.conf
+</span><span class='line'>$ echo "net.ipv6.conf.$(ip -4 route ls | grep default | grep -Po '(?&lt;=dev )(\S+)' | head -1).disable_ipv6 = 1" &gt;&gt; /etc/sysctl.d/70-disable-ipv6.conf
+</span><span class='line'>$ echo 'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/60-enable-ip-forwarding.conf
+</span><span class='line'>$ sysctl -p -f /etc/sysctl.d/70-disable-ipv6.conf
+</span><span class='line'>$ sysctl -p -f /etc/sysctl.d/60-enable-ip-forwarding.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Environment Variables</h2>
+
+<p>A couple of environment variables that we will reference during our installation, tweak where your setup differs:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export NPROC=$(nproc)
+</span><span class='line'>$ export SERVER_HOST=$(curl -s -4 ifconfig.co)
+</span><span class='line'>$ export SERVER_PORT="51820"
+</span><span class='line'>$ export MTU_CHOICE="1280"
+</span><span class='line'>$ export NAT_CHOICE="25"
+</span><span class='line'>$ export IPV4_SUBNET="10.7.0.0/24"
+</span><span class='line'>$ export PRIVATE_SUBNET_V4=${IPV4_SUBNET}
+</span><span class='line'>$ export GATEWAY_ADDRESS_V4="${PRIVATE_SUBNET_V4::-4}1"
+</span><span class='line'>$ export PRIVATE_SUBNET_MASK_V4=$(echo "$PRIVATE_SUBNET_V4" | cut -d "/" -f 2)
+</span><span class='line'>$ export CLIENT_DNS="$GATEWAY_ADDRESS_V4"
+</span><span class='line'>$ export CLIENT_ALLOWED_IP="0.0.0.0/0"</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Unbound Installation</h2>
+
+<p>Download the unbound <code>root.hints</code> file from internic:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl https://www.internic.net/domain/named.cache --create-dirs -o /etc/unbound/root.hints</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Generate the <code>/etc/unbound/unbound.conf</code> config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo "include: \"/etc/unbound/unbound.conf.d/*.conf\"
+</span><span class='line'>server:
+</span><span class='line'>    num-threads: $NPROC
+</span><span class='line'>    verbosity: 1
+</span><span class='line'>    root-hints: /etc/unbound/root.hints
+</span><span class='line'>    # auto-trust-anchor-file: /var/lib/unbound/root.key
+</span><span class='line'>    interface: 0.0.0.0
+</span><span class='line'>    interface: ::0
+</span><span class='line'>    max-udp-size: 3072
+</span><span class='line'>    access-control: 0.0.0.0/0                 refuse
+</span><span class='line'>    access-control: $PRIVATE_SUBNET_V4               allow
+</span><span class='line'>    access-control: 127.0.0.1                 allow
+</span><span class='line'>    private-address: $PRIVATE_SUBNET_V4
+</span><span class='line'>    hide-identity: yes
+</span><span class='line'>    hide-version: yes
+</span><span class='line'>    harden-glue: yes
+</span><span class='line'>    harden-dnssec-stripped: yes
+</span><span class='line'>    harden-referral-path: yes
+</span><span class='line'>    unwanted-reply-threshold: 10000000
+</span><span class='line'>    val-log-level: 1
+</span><span class='line'>    cache-min-ttl: 1800
+</span><span class='line'>    cache-max-ttl: 14400
+</span><span class='line'>    prefetch: yes
+</span><span class='line'>    qname-minimisation: yes
+</span><span class='line'>    prefetch-key: yes
+</span><span class='line'>    forward-zone:
+</span><span class='line'>        name: \".\"
+</span><span class='line'>        forward-addr: 1.1.1.1
+</span><span class='line'>        forward-addr: 8.8.8.8" &gt;&gt; /etc/unbound/unbound.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Download the host entries for all the ad servers which we will block:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social/hosts -o /tmp/adblocking_hosts</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Include the ads configuration in <code>/etc/unbound/unbound.d/ads.conf</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo "server:" &gt; /etc/unbound/unbound.conf.d/ads.conf
+</span><span class='line'>$ cat /etc/unbound/adblocking_hosts | grep '^0\.0\.0\.0' | awk '{print "    local-zone: \""$2"\" redirect\n    local-data: \""$2" A 0.0.0.0\""}' &gt;&gt; /etc/unbound/unbound.conf.d/ads.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Update the VPN Server&rsquo;s nameserver configuration to unbound:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ chattr -i /etc/resolv.conf
+</span><span class='line'>$ mv /etc/resolv.conf /etc/resolv.conf.old
+</span><span class='line'>$ echo "nameserver 127.0.0.1" &gt;&gt;/etc/resolv.conf
+</span><span class='line'>$ chattr +i /etc/resolv.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Enable and Restart Unbound:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl enable unbound
+</span><span class='line'>$ systemctl restart unbound</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test if DNS Resolution works:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ dig google.com</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Wireguard Installation</h2>
+
+<p>Include the sources and install wireguard and its dependencies:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo "deb http://deb.debian.org/debian/ unstable main" &gt;&gt;/etc/apt/sources.list.d/unstable.list
+</span><span class='line'>$ echo -e "Package: *\nPin: release a=unstable\nPin-Priority: 90"  &gt;&gt;/etc/apt/preferences.d/limit-unstable
+</span><span class='line'>$ apt update
+</span><span class='line'>$ apt install wireguard qrencode haveged ifupdown -y</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the environment variables and tweak where you need to:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ export SERVER_PRIVKEY=$(wg genkey)
+</span><span class='line'>$ export SERVER_PUBKEY=$(echo "$SERVER_PRIVKEY" | wg pubkey)
+</span><span class='line'>$ export CLIENT_NAME="ruan-pc"
+</span><span class='line'>$ export CLIENT_PRIVKEY=$(wg genkey)
+</span><span class='line'>$ export CLIENT_PUBKEY=$(echo "$CLIENT_PRIVKEY" | wg pubkey)
+</span><span class='line'>$ export CLIENT_ADDRESS_V4="${PRIVATE_SUBNET_V4::-4}3"
+</span><span class='line'>$ export PRESHARED_KEY=$(wg genpsk)
+</span><span class='line'>$ export WIREGUARD_PUB_NIC="wg0"
+</span><span class='line'>$ export PEER_PORT=$(shuf -i1024-65535 -n1)
+</span><span class='line'>$ export WG_CONFIG="/etc/wireguard/$WIREGUARD_PUB_NIC.conf"</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the wireguard clients directory and create the config filename:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /etc/wireguard/clients
+</span><span class='line'>$ touch $WG_CONFIG && chmod 600 $WG_CONFIG</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the wireguard server config content and write it to the config file:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo "# $PRIVATE_SUBNET_V4 $SERVER_HOST:$SERVER_PORT $SERVER_PUBKEY $CLIENT_DNS $MTU_CHOICE $NAT_CHOICE $CLIENT_ALLOWED_IP
+</span><span class='line'>[Interface]
+</span><span class='line'>Address = $GATEWAY_ADDRESS_V4/$PRIVATE_SUBNET_MASK_V4
+</span><span class='line'>ListenPort = $SERVER_PORT
+</span><span class='line'>PrivateKey = $SERVER_PRIVKEY
+</span><span class='line'>PostUp = iptables -A FORWARD -i $WIREGUARD_PUB_NIC -o $SERVER_PUB_NIC -j ACCEPT; iptables -t nat -A POSTROUTING -o $SERVER_PUB_NIC -j MASQUERADE; iptables -A INPUT -s $PRIVATE_SUBNET_V4 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+</span><span class='line'>PostDown = iptables -D FORWARD -i $WIREGUARD_PUB_NIC  -o $SERVER_PUB_NIC -j ACCEPT; iptables -t nat -D POSTROUTING -o $SERVER_PUB_NIC -j MASQUERADE; iptables -D INPUT -s $PRIVATE_SUBNET_V4 -p udp -m udp --dport 53 -m conntrack --ctstate NEW -j ACCEPT
+</span><span class='line'>SaveConfig = false
+</span><span class='line'># $CLIENT_NAME start
+</span><span class='line'>[Peer]
+</span><span class='line'>PublicKey = $CLIENT_PUBKEY
+</span><span class='line'>PresharedKey = $PRESHARED_KEY
+</span><span class='line'>AllowedIPs = $CLIENT_ADDRESS_V4/32
+</span><span class='line'># $CLIENT_NAME end &gt;&gt;" &gt;&gt; $WG_CONFIG</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the client config:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ echo "# $CLIENT_NAME
+</span><span class='line'>[Interface]
+</span><span class='line'>Address = $CLIENT_ADDRESS_V4/$PRIVATE_SUBNET_MASK_V4
+</span><span class='line'>DNS = $CLIENT_DNS
+</span><span class='line'>ListenPort = $PEER_PORT
+</span><span class='line'>MTU = $MTU_CHOICE
+</span><span class='line'>PrivateKey = $CLIENT_PRIVKEY
+</span><span class='line'>[Peer]
+</span><span class='line'>AllowedIPs = $CLIENT_ALLOWED_IP
+</span><span class='line'>Endpoint = $SERVER_HOST:$SERVER_PORT
+</span><span class='line'>PersistentKeepalive = $NAT_CHOICE
+</span><span class='line'>PresharedKey = $PRESHARED_KEY
+</span><span class='line'>PublicKey = $SERVER_PUBKEY" &gt;&gt; /etc/wireguard/clients/"$CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Restart and Enable Wireguard:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl enable wg-quick@$WIREGUARD_PUB_NIC
+</span><span class='line'>$ systemctl restart wg-quick@$WIREGUARD_PUB_NIC</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Connect your Client</h2>
+
+<p>Head over to <a href="https://www.wireguard.com/install/">Wireguard.com</a> and install the client of your choice then generate a QR Code:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ qrencode -t ansiutf8 -l L &lt;/etc/wireguard/clients/"$CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Configure your client and connect to the VPN, after the connection has been established you can have a look on the server for connection details with:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ wg show</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once connected head over to a website with ads, such as <a href="https://www.speedtest.net/">https://www.speedtest.net/</a> and you should see no ads.</p>
+
+<h2>Thanks</h2>
+
+<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1992,241 +2325,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/12/18/harden-your-ssh-security-on-linux-servers/">Harden Your SSH Security on Linux Servers</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-12-18T13:32:18+00:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>18</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>1:32 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this post we wil be focusing on increasing / hardening our security by adjusting our ssh configuration and applying some iptables firewall rules.</p>
-
-<p>This will be the list of things that we will do:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>  - Change the SSH Port
-</span><span class='line'>  - Don't allow root to SSH
-</span><span class='line'>  - Disable password based authentication
-</span><span class='line'>  - Enable key based authentication and only for a singular user
-</span><span class='line'>  - Allow our user to sudo
-</span><span class='line'>  - Use iptables to block sources trying to DDoS your server</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Packages</h2>
-
-<p>First let&rsquo;s install the packages that we need, I&rsquo;m using Debian so I will be using the <code>apt</code> package manager:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ apt update && apt upgrade -y
-</span><span class='line'>$ apt install sudo -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Dedicated User</h2>
-
-<p>Let&rsquo;s create our user james:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ useradd -m -s /bin/bash james</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Allow our user to sudo without a password, by running <code>visudo</code> then append the following line:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>james ALL=(ALL:ALL) NOPASSWD: ALL</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>SSH Authorized Keys</h2>
-
-<p>If you don&rsquo;t already have a private SSH key, generate one on your client side:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ssh-keygen -f ~/.ssh/james -t rsa -C "james" -q -N ""</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then copy the public key:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ~/.ssh/james.pub | pbcopy</span></code></pre></td></tr></table></div></figure>
-
-
-<p>On your server create the SSH directories:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir /home/james/.ssh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now paste your public key into <code>/home/james/.ssh/authorized_keys</code></p>
-
-<p>Then change the ownership:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod 700 /home/james/.ssh
-</span><span class='line'>$ chmod 644 /home/james/.ssh/authorized_keys
-</span><span class='line'>$ chown -R james:james /home/james</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>SSH Config</h2>
-
-<p>Backup your SSH config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cp /etc/ssh/sshd_config /etc/ssh_sshd_config.bak</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We will be using the SSH port <code>2914</code>, replace your SSH config with the following and make your adjustments where you need to:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'># /etc/ssh/sshd_config
-</span><span class='line'>Port 2914
-</span><span class='line'>HostKey /etc/ssh/ssh_host_rsa_key
-</span><span class='line'>HostKey /etc/ssh/ssh_host_ecdsa_key
-</span><span class='line'>HostKey /etc/ssh/ssh_host_ed25519_key
-</span><span class='line'>LoginGraceTime 1m
-</span><span class='line'>PermitRootLogin no
-</span><span class='line'>MaxAuthTries 3
-</span><span class='line'>MaxSessions 5
-</span><span class='line'>AuthenticationMethods publickey
-</span><span class='line'>PubkeyAuthentication yes
-</span><span class='line'>AuthorizedKeysFile      /home/james/.ssh/authorized_keys
-</span><span class='line'>PasswordAuthentication no
-</span><span class='line'>PermitEmptyPasswords no
-</span><span class='line'>ChallengeResponseAuthentication no
-</span><span class='line'>UsePAM yes
-</span><span class='line'>AllowUsers james
-</span><span class='line'>DenyUsers root
-</span><span class='line'>X11Forwarding yes
-</span><span class='line'>PrintMotd no
-</span><span class='line'>UseDNS no
-</span><span class='line'>PidFile /var/run/sshd.pid
-</span><span class='line'>AcceptEnv LANG LC_*
-</span><span class='line'>Subsystem       sftp    /usr/lib/openssh/sftp-server</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then save the file and restart SSH:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl restart sshd</span></code></pre></td></tr></table></div></figure>
-
-
-<p>While you are still connected to the shell session, open up a new terminal and try to connect with your new user and private SSH key to ensure that you can connect to your server.</p>
-
-<h2>Iptables</h2>
-
-<p>We want to drop incoming connections which make more than 10 connection attempts to SSH within 60 seconds.</p>
-
-<p>The tokens get refilled into buckets at 3 per minute and maximum of 3 tokens that can be filled into the bucket.</p>
-
-<p>Let&rsquo;s create our script:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /opt/scripts
-</span><span class='line'>$ touch /opt/scripts/fw.sh</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In our script we will place the following content:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>#!/usr/bin/env bash
-</span><span class='line'>INTERFACE=eth0 # check ifconfig to determine the correct interface
-</span><span class='line'>SSH_PORT=2914
-</span><span class='line'>CONNECTION_ATTEMPTS=10
-</span><span class='line'>CONNECTION_TIME=60
-</span><span class='line'>#WHITELIST_IP=x.x.x.x/32 # replace ip and uncomment if you want to whitelist a ip
-</span><span class='line'>#iptables -I INPUT -s ${WHITELIST_IP} -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -j ACCEPT # uncomment if you want to use whitelisting
-</span><span class='line'>iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --set
-</span><span class='line'>iptables -A INPUT -p tcp --dport ${SSH_PORT} -i ${INTERFACE} -m state --state NEW -m recent  --update --seconds ${CONNECTION_TIME} --hitcount ${CONNECTION_ATTEMPTS} -j DROP
-</span><span class='line'>iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state NEW -m limit --limit 3/min --limit-burst 3 -j ACCEPT
-</span><span class='line'>iptables -A INPUT  -i ${INTERFACE} -p tcp --dport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT
-</span><span class='line'>iptables -A OUTPUT -o ${INTERFACE} -p tcp --sport ${SSH_PORT} -m state --state ESTABLISHED -j ACCEPT</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we want to execute this script whenever the server boots, open up <code>/etc/rc.local</code> and append the following line, so that the file looks more or less like:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>#!/bin/bash
-</span><span class='line'>/opt/scripts/fw.sh
-</span><span class='line'>exit 0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Ensure both files are executable:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ chmod +x /opt/scripts/fw.sh
-</span><span class='line'>$ chmod +x /etc/rc.local</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When you are sure everything is in place, reboot:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ reboot</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/6">&larr; Older</a>
@@ -2300,6 +2398,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/01/14/getting-started-with-wiremock/">Getting Started With Wiremock</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/">Logging With Docker Promtail and Grafana Loki</a>
       </li>
     
@@ -2313,10 +2415,6 @@
     
       <li class="post">
         <a href="/blog/2022/07/31/docker-multistage-builds-for-hugo/">Docker Multistage Builds for Hugo</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/07/14/remote-builds-with-docker-contexts/">Remote Builds With Docker Contexts</a>
       </li>
     
   </ul>
@@ -2340,7 +2438,7 @@
     </div>
   </div>
   <footer role="contentinfo"><p>
-  Copyright &copy; 2022 - Ruan -
+  Copyright &copy; 2023 - Ruan -
   <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
 </p>
 <script data-name="BMC-Widget" data-cfasync="false" src="https://cdnjs.buymeacoffee.com/1.0.0/widget.prod.min.js" data-id="ruanbekker" data-description="Support me on Buy me a coffee!" data-message="" data-color="#FFDD00" data-position="Right" data-x_margin="18" data-y_margin="18"></script>

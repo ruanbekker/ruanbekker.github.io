@@ -27,6 +27,7 @@ Think about it in the following way:
 Helm uses your kubernetes config to connect to your kubernetes cluster. In most cases it utilises the config defined by the `KUBECONFIG` environment variable, which in most cases points to `~/kube/config`. 
 
 If you want to follow along, you can view the following blog post to provision a kubernetes cluster locally:
+
 - https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/
 
 Once you have provisioned your kubernetes cluster locally, you can proceed to [install helm](https://helm.sh/docs/intro/install/), I will make the assumption that you are using Mac:
@@ -56,6 +57,7 @@ Let's assume we want to install Nginx.
 First we would navigate to [artifacthub.io](https://artifacthub.io), which is a repository that holds a bunch of helm charts and the information on how to deploy helm charts to our cluster.
 
 Then we would search for Nginx, which would ultimately let us land on:
+
 - https://artifacthub.io/packages/helm/bitnami/nginx
 
 On this view, we have super useful information such as how to use this helm chart, the default values, etc.
@@ -171,11 +173,11 @@ Which provides information on how to create a helm chart and how to host it on G
 ## Resources
 
 Please find the following information with regards to Helm documentation:
-- https://helm.sh/docs/
-- https://helm.sh/docs/chart_template_guide/
+- [helm docs](https://helm.sh/docs/)
+- [helm cart template guide](https://helm.sh/docs/chart_template_guide/)
 
 If you need a kubernetes cluster and you would like to run this locally, find the following documentation in order to do that:
-- https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/
+- [using kind for local kubernetes clusters](https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/)
 
 ## Thank You
 

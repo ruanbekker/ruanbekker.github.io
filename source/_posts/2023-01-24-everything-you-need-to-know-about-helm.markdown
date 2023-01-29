@@ -159,16 +159,237 @@ It's very common to create your own helm charts when you follow a common pattern
 In this case we can create our own helm chart using:
 
 ```bash
-$ helm create my-cart
+$ mkdir ~/charts
+$ cd ~/charts
+$ helm create my-chart
 ```
 
-This will create a scaffoliding project with the required information that we need to create our own helm chart.
+This will create a scaffoliding project with the required information that we need to create our own helm chart. If we look at a tree view, it will look like the following:
 
-To see more information, we can have a look at:
+```bash
+$ tree . 
+.
+└── my-chart
+    ├── Chart.yaml
+    ├── charts
+    ├── templates
+    │   ├── NOTES.txt
+    │   ├── _helpers.tpl
+    │   ├── deployment.yaml
+    │   ├── hpa.yaml
+    │   ├── ingress.yaml
+    │   ├── service.yaml
+    │   ├── serviceaccount.yaml
+    │   └── tests
+    │       └── test-connection.yaml
+    └── values.yaml
 
-- https://github.com/ruanbekker/helm-charts
+4 directories, 10 files
+```
 
-Which provides information on how to create a helm chart and how to host it on Github.
+This example chart can already be used, to see what this chart will produce when running it with helm, we can use the `helm template` command:
+
+```bash
+$ cd my-chart
+$ helm template example . --values values.yaml
+```
+
+The output will be something like the following:
+
+```yaml
+---
+# Source: my-chart/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-my-chart
+  labels:
+    helm.sh/chart: my-chart-0.1.0
+    app.kubernetes.io/name: my-chart
+    app.kubernetes.io/instance: example
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: my-chart
+          image: "nginx:1.16.0"
+          ...
+---
+...
+```
+
+In our example it will create a service account, service, deployment, etc.
+
+As you can see the `spec.template.spec.containers[].image` is set to `nginx:1.16.0`, and to see how that was computed, we can have a look at `templates/deployment.yaml`:
+
+<script src="https://gist.github.com/ruanbekker/908dfeef90ef6edf8d2e40dc6c49bebf.js"></script>
+
+As you can see in `image:` section we have `.Values.image.repository` and `.Values.image.tag`, and those values are being retrieved from the `values.yaml` file, and when we look at the `values.yaml` file:
+
+```yaml
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+```
+
+If we want to override the image repository and image tag, we can update the `values.yaml` file to lets say:
+
+```yaml
+image:
+  repository: busybox
+  tag: latest
+  pullPolicy: IfNotPresent
+```
+
+When we run our helm template command again, we can see that the computed values changed to what we want:
+
+```bash
+$ helm template example . --values values.yaml
+---
+# Source: my-chart/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-my-chart
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: my-chart
+          image: "busybox:latest"
+          imagePullPolicy: IfNotPresent
+      ...
+```
+
+Another way is to use `--set`:
+
+```bash
+$ helm template example . --values values.yaml --set image.repository=ruanbekker/containers,image.tag=curl
+spec:
+  template:
+    spec:
+      containers:
+        - name: my-chart
+          image: "ruanbekker/containers:curl"
+      ...
+```
+
+The template subcommand provides a great way to debug your charts. To learn more about helm charts, view their [documentation](https://helm.sh/docs/topics/charts/).
+
+## Publish your Helm Chart to ChartMuseum
+
+[ChartMuseum](https://chartmuseum.com/) is an open-source Helm Chart Repository server written in Go.
+
+Running chartmuseum demonstration will be done locally on my workstation using Docker. To run the server:
+
+```bash
+$ docker run --rm -it \
+  -p 8080:8080 \
+  -e DEBUG=1 \
+  -e STORAGE=local \
+  -e STORAGE_LOCAL_ROOTDIR=/charts \
+  -v $(pwd)/charts:/charts \
+  ghcr.io/helm/chartmuseum:v0.14.0
+```
+
+Now that ChartMuseum is running, we will need to install a helm plugin called `helm-push` which helps to push charts to our chartmusuem repository:
+
+```bash
+$ helm plugin install https://github.com/chartmuseum/helm-push
+```
+
+We can verify if our plugin was installed:
+
+```bash
+$ helm plugin list
+NAME    	VERSION	DESCRIPTION
+cm-push 	0.10.3 	Push chart package to ChartMuseum
+```
+
+Now we add our chartmuseum helm chart repository, which we will call `cm-local`:
+
+```bash
+$ helm repo add cm-local http://localhost:8080/
+```
+
+We can list our helm repository:
+
+```bash
+$ helm repo list
+NAME                	URL
+cm-local            	http://localhost:8080/
+```
+
+Now that our helm repository has been added, we can push our helm chart to our helm chart repository. Ensure that we are in our chart repository directory, where the `Chart.yaml` file should be in our current directory. We need this file as it holds metadata about our chart.
+
+We can view the `Chart.yaml`:
+
+```yaml
+apiVersion: v2
+name: my-chart
+description: A Helm chart for Kubernetes
+type: application
+version: 0.1.0
+appVersion: "1.16.0"
+```
+
+Push the helm chart to chartmuseum:
+
+```bash
+$ helm cm-push . http://localhost:8080/ --version 0.0.1
+Pushing my-chart-0.0.1.tgz to http://localhost:8080/...
+Done.
+```
+
+Now we should update our repositories so that we can get the latest changes:
+
+```bash
+$ helm repo update
+```
+
+Now we can list the charts under our repository:
+
+```bash
+$ helm search repo cm-local/
+NAME             	CHART VERSION	APP VERSION	DESCRIPTION
+cm-local/my-chart	0.0.1        	1.16.0     	A Helm chart for Kubernetes
+```
+
+We can now get the values for our helm chart by running:
+
+```bash
+$ helm show values cm-local/my-chart
+```
+
+This returns the values yaml that we can use for our chart, so let's say you want to output the values yaml so that we can use to to deploy a release we can do:
+
+```bash
+$ helm show values cm-local/my-chart > my-values.yaml
+```
+
+Now when we want to deploy a release, we can do:
+
+```bash
+$ helm upgrade --install my-release cm-local/my-chart --values my-values.yaml --namespace test --create-namespace --version 0.0.1
+```
+
+After the release was deployed, we can list the releases by running:
+
+```bash
+$ helm list
+```
+
+And to view the release history:
+
+```bash
+$ helm history my-release
+```
 
 ## Resources
 

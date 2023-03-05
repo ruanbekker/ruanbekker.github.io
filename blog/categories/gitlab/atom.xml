@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Gitlab | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/gitlab/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-01-29T12:50:43-05:00</updated>
+  <updated>2023-03-05T02:24:19-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,163 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Persisting Terraform Remote State in Gitlab]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/03/05/persisting-terraform-remote-state-in-gitlab/"/>
+    <updated>2023-03-05T01:43:54-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/03/05/persisting-terraform-remote-state-in-gitlab</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/222946002-7cd88466-c584-4ea0-b190-54b1c3052865.png" alt="terraform-state-gitlab" /></p>
+
+<p>In this tutorial we will demonstrate how to persist your terraform state in gitlab managed terraform state, using the terraform http backend.</p>
+
+<p>For detailed information about this consult <a href="https://docs.gitlab.com/ee/user/infrastructure/iac/terraform_state.html">their documentation</a></p>
+
+<h2>What are we doing?</h2>
+
+<p>We will create a terraform pipeline which will run the plan step automatically and a manual step to run the apply step.</p>
+
+<p>During these steps and different pipelines we need to persist our terraform state remotely so that new pipelines can read from our state what we last stored.</p>
+
+<p>Gitlab offers a <a href="https://docs.gitlab.com/ee/user/infrastructure/iac/terraform_state.html">remote backend</a> for our terraform state which we can use, and we will use a basic example of using the random resource.</p>
+
+<h2>Prerequisites</h2>
+
+<p>If you don&rsquo;t see the &ldquo;Infrastructure&rdquo; menu on your left, you need to enable it at &ldquo;Settings&rdquo;, &ldquo;General&rdquo;, &ldquo;Visibility&rdquo;, &ldquo;Project features&rdquo;, &ldquo;Permissions&rdquo; and under &ldquo;Operations&rdquo;, turn on the toggle.</p>
+
+<p>For more information on this see their <a href="https://docs.gitlab.com/ee/user/infrastructure/iac/terraform_state.html#prerequisites">documentation</a></p>
+
+<h2>Authentication</h2>
+
+<p>For this demonstration I created a token which is only scoped for this one project, for this we need a to create a token under, &ldquo;Settings&rdquo;, &ldquo;Access Tokens&rdquo;:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222896148-6b0121fe-fceb-470e-a096-5db03ae0eab9.png" alt="image" /></p>
+
+<p>Select the <code>api</code> under scope:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222896298-fee26e1f-6bcf-4d7c-80eb-ed48ded33bf2.png" alt="image" /></p>
+
+<p>Store the token name and token value as <code>TF_USERNAME</code> and <code>TF_PASSWORD</code> as a CICD variable under &ldquo;Settings&rdquo;, &ldquo;CI/CD&rdquo;, &ldquo;Variables&rdquo;.</p>
+
+<h2>Terraform Code</h2>
+
+<p>We will use a basic <code>random_uuid</code> resource for this demonstration, our <code>main.tf</code>:</p>
+
+<pre><code>resource "random_uuid" "uuid" {}
+
+output "uuid" {
+  value       = random_uuid.uuid.result
+  sensitive   = false
+}
+</code></pre>
+
+<p>Our <code>providers.tf</code>, you will notice the <code>backend "http" {}</code> is what is required for our gitlab remote state:</p>
+
+<pre><code>terraform {
+  required_providers {
+    random = {
+      source = "hashicorp/random"
+      version = "3.4.3"
+    }
+  }
+  backend "http" {}
+  required_version = "~&gt; 1.3.6"
+}
+
+provider "random" {}
+</code></pre>
+
+<p>Push that up to gitlab for now.</p>
+
+<h2>Gitlab Pipeline</h2>
+
+<p>Our <code>.gitlab-ci.yml</code> consists of a plan step and a apply step which is a manual step as we first want to review our plan step before we apply.</p>
+
+<p>Our pipeline will only run on the default branch, which in my case is main:</p>
+
+<pre><code class="yaml">image:
+  name: hashicorp/terraform:1.3.6
+  entrypoint: [""]
+
+cache:
+  paths:
+    - .terraform
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - when: never
+
+variables:
+  TF_ADDRESS: "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/terraform/state/default-terraform.tfstate"
+
+stages:
+  - plan
+  - apply
+
+.terraform_init: &amp;terraform_init
+  - terraform init
+      -backend-config=address=${TF_ADDRESS}
+      -backend-config=lock_address=${TF_ADDRESS}/lock
+      -backend-config=unlock_address=${TF_ADDRESS}/lock
+      -backend-config=username=${TF_USERNAME}
+      -backend-config=password=${TF_PASSWORD}
+      -backend-config=lock_method=POST
+      -backend-config=unlock_method=DELETE
+      -backend-config=retry_wait_min=5
+
+terraform:plan:
+  stage: plan
+  artifacts:
+    paths:
+      - '**/*.tfplan'
+      - '**/.terraform.lock.hcl'
+  before_script:
+    - *terraform_init
+  script:
+    - terraform validate
+    - terraform plan -input=false -out default.tfplan
+
+terraform:apply:
+  stage: apply
+  artifacts:
+    paths:
+      - '**/*.tfplan'
+      - '**/.terraform.lock.hcl'
+  before_script:
+    - *terraform_init
+  script:
+    - terraform apply -input=false -auto-approve default.tfplan
+  when: manual
+</code></pre>
+
+<p>Where the magic happens is in the <code>terraform init</code> step, that is where we will initialize the terraform state in gitlab, and as you can see we are taking the <code>TF_ADDRESS</code> variable to define the path of our state and in this case our state file will be named <code>default-terraform.tfstate</code>.</p>
+
+<p>If it was a case where you are deploying multiple environments, you can use something like <code>${ENVIRONMENT}-terraform.tfstate</code>.</p>
+
+<p>When we run our pipeline, we can look at our plan step:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222947389-9d9d8d4f-a114-44b5-b183-a2b126ba82b8.png" alt="image" /></p>
+
+<p>Once we are happy with this we can run the manual step and do the apply step, then our pipeline should look like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222930015-6445a5da-7887-47a6-989e-f33a33b9451a.png" alt="image" /></p>
+
+<p>When we inspect our terraform state in the infrastructure menu, we can see the state file was created:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222901200-2cd0a0f9-6e81-438f-bc74-286778b648d4.png" alt="image" /></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Tutorial on Using Gitlab CI/CD Pipelines to Deploy Your Python Flask Restful API With Postgres on Heroku]]></title>

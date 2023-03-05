@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="Follow @ruanbekker After a year or two spending quite a lot of time into docker and more specifically docker swarm, I found it quite tedious to &hellip;">
+  <meta name="description" content="Follow @ruanbekker In this tutorial we will deploy a monitoring stack to docker swarm, that includes Grafana, Prometheus, Node-Exporter, cAdvisor &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,219 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2019/09/05/deploy-a-monitoring-stack-on-docker-swarm-with-grafana-and-prometheus/">Deploy a Monitoring Stack on Docker Swarm With Grafana and Prometheus</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2019-09-05T00:07:52+02:00'><span class='date'><span class='date-month'>Sep</span> <span class='date-day'>5</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>12:07 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="" /></p>
+
+<p><a href="https://saythanks.io/to/ruanbekker"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a> <a href="https://linux-hackers-slack.herokuapp.com/"><img src="https://linux-hackers-slack.herokuapp.com/badge.svg" alt="Slack Status" /></a> <a href="https://linux-hackers.slack.com/"><img src="https://img.shields.io/badge/chat-on_slack-orange.svg" alt="Chat on Slack" /></a> <a href="https://github.com/bekkerstacks/traefik"><img src="https://img.shields.io/github/followers/ruanbekker.svg?label=Follow&amp;style=social" alt="GitHub followers" /></a></p>
+
+<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
+
+<p>In this tutorial we will deploy a monitoring stack to docker swarm, that includes Grafana, Prometheus, Node-Exporter, cAdvisor and Alertmanager.</p>
+
+<p>If you are looking for more information on Prometheus, have a look at my other <a href="https://blog.ruanbekker.com/blog/categories/prometheus/">Prometheus and Monitoring</a> blog posts.</p>
+
+<h2>What you will get out of this</h2>
+
+<p>Once you deployed the stacks, you will have the following:</p>
+
+<ul>
+<li>Access Grafana through Traefik reverse proxy</li>
+<li>Node-Exporter to expose node level metrics</li>
+<li>cAdvisor to expose container level metrics</li>
+<li>Prometheus to scrape the exposed entpoints and ingest it into Prometheus</li>
+<li>Prometheus for your Timeseries Database</li>
+<li>Alertmanager for firing alerts on configured rules</li>
+</ul>
+
+
+<p>The compose file that I will provide will have pre-populated dashboards</p>
+
+<h2>Deploy Traefik</h2>
+
+<p>Get the traefik stack sources:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/bekkerstacks/traefik
+</span><span class='line'>$ pushd traefik</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Have a look at <a href="https://github.com/bekkerstacks/traefik/wiki/Deploy-Traefik-in-HTTPS-Mode">HTTPS Mode</a> if you want to deploy traefik on HTTPS, as I will use HTTP in this demonstration.</p>
+
+<p>Set your domain and deploy the stack:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ DOMAIN=localhost PROTOCOL=http bash deploy.sh
+</span><span class='line'>
+</span><span class='line'>Username for Traefik UI: demo
+</span><span class='line'>Password for Traefik UI: 
+</span><span class='line'>deploying traefik stack in http mode
+</span><span class='line'>Creating network public
+</span><span class='line'>Creating config proxy_traefik_htpasswd
+</span><span class='line'>Creating service proxy_traefik
+</span><span class='line'>Traefik UI is available at:
+</span><span class='line'>- http://traefik.localhost</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Your traefik service should be running:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker service ls
+</span><span class='line'>ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+</span><span class='line'>0wga71zbx1pe        proxy_traefik       replicated          1/1                 traefik:1.7.14      *:80-&gt;80/tcp</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Switch back to the previous directory:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ popd</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the Monitoring Stack</h2>
+
+<p>Get the sources:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ git clone https://github.com/bekkerstacks/monitoring-cpang
+</span><span class='line'>$ pushd monitoring-cpang</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If you want to deploy the stack with no pre-configured dashboards, you would need to use <code>./docker-compose.html</code>, but in this case we will deploy the stack with pre-configured dashboards.</p>
+
+<p>Set the domain and deploy the stack:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ docker stack deploy -c alt_versions/docker-compose_http_with_dashboards.yml mon
+</span><span class='line'>
+</span><span class='line'>Creating network private
+</span><span class='line'>Creating config mon_grafana_config_datasource
+</span><span class='line'>Creating config mon_grafana_dashboard_prometheus
+</span><span class='line'>Creating config mon_grafana_dashboard_docker
+</span><span class='line'>Creating config mon_grafana_dashboard_nodes
+</span><span class='line'>Creating config mon_grafana_dashboard_blackbox
+</span><span class='line'>Creating config mon_alertmanager_config
+</span><span class='line'>Creating config mon_prometheus_config
+</span><span class='line'>Creating config mon_prometheus_rules
+</span><span class='line'>Creating service mon_blackbox-exporter
+</span><span class='line'>Creating service mon_alertmanager
+</span><span class='line'>Creating service mon_prometheus
+</span><span class='line'>Creating service mon_grafana
+</span><span class='line'>Creating service mon_cadvisor
+</span><span class='line'>Creating service mon_node-exporter</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The endpoints is configured as <code>${service_name}.${DOMAIN}</code> so you will be able to access grafana on <code>http://grafana.localhost</code> as showed in my use-case.</p>
+
+<p>Use <code>docker stack services mon</code> to see if all the tasks has checked into its desired count then access grafana on <code>http://grafana.${DOMAIN}</code></p>
+
+<h2>Accessing Grafana</h2>
+
+<p>Access Grafana on <code>http://grafana.${DOMAIN}</code> and logon with the user admin and the password admin:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292266-4d303a00-cf6a-11e9-8a49-2ae05b1ed5c6.png" alt="image" /></p>
+
+<p>You will be asked to reset the password:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292291-5f11dd00-cf6a-11e9-8049-2abdbb0164f6.png" alt="image" /></p>
+
+<p>You will then be directed to the ui:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292317-705ae980-cf6a-11e9-928b-60b5dec7ea09.png" alt="image" /></p>
+
+<p>From the top, when you list dashboards, you will see the 3 dashboards that was pre-configured:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64292334-7b157e80-cf6a-11e9-92c6-9e0698815ba7.png" alt="image" /></p>
+
+<p>When looking at the Swarm Nodes Dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64297086-82da2080-cf74-11e9-8060-f0193bfaeb13.png" alt="image" /></p>
+
+<p>The Swarm Services Dashboard:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64297656-a8ffc080-cf74-11e9-88a2-b4cec295aed5.png" alt="image" /></p>
+
+<h2>Exploring Metrics in Prometheus</h2>
+
+<p>Access prometheus on <code>http://prometheus.${DOMAIN}</code> and from the search input, you can start exploring though all the metrics that is available in prometheus:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64298324-74403900-cf75-11e9-99b7-559b02ef67b7.png" alt="image" /></p>
+
+<p>If we search for <code>node_load15</code> and select graph, we can have a quick look on how the 15 minute load average looks like for the node where the stack is running on:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64298454-e31d9200-cf75-11e9-89bb-b6fe94470166.png" alt="image" /></p>
+
+<p>Having a look at the alerts section:</p>
+
+<p><img src="https://user-images.githubusercontent.com/50801771/64299172-7657c700-cf78-11e9-97bd-143e5fe87941.png" alt="image" /></p>
+
+<h2>Resources</h2>
+
+<p>For more information and configuration on the stack that we use, have a look at the wiki:
+- <a href="https://github.com/bekkerstacks/monitoring-cpang/wiki">https://github.com/bekkerstacks/monitoring-cpang/wiki</a></p>
+
+<p>The github repository:
+- <a href="https://github.com/bekkerstacks/monitoring-cpang">https://github.com/bekkerstacks/monitoring-cpang</a></p>
+
+<h2>Thank You</h2>
+
+<p>Let me know what you think. If you liked my content, feel free to checkout my content on <strong><a href="https://ruan.dev/">ruan.dev</a></strong> or follow me on twitter at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+
+<p><a href="https://twitter.com/ruanbekker?ref_src=twsrc%5Etfw" class="twitter-follow-button" data-show-count="false">Follow @ruanbekker</a><script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -3284,52 +3497,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2019/05/17/prometheus-series-of-tutorials-for-your-guide-to-epic-metrics/">Prometheus Series of Tutorials for Your Guide to Epic Metrics</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2019-05-17T14:24:40-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>17</span><span class='date-suffix'>th</span>, <span class='date-year'>2019</span></span> <span class='time'>2:24 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/57307750-696bb980-70e5-11e9-9b0b-73ad88bde6a3.png" alt="prometheus" /></p>
-
-<p>This is a curated list of tutorials of prometheus, from installing prometheus, installing grafana, exporters, docker versions of the prometheus / grafana / node exporter stack, etc.</p>
-
-<h2>The List</h2>
-
-<ul>
-<li>Install <a href="http://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Prometheus</a></li>
-<li>Install <a href="http://blog.ruanbekker.com/blog/2019/05/07/setup-prometheus-and-node-exporter-on-ubuntu-for-epic-monitoring/">Node Exporter</a></li>
-<li>Install <a href="http://blog.ruanbekker.com/blog/2019/05/17/install-pushgateway-to-expose-metrics-to-prometheus/">Pushgateway</a></li>
-<li>Install <a href="http://blog.ruanbekker.com/blog/2019/05/17/install-grafana-to-visualize-your-metrics-from-datasources-such-as-prometheus-on-linux/">Grafana</a></li>
-<li>Install <a href="http://blog.ruanbekker.com/blog/2019/05/17/install-alertmanager-to-alert-based-on-metrics-from-prometheus/">Alertmananger</a></li>
-<li>Install <a href="http://blog.ruanbekker.com/blog/2019/05/17/install-blackbox-exporter-to-monitor-websites-with-prometheus/">Blackbox Exporter</a></li>
-<li>Install <a href="">Docker Prometheus Grafana Stack</a></li>
-</ul>
-
-
-<p>This list will be updated as I publish more tutorials</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/13">&larr; Older</a>
@@ -3403,6 +3570,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/03/05/persisting-terraform-remote-state-in-gitlab/">Persisting Terraform Remote State in Gitlab</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/01/24/everything-you-need-to-know-about-helm/">Everything You Need to Know About Helm</a>
       </li>
     
@@ -3416,10 +3587,6 @@
     
       <li class="post">
         <a href="/blog/2022/09/20/kind-for-local-kubernetes-clusters/">KinD for Local Kubernetes Clusters</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2022/08/28/ansible-playbook-for-your-macbook-homebrew-packages/">Ansible Playbook for Your Macbook Homebrew Packages</a>
       </li>
     
   </ul>

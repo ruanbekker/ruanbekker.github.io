@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-01-29T12:50:43-05:00</updated>
+  <updated>2023-03-05T02:24:19-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,236 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Persisting Terraform Remote State in Gitlab]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/03/05/persisting-terraform-remote-state-in-gitlab/"/>
+    <updated>2023-03-05T01:43:54-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/03/05/persisting-terraform-remote-state-in-gitlab</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/222946002-7cd88466-c584-4ea0-b190-54b1c3052865.png" alt="terraform-state-gitlab" /></p>
+
+<p>In this tutorial we will demonstrate how to persist your terraform state in gitlab managed terraform state, using the terraform http backend.</p>
+
+<p>For detailed information about this consult <a href="https://docs.gitlab.com/ee/user/infrastructure/iac/terraform_state.html">their documentation</a></p>
+
+<h2>What are we doing?</h2>
+
+<p>We will create a terraform pipeline which will run the plan step automatically and a manual step to run the apply step.</p>
+
+<p>During these steps and different pipelines we need to persist our terraform state remotely so that new pipelines can read from our state what we last stored.</p>
+
+<p>Gitlab offers a <a href="https://docs.gitlab.com/ee/user/infrastructure/iac/terraform_state.html">remote backend</a> for our terraform state which we can use, and we will use a basic example of using the random resource.</p>
+
+<h2>Prerequisites</h2>
+
+<p>If you don&rsquo;t see the &ldquo;Infrastructure&rdquo; menu on your left, you need to enable it at &ldquo;Settings&rdquo;, &ldquo;General&rdquo;, &ldquo;Visibility&rdquo;, &ldquo;Project features&rdquo;, &ldquo;Permissions&rdquo; and under &ldquo;Operations&rdquo;, turn on the toggle.</p>
+
+<p>For more information on this see their <a href="https://docs.gitlab.com/ee/user/infrastructure/iac/terraform_state.html#prerequisites">documentation</a></p>
+
+<h2>Authentication</h2>
+
+<p>For this demonstration I created a token which is only scoped for this one project, for this we need a to create a token under, &ldquo;Settings&rdquo;, &ldquo;Access Tokens&rdquo;:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222896148-6b0121fe-fceb-470e-a096-5db03ae0eab9.png" alt="image" /></p>
+
+<p>Select the <code>api</code> under scope:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222896298-fee26e1f-6bcf-4d7c-80eb-ed48ded33bf2.png" alt="image" /></p>
+
+<p>Store the token name and token value as <code>TF_USERNAME</code> and <code>TF_PASSWORD</code> as a CICD variable under &ldquo;Settings&rdquo;, &ldquo;CI/CD&rdquo;, &ldquo;Variables&rdquo;.</p>
+
+<h2>Terraform Code</h2>
+
+<p>We will use a basic <code>random_uuid</code> resource for this demonstration, our <code>main.tf</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>resource "random_uuid" "uuid" {}
+</span><span class='line'>
+</span><span class='line'>output "uuid" {
+</span><span class='line'>  value       = random_uuid.uuid.result
+</span><span class='line'>  sensitive   = false
+</span><span class='line'>}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>providers.tf</code>, you will notice the <code>backend "http" {}</code> is what is required for our gitlab remote state:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>terraform {
+</span><span class='line'>  required_providers {
+</span><span class='line'>    random = {
+</span><span class='line'>      source = "hashicorp/random"
+</span><span class='line'>      version = "3.4.3"
+</span><span class='line'>    }
+</span><span class='line'>  }
+</span><span class='line'>  backend "http" {}
+</span><span class='line'>  required_version = "~&gt; 1.3.6"
+</span><span class='line'>}
+</span><span class='line'>
+</span><span class='line'>provider "random" {}</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Push that up to gitlab for now.</p>
+
+<h2>Gitlab Pipeline</h2>
+
+<p>Our <code>.gitlab-ci.yml</code> consists of a plan step and a apply step which is a manual step as we first want to review our plan step before we apply.</p>
+
+<p>Our pipeline will only run on the default branch, which in my case is main:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">hashicorp/terraform:1.3.6</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">entrypoint</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&quot;&quot;</span><span class="p-Indicator">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">cache</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">.terraform</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">workflow</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">rules</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">if</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">when</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">never</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">variables</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">TF_ADDRESS</span><span class="p-Indicator">:</span> <span class="s">&quot;https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/terraform/state/default-terraform.tfstate&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">stages</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">plan</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">apply</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">.terraform_init</span><span class="p-Indicator">:</span> <span class="nl">&amp;terraform_init</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">terraform init</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=address=${TF_ADDRESS}</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=lock_address=${TF_ADDRESS}/lock</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=unlock_address=${TF_ADDRESS}/lock</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=username=${TF_USERNAME}</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=password=${TF_PASSWORD}</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=lock_method=POST</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=unlock_method=DELETE</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">-backend-config=retry_wait_min=5</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">terraform:plan</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">stage</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">plan</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">artifacts</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;**/*.tfplan&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;**/.terraform.lock.hcl&#39;</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">before_script</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="nv">*terraform_init</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">script</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">terraform validate</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">terraform plan -input=false -out default.tfplan</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">terraform:apply</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">stage</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">apply</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">artifacts</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;**/*.tfplan&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;**/.terraform.lock.hcl&#39;</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">before_script</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="nv">*terraform_init</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">script</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">terraform apply -input=false -auto-approve default.tfplan</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">when</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">manual</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Where the magic happens is in the <code>terraform init</code> step, that is where we will initialize the terraform state in gitlab, and as you can see we are taking the <code>TF_ADDRESS</code> variable to define the path of our state and in this case our state file will be named <code>default-terraform.tfstate</code>.</p>
+
+<p>If it was a case where you are deploying multiple environments, you can use something like <code>${ENVIRONMENT}-terraform.tfstate</code>.</p>
+
+<p>When we run our pipeline, we can look at our plan step:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222947389-9d9d8d4f-a114-44b5-b183-a2b126ba82b8.png" alt="image" /></p>
+
+<p>Once we are happy with this we can run the manual step and do the apply step, then our pipeline should look like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222930015-6445a5da-7887-47a6-989e-f33a33b9451a.png" alt="image" /></p>
+
+<p>When we inspect our terraform state in the infrastructure menu, we can see the state file was created:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/222901200-2cd0a0f9-6e81-438f-bc74-286778b648d4.png" alt="image" /></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Everything You Need to Know About Helm]]></title>
@@ -5196,305 +5426,6 @@ ight be used to deploy something simple such as a deployment or something comple
 </pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform destroy
 </span></code></pre></td></tr></table></div></figure>
 
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Matrix Bot Using SimpleMatrixBotlib in Python]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/03/29/matrix-bot-using-simplematrixbotlib-in-python/"/>
-    <updated>2022-03-29T18:50:43-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/03/29/matrix-bot-using-simplematrixbotlib-in-python</id>
-    <content type="html"><![CDATA[<p>In this tutorial we will setup a python bot for our matrix chat server. We will only do a couple of basic commands, so that you have a solid base to build from.</p>
-
-<h2>Matrix Server</h2>
-
-<p>In our <a href="https://blog.ruanbekker.com/blog/2022/03/29/setup-matrix-and-element-chat-server/">previous post</a> we&rsquo;ve setup a matrix and element server, so if you are following along, head over to that post to setup your matrix server before continuing.</p>
-
-<h2>Matrix Python Bot</h2>
-
-<p>We will be using <a href="https://simple-matrix-bot-lib.readthedocs.io/en/latest/index.html">simple-matrix-bot-lib</a> as our bot, so first we need to install it:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>python3 -m pip install simplematrixbotlib
-</span><span class='line'>python3 -m pip install requests
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We will need to authenticate with a user, so I will create a dedicated bot user:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker <span class="nb">exec</span> -it matrix_synapse_1 bash
-</span><span class='line'>&gt; register_new_matrix_user -c /data/homeserver.yaml http://localhost:8008
-</span><span class='line'>
-</span><span class='line'>New user localpart <span class="o">[</span>root<span class="o">]</span>: bot
-</span><span class='line'>Password:
-</span><span class='line'>Confirm password:
-</span><span class='line'>Make admin <span class="o">[</span>no<span class="o">]</span>: no
-</span><span class='line'>Sending registration request...
-</span><span class='line'>Success!
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The most basic bot is the echo bot, which just returns your message:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">subprocess</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">simplematrixbotlib</span> <span class="kn">as</span> <span class="nn">botlib</span>
-</span><span class='line'><span class="kn">from</span> <span class="nn">urllib.request</span> <span class="kn">import</span> <span class="n">ssl</span><span class="p">,</span> <span class="n">socket</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">datetime</span><span class="o">,</span> <span class="nn">smtplib</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">MATRIX_URL</span><span class="o">=</span><span class="s">&quot;https://matrix.foodmain.co.za&quot;</span>
-</span><span class='line'><span class="n">MATRIX_USER</span><span class="o">=</span><span class="s">&quot;@foobot:matrix.foodmain.co.za&quot;</span>
-</span><span class='line'><span class="n">MATRIX_PASS</span><span class="o">=</span><span class="s">&quot;foo&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">creds</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">Creds</span><span class="p">(</span><span class="n">MATRIX_URL</span><span class="p">,</span> <span class="n">MATRIX_USER</span><span class="p">,</span> <span class="n">MATRIX_PASS</span><span class="p">)</span>
-</span><span class='line'><span class="n">bot</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">Bot</span><span class="p">(</span><span class="n">creds</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">PREFIX</span> <span class="o">=</span> <span class="s">&#39;!&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Help</span>
-</span><span class='line'><span class="nd">@bot.listener.on_message_event</span>
-</span><span class='line'><span class="n">async</span> <span class="k">def</span> <span class="nf">help</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">match</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">MessageMatch</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">bot</span><span class="p">,</span> <span class="n">PREFIX</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">match</span><span class="o">.</span><span class="n">is_not_from_this_bot</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">prefix</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&quot;help&quot;</span><span class="p">):</span>
-</span><span class='line'>        <span class="n">help_message</span> <span class="o">=</span> <span class="s">&quot;&quot;&quot;</span>
-</span><span class='line'><span class="s">        Help:</span>
-</span><span class='line'><span class="s">         - !help</span>
-</span><span class='line'><span class="s">        Echo</span>
-</span><span class='line'><span class="s">         - !echo your message</span>
-</span><span class='line'><span class="s">        &quot;&quot;&quot;</span>
-</span><span class='line'>        <span class="n">await</span> <span class="n">bot</span><span class="o">.</span><span class="n">api</span><span class="o">.</span><span class="n">send_markdown_message</span><span class="p">(</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="n">help_message</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Echo</span>
-</span><span class='line'><span class="nd">@bot.listener.on_message_event</span>
-</span><span class='line'><span class="n">async</span> <span class="k">def</span> <span class="nf">echo</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
-</span><span class='line'>    <span class="sd">&quot;&quot;&quot;</span>
-</span><span class='line'><span class="sd">    Example function that &quot;echoes&quot; arguements.</span>
-</span><span class='line'><span class="sd">    Usage:</span>
-</span><span class='line'><span class="sd">    user:  !echo say something</span>
-</span><span class='line'><span class="sd">    bot:   say something</span>
-</span><span class='line'><span class="sd">    &quot;&quot;&quot;</span>
-</span><span class='line'>    <span class="n">match</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">MessageMatch</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">bot</span><span class="p">,</span> <span class="n">PREFIX</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">match</span><span class="o">.</span><span class="n">is_not_from_this_bot</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">prefix</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&quot;echo&quot;</span><span class="p">):</span>
-</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;Room: {r}, User: {u}, Message: {m}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">r</span><span class="o">=</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="n">u</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">message</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;:&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">],</span> <span class="n">m</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">message</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;:&#39;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()))</span>
-</span><span class='line'>        <span class="n">await</span> <span class="n">bot</span><span class="o">.</span><span class="n">api</span><span class="o">.</span><span class="n">send_text_message</span><span class="p">(</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="s">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">arg</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">match</span><span class="o">.</span><span class="n">args</span><span class="p">()))</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">bot</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Run the bot, invite the bot user to a room and test it with <code>!echo hi</code></p>
-
-<p>For a bot having to use the requests library, such as getting a quote from an api, we can use the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-<span class='line-number'>64</span>
-<span class='line-number'>65</span>
-<span class='line-number'>66</span>
-<span class='line-number'>67</span>
-<span class='line-number'>68</span>
-<span class='line-number'>69</span>
-<span class='line-number'>70</span>
-<span class='line-number'>71</span>
-<span class='line-number'>72</span>
-<span class='line-number'>73</span>
-<span class='line-number'>74</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">random</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">subprocess</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">simplematrixbotlib</span> <span class="kn">as</span> <span class="nn">botlib</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'><span class="kn">from</span> <span class="nn">urllib.request</span> <span class="kn">import</span> <span class="n">ssl</span><span class="p">,</span> <span class="n">socket</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">datetime</span><span class="o">,</span> <span class="nn">smtplib</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">MATRIX_URL</span><span class="o">=</span><span class="s">&quot;https://matrix.foodmain.co.za&quot;</span>
-</span><span class='line'><span class="n">MATRIX_USER</span><span class="o">=</span><span class="s">&quot;@foobot:matrix.foodmain.co.za&quot;</span>
-</span><span class='line'><span class="n">MATRIX_PASS</span><span class="o">=</span><span class="s">&quot;foo&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">creds</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">Creds</span><span class="p">(</span><span class="n">MATRIX_URL</span><span class="p">,</span> <span class="n">MATRIX_USER</span><span class="p">,</span> <span class="n">MATRIX_PASS</span><span class="p">)</span>
-</span><span class='line'><span class="n">bot</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">Bot</span><span class="p">(</span><span class="n">creds</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">PREFIX</span> <span class="o">=</span> <span class="s">&#39;!&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Help</span>
-</span><span class='line'><span class="nd">@bot.listener.on_message_event</span>
-</span><span class='line'><span class="n">async</span> <span class="k">def</span> <span class="nf">help</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">match</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">MessageMatch</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">bot</span><span class="p">,</span> <span class="n">PREFIX</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">match</span><span class="o">.</span><span class="n">is_not_from_this_bot</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">prefix</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&quot;help&quot;</span><span class="p">):</span>
-</span><span class='line'>        <span class="n">help_message</span> <span class="o">=</span> <span class="s">&quot;&quot;&quot;</span>
-</span><span class='line'><span class="s">        Help:</span>
-</span><span class='line'><span class="s">         - !help</span>
-</span><span class='line'><span class="s">        Echo</span>
-</span><span class='line'><span class="s">         - !echo msg</span>
-</span><span class='line'><span class="s">        Fortune:</span>
-</span><span class='line'><span class="s">         - !fortune</span>
-</span><span class='line'><span class="s">        Quote:</span>
-</span><span class='line'><span class="s">         - !quote</span>
-</span><span class='line'><span class="s">        &quot;&quot;&quot;</span>
-</span><span class='line'>        <span class="n">await</span> <span class="n">bot</span><span class="o">.</span><span class="n">api</span><span class="o">.</span><span class="n">send_markdown_message</span><span class="p">(</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="n">help_message</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Echo</span>
-</span><span class='line'><span class="nd">@bot.listener.on_message_event</span>
-</span><span class='line'><span class="n">async</span> <span class="k">def</span> <span class="nf">echo</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
-</span><span class='line'>    <span class="sd">&quot;&quot;&quot;</span>
-</span><span class='line'><span class="sd">    Example function that &quot;echoes&quot; arguements.</span>
-</span><span class='line'><span class="sd">    Usage:</span>
-</span><span class='line'><span class="sd">    user: !echo say something</span>
-</span><span class='line'><span class="sd">    bot:  say something</span>
-</span><span class='line'><span class="sd">    &quot;&quot;&quot;</span>
-</span><span class='line'>    <span class="n">match</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">MessageMatch</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">bot</span><span class="p">,</span> <span class="n">PREFIX</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">match</span><span class="o">.</span><span class="n">is_not_from_this_bot</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">prefix</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&quot;echo&quot;</span><span class="p">):</span>
-</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="s">&quot;Room: {r}, User: {u}, Message: {m}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">r</span><span class="o">=</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="n">u</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">message</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;:&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">],</span> <span class="n">m</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">message</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;:&#39;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()))</span>
-</span><span class='line'>        <span class="n">await</span> <span class="n">bot</span><span class="o">.</span><span class="n">api</span><span class="o">.</span><span class="n">send_text_message</span><span class="p">(</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="s">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">arg</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">match</span><span class="o">.</span><span class="n">args</span><span class="p">()))</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Fortune</span>
-</span><span class='line'><span class="nd">@bot.listener.on_message_event</span>
-</span><span class='line'><span class="n">async</span> <span class="k">def</span> <span class="nf">fortune</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">match</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">MessageMatch</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">bot</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">match</span><span class="o">.</span><span class="n">is_not_from_this_bot</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&#39;!fortune&#39;</span><span class="p">):</span>
-</span><span class='line'>        <span class="n">fortune</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s">&#39;/usr/games/fortune&#39;</span><span class="p">],</span> <span class="n">capture_output</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;UTF-8&#39;</span><span class="p">)</span>
-</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="n">fortune</span><span class="p">)</span>
-</span><span class='line'>        <span class="n">await</span> <span class="n">bot</span><span class="o">.</span><span class="n">api</span><span class="o">.</span><span class="n">send_text_message</span><span class="p">(</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span> <span class="n">fortune</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="c"># Quotes</span>
-</span><span class='line'><span class="nd">@bot.listener.on_message_event</span>
-</span><span class='line'><span class="n">async</span> <span class="k">def</span> <span class="nf">quote</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">match</span> <span class="o">=</span> <span class="n">botlib</span><span class="o">.</span><span class="n">MessageMatch</span><span class="p">(</span><span class="n">room</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">bot</span><span class="p">,</span> <span class="n">PREFIX</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">match</span><span class="o">.</span><span class="n">is_not_from_this_bot</span><span class="p">()</span> <span class="ow">and</span> <span class="n">match</span><span class="o">.</span><span class="n">prefix</span><span class="p">()</span> <span class="ow">and</span> <span class="p">(</span>
-</span><span class='line'>            <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&quot;quote&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">match</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s">&quot;q&quot;</span><span class="p">)):</span>
-</span><span class='line'>
-</span><span class='line'>        <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;https://goquotes-api.herokuapp.com/api/v1/random?count=1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s">&#39;quotes&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
-</span><span class='line'>        <span class="n">quote</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;text&#39;</span><span class="p">]</span>
-</span><span class='line'>        <span class="n">author</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;author&#39;</span><span class="p">]</span>
-</span><span class='line'>        <span class="n">tag</span> <span class="o">=</span> <span class="n">response</span><span class="p">[</span><span class="s">&#39;tag&#39;</span><span class="p">]</span>
-</span><span class='line'>        <span class="n">formatted_message</span> <span class="o">=</span> <span class="n">f</span><span class="s">&quot;&quot;&quot;{quote}</span>
-</span><span class='line'><span class="s">        - {author}</span>
-</span><span class='line'><span class="s">        &quot;&quot;&quot;</span>
-</span><span class='line'>        <span class="c">#await bot.api.send_text_message(room.room_id, formatted_message)</span>
-</span><span class='line'>        <span class="n">await</span> <span class="n">bot</span><span class="o">.</span><span class="n">api</span><span class="o">.</span><span class="n">send_markdown_message</span><span class="p">(</span><span class="n">room</span><span class="o">.</span><span class="n">room_id</span><span class="p">,</span>  <span class="n">formatted_message</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">bot</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources</h2>
-
-<p>For more information, have a look at their <a href="https://simple-matrix-bot-lib.readthedocs.io/en/latest/index.html">documentation</a></p>
 
 <h2>Thank You</h2>
 

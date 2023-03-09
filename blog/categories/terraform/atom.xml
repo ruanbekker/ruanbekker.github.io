@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Terraform | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/terraform/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-03-05T02:24:19-05:00</updated>
+  <updated>2023-03-09T16:42:28-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,518 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Manage Helm Releases With Terraform]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/03/09/manage-helm-releases-with-terraform/"/>
+    <updated>2023-03-09T16:15:47-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/03/09/manage-helm-releases-with-terraform</id>
+    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/224163430-34e18f11-2182-4d2b-b7ab-f4683c187719.png" alt="helm-releases-with-terraform" /></p>
+
+<p>In this post we will use terraform to deploy a helm release to kubernetes.</p>
+
+<h2>Kubernetes</h2>
+
+<p>For this demonstration I will be using <a href="https://kind.sigs.k8s.io/">kind</a> to deploy a local Kubernetes cluster to the operating system that I am running this on, which will be Ubuntu Linux. For a more in-depth tutorial on Kind, you can see my post on <a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">Kind for Local Kubernetes Clusters</a>.</p>
+
+<h2>Installing the Pre-Requirements</h2>
+
+<p>We will be installing terraform, docker, kind and kubectl on Linux.</p>
+
+<p>Install terraform:</p>
+
+<pre><code class="bash">wget https://releases.hashicorp.com/terraform/1.3.0/terraform_1.3.0_linux_amd64.zip
+unzip terraform_1.3.0_linux_amd64.zip
+rm terraform_1.3.0_linux_amd64.zip
+mv terraform /usr/bin/terraform
+</code></pre>
+
+<p>Verify that terraform has been installed:</p>
+
+<pre><code class="bash">terraform -version
+</code></pre>
+
+<p>Which in my case returns:</p>
+
+<pre><code class="bash">Terraform v1.3.0
+on linux_amd64
+</code></pre>
+
+<p>Install Docker on Linux (be careful to curl pipe bash - trust the scripts that you are running):</p>
+
+<pre><code class="bash">curl https://get.docker.com | bash
+</code></pre>
+
+<p>Then running <code>docker ps</code> should return:</p>
+
+<pre><code class="bash">CONTAINER ID   IMAGE        COMMAND         CREATED          STATUS          PORTS       NAMES
+</code></pre>
+
+<p>Install kind on Linux:</p>
+
+<pre><code class="bash">apt update
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+</code></pre>
+
+<p>Then to verify that kind was installed with <code>kind --version</code> should return:</p>
+
+<pre><code class="bash">kind version 0.17.0
+</code></pre>
+
+<p>Create a kubernetes cluster using kind:</p>
+
+<pre><code class="bash">kind create cluster --name rbkr --image kindest/node:v1.24.0
+</code></pre>
+
+<p>Now install <a href="https://kubernetes.io/docs/tasks/tools/">kubectl</a>:</p>
+
+<pre><code class="bash">curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+</code></pre>
+
+<p>Then to verify that kubectl was installed:</p>
+
+<pre><code class="bash">kubectl version --client
+</code></pre>
+
+<p>Which in my case returns:</p>
+
+<pre><code class="bash">Client Version: version.Info{Major:"1", Minor:"26", GitVersion:"v1.26.1", GitCommit:"8f94681cd294aa8cfd3407b8191f6c70214973a4", GitTreeState:"clean", BuildDate:"2023-01-18T15:58:16Z", GoVersion:"go1.19.5", Compiler:"gc", Platform:"linux/amd64"}
+Kustomize Version: v4.5.7
+</code></pre>
+
+<p>Now we can test if kubectl can communicate with the kubernetes api server:</p>
+
+<pre><code class="bash">kubectl get nodes
+</code></pre>
+
+<p>In my case it returns:</p>
+
+<pre><code class="bash">NAME                 STATUS   ROLES           AGE     VERSION
+rbkr-control-plane   Ready    control-plane   6m20s   v1.24.0
+</code></pre>
+
+<h2>Terraform</h2>
+
+<p>Now that our pre-requirements are sorted we can configure terraform to communicate with kubernetes. For that to happen, we need to consult the <a href="https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs">terraform kubernetes provider</a>&rsquo;s documentation.</p>
+
+<p>As per their documentation they provide us with this snippet:</p>
+
+<pre><code>terraform {
+  required_providers {
+    kubernetes = {
+      source = "hashicorp/kubernetes"
+      version = "2.18.0"
+    }
+  }
+}
+
+provider "kubernetes" {
+  # Configuration options
+}
+</code></pre>
+
+<p>And from their <a href="https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs">main</a> page, it gives us a couple of options to configure the provider and the easiest is probably to read the <code>~/.kube/config</code> configuration file.</p>
+
+<p>But in cases where you have multiple configurations in your kube config file, this might not be ideal, and I like to be precise, so I will extract the client certificate, client key and cluster ca certificate and endpoint from our <code>~/.kube/config</code> file.</p>
+
+<p>If we run <code>cat ~/.kube/config</code> we will see something like this:</p>
+
+<pre><code class="yaml">apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: LS0tLS1CRU......FURS0tLS0tCg==
+    server: https://127.0.0.1:40305
+  name: kind-rbkr
+contexts:
+- context:
+    cluster: kind-rbkr
+    user: kind-rbkr
+  name: kind-rbkr
+current-context: kind-rbkr
+kind: Config
+preferences: {}
+users:
+- name: kind-rbkr
+  user:
+    client-certificate-data: LS0tLS1CRX......FURS0tLS0tCg==
+    client-key-data: LS0tLS1CRUejhKWUk2N2.....S0tCg==
+</code></pre>
+
+<p>First we will create a directory for our certificates:</p>
+
+<pre><code class="bash">mkdir ~/certs
+</code></pre>
+
+<p>I have truncated my kube config for readability, but for our first file <code>certs/client-cert.pem</code> we will copy the value of <code>client-certificate-data:</code>, which will look something like this:</p>
+
+<pre><code class="bash">cat certs/client-cert.pem
+LS0tLS1CRX......FURS0tLS0tCg==
+</code></pre>
+
+<p>Then we will copy the contents of <code>client-key-data:</code> into <code>certs/client-key.pem</code> and then lastly the content of <code>certificate-authority-data:</code> into <code>certs/cluster-ca-cert.pem</code>.</p>
+
+<p>So then we should have the following files inside our <code>certs/</code> directory:</p>
+
+<pre><code class="bash">tree certs/
+certs/
+├── client-cert.pem
+├── client-key.pem
+└── cluster-ca-cert.pem
+
+0 directories, 3 files
+</code></pre>
+
+<p>Now make them read only:</p>
+
+<pre><code class="bash">chmod 400 ~/certs/*
+</code></pre>
+
+<p>Now that we have that we can start writing our terraform configuration. In <code>providers.tf</code>:</p>
+
+<pre><code>terraform {
+  required_providers {
+    kubernetes = {
+      source = "hashicorp/kubernetes"
+      version = "2.18.0"
+    }
+  }
+}
+
+provider "kubernetes" {
+  host                   = "https://127.0.0.1:40305"
+  client_certificate     = base64decode(file("~/certs/client-cert.pem"))
+  client_key             = base64decode(file("~/certs/client-key.pem"))
+  cluster_ca_certificate = base64decode(file("~/certs/cluster-ca-cert.pem"))
+}
+</code></pre>
+
+<p>Your host might look different to mine, but you can find your host endpoint in <code>~/.kube/config</code>.</p>
+
+<p>For a simple test we can list all our namespaces to ensure that our configuration is working. In a file called <code>namespaces.tf</code>, we can populate the following:</p>
+
+<pre><code>data "kubernetes_all_namespaces" "allns" {}
+
+output "all-ns" {
+  value = data.kubernetes_all_namespaces.allns.namespaces
+}
+</code></pre>
+
+<p>Now we need to initialize terraform so that it can download the providers:</p>
+
+<pre><code class="bash">terraform init
+</code></pre>
+
+<p>Then we can run a plan which will reveal our namespaces:</p>
+
+<pre><code class="bash">terraform plan
+
+data.kubernetes_all_namespaces.allns: Reading...
+data.kubernetes_all_namespaces.allns: Read complete after 0s [id=a0ff7e83ffd7b2d9953abcac9f14370e842bdc8f126db1b65a18fd09faa3347b]
+
+Changes to Outputs:
+  + all-ns = [
+      + "default",
+      + "kube-node-lease",
+      + "kube-public",
+      + "kube-system",
+      + "local-path-storage",
+    ]
+</code></pre>
+
+<p>We can now remove our <code>namespaces.tf</code> as our test worked:</p>
+
+<pre><code class="bash">rm namespaces.tf
+</code></pre>
+
+<h2>Helm Releases with Terraform</h2>
+
+<p>We will need two things, we need to consult the <a href="https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release">terraform helm release provider</a> documentation and we also need to consult the helm chart documentation which we are interested in.</p>
+
+<p>In my previous post I wrote about <a href="https://blog.ruanbekker.com/blog/2023/01/24/everything-you-need-to-know-about-helm/">Everything you need to know about Helm</a> and I used the <a href="https://artifacthub.io/packages/helm/bitnami/nginx">Bitnami Nginx Helm Chart</a>, so we will use that one again.</p>
+
+<p>As we are working with helm releases, we need to configure the helm provider, I will just extend my configuration from my previous provider config in <code>providers.tf</code>:</p>
+
+<pre><code>terraform {
+  required_providers {
+    kubernetes = {
+      source = "hashicorp/kubernetes"
+      version = "2.18.0"
+    }
+    helm = {
+      source = "hashicorp/helm"
+      version = "2.9.0"
+    }
+  }
+}
+
+provider "kubernetes" {
+  host                   = "https://127.0.0.1:40305"
+  client_certificate     = base64decode(file("~/certs/client-cert.pem"))
+  client_key             = base64decode(file("~/certs/client-key.pem"))
+  cluster_ca_certificate = base64decode(file("~/certs/cluster-ca-cert.pem"))
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = "https://127.0.0.1:40305"
+    client_certificate     = base64decode(file("~/certs/client-cert.pem"))
+    client_key             = base64decode(file("~/certs/client-key.pem"))
+    cluster_ca_certificate = base64decode(file("~/certs/cluster-ca-cert.pem"))
+  }
+}
+</code></pre>
+
+<p>We will create three terraform files:</p>
+
+<pre><code class="bash">touch {main,outputs,variables}.tf
+</code></pre>
+
+<p>And our values yaml in <code>helm-chart/nginx/values.yaml</code>:</p>
+
+<pre><code class="bash">mkdir -p helm-chart/nginx
+</code></pre>
+
+<p>Then you can copy the values file from <a href="https://artifacthub.io/packages/helm/bitnami/nginx?modal=values">https://artifacthub.io/packages/helm/bitnami/nginx?modal=values</a> into <code>helm-chart/nginx/values.yaml</code>.</p>
+
+<p>In our <code>main.tf</code> I will use two ways to override values in our <code>values.yaml</code> using <code>set</code> and <code>templatefile</code>. The reason for the templatefile, is when we want to fetch a value and want to replace the content with our values file, it could be used when we retrieve a value from a data source as an example. In my example im just using a variable.</p>
+
+<p>We will have the following:</p>
+
+<pre><code>resource "helm_release" "nginx" {
+  name             = var.release_name
+  version          = var.chart_version
+  namespace        = var.namespace
+  create_namespace = var.create_namespace
+  chart            = var.chart_name
+  repository       = var.chart_repository_url
+  dependency_update = true
+  reuse_values      = true
+  force_update      = true
+  atomic              = var.atomic
+
+  set {
+    name  = "image.tag"
+    value = "1.23.3-debian-11-r3"
+  }
+
+  set {
+    name  = "service.type"
+    value = "ClusterIP"
+  }
+
+  values = [
+    templatefile("${path.module}/helm-chart/nginx/values.yaml", {
+      NAME_OVERRIDE   = var.release_name
+    }
+  )]
+
+}
+</code></pre>
+
+<p>As you can see we are referencing a <code>NAME_OVERRIDE</code> in our <code>values.yaml</code>, I have cleaned up the values file to the following:</p>
+
+<pre><code class="yaml">nameOverride: "${NAME_OVERRIDE}"
+
+## ref: https://hub.docker.com/r/bitnami/nginx/tags/
+image:
+  registry: docker.io
+  repository: bitnami/nginx
+  tag: 1.23.3-debian-11-r3
+</code></pre>
+
+<p>The <code>NAME_OVERRIDE</code> must be in a <code>${}</code> format.</p>
+
+<p>In our <code>variables.tf</code> we will have the following:</p>
+
+<pre><code>variable "release_name" {
+  type        = string
+  default     = "nginx"
+  description = "The name of our release."
+}
+
+variable "chart_repository_url" {
+  type        = string
+  default     = "https://charts.bitnami.com/bitnami"
+  description = "The chart repository url."
+}
+
+variable "chart_name" {
+  type        = string
+  default     = "nginx"
+  description = "The name of of our chart that we want to install from the repository."
+}
+
+variable "chart_version" {
+  type        = string
+  default     = "13.2.20"
+  description = "The version of our chart."
+}
+
+variable "namespace" {
+  type        = string
+  default     = "apps"
+  description = "The namespace where our release should be deployed into."
+}
+
+variable "create_namespace" {
+  type        = bool
+  default     = true
+  description = "If it should create the namespace if it doesnt exist."
+}
+
+variable "atomic" {
+  type        = bool
+  default     = false
+  description = "If it should wait until release is deployed."
+}
+</code></pre>
+
+<p>And lastly our <code>outputs.tf</code>:</p>
+
+<pre><code>output "metadata" {
+  value = helm_release.nginx.metadata
+}
+</code></pre>
+
+<p>Now that we have all our configuration ready, we can initialize terraform:</p>
+
+<pre><code class="bash">terraform init
+</code></pre>
+
+<p>Then we can run a plan to see what terraform wants to deploy:</p>
+
+<pre><code class="bash">terraform plan
+</code></pre>
+
+<p>The plan output shows the following:</p>
+
+<pre><code class="bash">Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # helm_release.nginx will be created
+  + resource "helm_release" "nginx" {
+      + atomic                     = false
+      + chart                      = "nginx"
+      + cleanup_on_fail            = false
+      + create_namespace           = true
+      + dependency_update          = false
+      + disable_crd_hooks          = false
+      + disable_openapi_validation = false
+      + disable_webhooks           = false
+      + force_update               = false
+      + id                         = (known after apply)
+      + lint                       = false
+      + manifest                   = (known after apply)
+      + max_history                = 0
+      + metadata                   = (known after apply)
+      + name                       = "nginx"
+      + namespace                  = "apps"
+      + pass_credentials           = false
+      + recreate_pods              = false
+      + render_subchart_notes      = true
+      + replace                    = false
+      + repository                 = "https://charts.bitnami.com/bitnami"
+      + reset_values               = false
+      + reuse_values               = false
+      + skip_crds                  = false
+      + status                     = "deployed"
+      + timeout                    = 300
+      + values                     = [
+          + &lt;&lt;-EOT
+                nameOverride: "nginx"
+
+                ## ref: https://hub.docker.com/r/bitnami/nginx/tags/
+                image:
+                  registry: docker.io
+                  repository: bitnami/nginx
+                  tag: 1.23.3-debian-11-r3
+            EOT,
+        ]
+      + verify                     = false
+      + version                    = "13.2.20"
+      + wait                       = false
+      + wait_for_jobs              = false
+
+      + set {
+          + name  = "image.tag"
+          + value = "1.23.3-debian-11-r3"
+        }
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + metadata = (known after apply)
+</code></pre>
+
+<p>Once we are happy with our plan, we can run a apply:</p>
+
+<pre><code class="bash">terraform apply 
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + metadata = (known after apply)
+
+Do you want to perform these actions?
+  Terraform will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: yes
+
+helm_release.nginx: Creating...
+helm_release.nginx: Still creating... [10s elapsed]
+
+metadata = tolist([
+  {
+    "app_version" = "1.23.3"
+    "chart" = "nginx"
+    "name" = "nginx"
+    "namespace" = "apps"
+    "revision" = 1
+    "values" = "{\"image\":{\"registry\":\"docker.io\",\"repository\":\"bitnami/nginx\",\"tag\":\"1.23.3-debian-11-r3\"},\"nameOverride\":\"nginx\"}"
+    "version" = "13.2.20"
+  },
+])
+</code></pre>
+
+<p>Then we can verify if the pod is running:</p>
+
+<pre><code class="bash">kubectl get pods -n apps
+NAME                    READY   STATUS    RESTARTS   AGE
+nginx-59bdc6465-xdbfh   1/1     Running   0          2m35s
+</code></pre>
+
+<h2>Importing Helm Releases into Terraform State</h2>
+
+<p>If you have an existing helm release that was deployed with helm and you want to transfer the ownership to terraform, you first need to write the terraform code, then import the resources into terraform state using:</p>
+
+<pre><code class="bash">terraform import helm_release.nginx apps/nginx
+</code></pre>
+
+<p>Where the last argument is <code>&lt;namespace&gt;/&lt;release-name&gt;</code>. Once that is imported you can run terraform plan and apply.</p>
+
+<p>If you want to discover all helm releases managed by helm you can use:</p>
+
+<pre><code class="bash">kubectl get all -A -l app.kubernetes.io/managed-by=Helm
+</code></pre>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Persisting Terraform Remote State in Gitlab]]></title>
@@ -1330,403 +1842,6 @@ ebdbe42a0fcb   traefik:1.7.14         "/traefik --api       3 minutes ago   Up 3
 <h2>Thank You</h2>
 
 <p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Using the Libvirt Provisioner With Terraform for KVM]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2020/10/08/using-the-libvirt-provisioner-with-terraform-for-kvm/"/>
-    <updated>2020-10-08T00:06:21+00:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2020/10/08/using-the-libvirt-provisioner-with-terraform-for-kvm</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/95402415-e836d880-090f-11eb-8977-d1e2f842ef34.png" alt="terraform-ansible-kvm" /></p>
-
-<p>In this post we will use the <a href="https://github.com/dmacvicar/terraform-provider-libvirt">libvirt provisioner</a> with Terraform to deploy a KVM Virtual Machine on a Remote KVM Host using SSH and use Ansible to deploy Nginx on our VM.</p>
-
-<p>In my <a href="https://blog.ruanbekker.com/blog/2020/10/07/setup-a-kvm-host-for-virtualization-on-oneprovider/">previous post</a> I demonstrated how I provisioned my KVM Host and created a dedicated user for Terraform to authenticate to our KVM host to provision VMs.</p>
-
-<p>Once you have KVM installed and your SSH access is sorted, we can start by installing our dependencies.</p>
-
-<h2>Install our Dependencies</h2>
-
-<p>First we will install Terraform:</p>
-
-<pre><code>$ wget https://releases.hashicorp.com/terraform/0.13.3/terraform_0.13.3_linux_amd64.zip
-$ unzip terraform_0.13.3_linux_amd64.zip
-$ sudo mv terraform /usr/local/bin/terraform
-</code></pre>
-
-<p>Then we will install Ansible:</p>
-
-<pre><code>$ virtualenv -p python3 .venv
-$ source .venv/bin/activate
-$ pip install ansible
-</code></pre>
-
-<p>Now in order to use the libvirt provisioner, we need to install it where we will run our Terraform deployment:</p>
-
-<pre><code>$ cd /tmp/
-$ mkdir -p ~/.local/share/terraform/plugins/registry.terraform.io/dmacvicar/libvirt/0.6.2/linux_amd64
-$ wget https://github.com/dmacvicar/terraform-provider-libvirt/releases/download/v0.6.2/terraform-provider-libvirt-0.6.2+git.1585292411.8cbe9ad0.Ubuntu_18.04.amd64.tar.gz
-$ tar -xvf terraform-provider-libvirt-0.6.2+git.1585292411.8cbe9ad0.Ubuntu_18.04.amd64.tar.gz
-$ mv ./terraform-provider-libvirt  ~/.local/share/terraform/plugins/registry.terraform.io/dmacvicar/libvirt/0.6.2/linux_amd64/
-</code></pre>
-
-<p>Our ssh config for our KVM host in <code>~/.ssh/config</code>:</p>
-
-<pre><code>Host *
-    Port 22
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-
-Host ams-kvm-remote-host
-    HostName ams-kvm.mydomain.com
-    User deploys
-    IdentityFile ~/.ssh/deploys.pem
-</code></pre>
-
-<h2>Terraform all the things</h2>
-
-<p>Create a workspace directory for our demonstration:</p>
-
-<pre><code>$ mkdir -p ~/workspace/terraform-kvm-example/
-$ cd ~/workspace/terraform-kvm-example/
-</code></pre>
-
-<p>First let&rsquo;s create our <code>providers.tf</code>:</p>
-
-<pre><code>terraform {
-  required_providers {
-    libvirt = {
-      source  = "dmacvicar/libvirt"
-      version = "0.6.2"
-    }
-  }
-}
-</code></pre>
-
-<p>Then our <code>variables.tf</code>, just double check where you need to change values to suite your environment:</p>
-
-<pre><code>variable "libvirt_disk_path" {
-  description = "path for libvirt pool"
-  default     = "/opt/kvm/pool1"
-}
-
-variable "ubuntu_18_img_url" {
-  description = "ubuntu 18.04 image"
-  default     = "http://cloud-images.ubuntu.com/releases/bionic/release-20191008/ubuntu-18.04-server-cloudimg-amd64.img"
-}
-
-variable "vm_hostname" {
-  description = "vm hostname"
-  default     = "terraform-kvm-ansible"
-}
-
-variable "ssh_username" {
-  description = "the ssh user to use"
-  default     = "ubuntu"
-}
-
-variable "ssh_private_key" {
-  description = "the private key to use"
-  default     = "~/.ssh/id_rsa"
-}
-</code></pre>
-
-<p>Create the <code>main.tf</code>, you will notice that we are using ssh to connect to KVM, and because the private range of our VM&rsquo;s are not routable via the internet, I&rsquo;m using a bastion host to reach them.</p>
-
-<p>The bastion host (ssh config from the pre-requirements section) is the KVM host and you will see that ansible is also using that host as a jump box, to get to the VM. I am also using cloud-init to bootstrap the node with SSH, etc.</p>
-
-<p>The reason why I&rsquo;m using remote-exec before the ansible deployment, is to ensure that we can establish a command via SSH before Ansible starts.</p>
-
-<pre><code>provider "libvirt" {
-  uri = "qemu+ssh://deploys@ams-kvm-remote-host/system"
-}
-
-resource "libvirt_pool" "ubuntu" {
-  name = "ubuntu"
-  type = "dir"
-  path = var.libvirt_disk_path
-}
-
-resource "libvirt_volume" "ubuntu-qcow2" {
-  name = "ubuntu-qcow2"
-  pool = libvirt_pool.ubuntu.name
-  source = var.ubuntu_18_img_url
-  format = "qcow2"
-}
-
-data "template_file" "user_data" {
-  template = file("${path.module}/config/cloud_init.yml")
-}
-
-data "template_file" "network_config" {
-  template = file("${path.module}/config/network_config.yml")
-}
-
-resource "libvirt_cloudinit_disk" "commoninit" {
-  name           = "commoninit.iso"
-  user_data      = data.template_file.user_data.rendered
-  network_config = data.template_file.network_config.rendered
-  pool           = libvirt_pool.ubuntu.name
-}
-
-resource "libvirt_domain" "domain-ubuntu" {
-  name   = var.vm_hostname
-  memory = "512"
-  vcpu   = 1
-
-  cloudinit = libvirt_cloudinit_disk.commoninit.id
-
-  network_interface {
-    network_name   = "default"
-    wait_for_lease = true
-    hostname       = var.vm_hostname
-  }
-
-  console {
-    type        = "pty"
-    target_port = "0"
-    target_type = "serial"
-  }
-
-  console {
-    type        = "pty"
-    target_type = "virtio"
-    target_port = "1"
-  }
-
-  disk {
-    volume_id = libvirt_volume.ubuntu-qcow2.id
-  }
-
-  graphics {
-    type        = "spice"
-    listen_type = "address"
-    autoport    = true
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "echo 'Hello World'"
-    ]
-
-    connection {
-      type                = "ssh"
-      user                = var.ssh_username
-      host                = libvirt_domain.domain-ubuntu.network_interface[0].addresses[0]
-      private_key         = file(var.ssh_private_key)
-      bastion_host        = "ams-kvm-remote-host"
-      bastion_user        = "deploys"
-      bastion_private_key = file("~/.ssh/deploys.pem")
-      timeout             = "2m"
-    }
-  }
-
-  provisioner "local-exec" {
-    command = &lt;&lt;EOT
-      echo "[nginx]" &gt; nginx.ini
-      echo "${libvirt_domain.domain-ubuntu.network_interface[0].addresses[0]}" &gt;&gt; nginx.ini
-      echo "[nginx:vars]" &gt;&gt; nginx.ini
-      echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand=\"ssh -W %h:%p -q ams-kvm-remote-host\"'" &gt;&gt; nginx.ini
-      ansible-playbook -u ${var.ssh_username} --private-key ${var.ssh_private_key} -i nginx.ini ansible/playbook.yml
-      EOT
-  }
-}
-</code></pre>
-
-<p>As I&rsquo;ve mentioned, Im using cloud-init, so lets setup the network config and cloud init under the <code>config/</code> directory:</p>
-
-<pre><code>$ mkdir config
-</code></pre>
-
-<p>And our <code>config/cloud_init.yml</code>, just make sure that you configure your public ssh key for ssh access in the config:</p>
-
-<pre><code>#cloud-config
-# vim: syntax=yaml
-# examples:
-# https://cloudinit.readthedocs.io/en/latest/topics/examples.html
-bootcmd:
-  - echo 192.168.0.1 gw.homedns.xyz &gt;&gt; /etc/hosts
-runcmd:
- - [ ls, -l, / ]
- - [ sh, -xc, "echo $(date) ': hello world!'" ]
-ssh_pwauth: true
-disable_root: false
-chpasswd:
-  list: |
-     root:password
-  expire: false
-users:
-  - name: ubuntu
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: users, admin
-    home: /home/ubuntu
-    shell: /bin/bash
-    lock_passwd: false
-    ssh-authorized-keys:
-      - ssh-rsa AAAA ...your-public-ssh-key-goes-here... user@host
-final_message: "The system is finally up, after $UPTIME seconds"
-</code></pre>
-
-<p>And our network config, in <code>config/network_config.yml</code>:</p>
-
-<pre><code>version: 2
-ethernets:
-  ens3:
-    dhcp4: true
-</code></pre>
-
-<p>Now we will create our Ansible playbook, to deploy nginx to our VM, create the ansible directory:</p>
-
-<pre><code>$ mkdir ansible
-</code></pre>
-
-<p>Then create the <code>ansible/playbook.yml</code>:</p>
-
-<pre><code>---
-# https://docs.ansible.com/ansible/latest/collections/ansible/builtin/apt_module.html
-# https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html#examples
-- hosts: nginx
-  become: yes
-  become_user: root
-  become_method: sudo
-  tasks:
-    - name: Install nginx
-      apt:
-        name: nginx
-        state: latest
-        update_cache: yes
-
-    - name: Enable service nginx and ensure it is not masked
-      systemd:
-        name: nginx
-        enabled: yes
-        masked: no
-
-    - name: ensure nginx is started
-      systemd:
-        state: started
-        name: nginx
-</code></pre>
-
-<p>This is optional, but I&rsquo;m using a <code>ansible.cfg</code> file to define my defaults:</p>
-
-<pre><code>[defaults]
-host_key_checking = False
-ansible_port = 22
-ansible_user = ubuntu
-ansible_ssh_private_key_file = ~/.ssh/id_rsa
-ansible_python_interpreter = /usr/bin/python3
-</code></pre>
-
-<p>And lastly, our <code>outputs.tf</code> which will display our IP address of our VM:</p>
-
-<pre><code>output "ip" {
-  value = libvirt_domain.domain-ubuntu.network_interface[0].addresses[0]
-}
-
-output "url" {
-  value = "http://${libvirt_domain.domain-ubuntu.network_interface[0].addresses[0]}"
-}
-</code></pre>
-
-<h2>Deploy our Terraform Deployment</h2>
-
-<p>It&rsquo;s time to deploy a KVM instance with Terraform and deploy Nginx to our VM with Ansible using the local-exec provisioner.</p>
-
-<p>Initialize terraform to download all the plugins:</p>
-
-<pre><code>$ terraform init
-
-Initializing the backend...
-
-Initializing provider plugins...
-- Finding latest version of hashicorp/template...
-- Finding dmacvicar/libvirt versions matching "0.6.2"...
-- Installing hashicorp/template v2.1.2...
-- Installed hashicorp/template v2.1.2 (signed by HashiCorp)
-- Installing dmacvicar/libvirt v0.6.2...
-- Installed dmacvicar/libvirt v0.6.2 (unauthenticated)
-
-The following providers do not have any version constraints in configuration,
-so the latest version was installed.
-
-To prevent automatic upgrades to new major versions that may contain breaking
-changes, we recommend adding version constraints in a required_providers block
-in your configuration, with the constraint strings suggested below.
-
-* hashicorp/template: version = "~&gt; 2.1.2"
-
-Terraform has been successfully initialized!
-</code></pre>
-
-<p>Run a plan, to see what will be done:</p>
-
-<pre><code>$ terraform plan
-
-...
-Plan: 4 to add, 0 to change, 0 to destroy.
-
-Changes to Outputs:
-  + ip  = (known after apply)
-  + url = (known after apply)
-...
-</code></pre>
-
-<p>And run a apply to run our deployment:</p>
-
-<pre><code>$ terraform apply -auto-approve
-...
-libvirt_domain.domain-ubuntu (local-exec): PLAY RECAP *********************************************************************
-libvirt_domain.domain-ubuntu (local-exec): 192.168.122.213            : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
-libvirt_domain.domain-ubuntu: Creation complete after 2m24s [id=c96def6e-0361-441c-9e1f-5ba5f3fa5aec]
-
-Apply complete! Resources: 4 added, 0 changed, 0 destroyed.
-
-Outputs:
-
-ip = 192.168.122.213
-url = http://192.168.122.213
-</code></pre>
-
-<p>You can always get the output afterwards using show or output:</p>
-
-<pre><code>$ terraform show -json | jq -r '.values.outputs.ip.value'
-192.168.122.213
-
-$ terraform output -json ip | jq -r '.'
-192.168.122.213
-</code></pre>
-
-<h2>Test our VM</h2>
-
-<p>Hop onto the KVM host, and test out nginx:</p>
-
-<pre><code>$ curl -I http://192.168.122.213
-HTTP/1.1 200 OK
-Server: nginx/1.14.0 (Ubuntu)
-Date: Thu, 08 Oct 2020 00:37:43 GMT
-Content-Type: text/html
-Content-Length: 612
-Last-Modified: Thu, 08 Oct 2020 00:33:04 GMT
-Connection: keep-alive
-ETag: "5f7e5e40-264"
-Accept-Ranges: bytes
-</code></pre>
-
-
-
-<iframe src="https://giphy.com/embed/3ohzdIuqJoo8QdKlnW" width="480" height="222" frameBorder="0" class="giphy-embed" allowFullScreen></iframe>
-
-
-<p><a href="https://giphy.com/gifs/reactionseditor-yes-awesome-3ohzdIuqJoo8QdKlnW">via GIPHY</a></p>
-
-
-<h2>Thank You</h2>
-
-<p><a href="https://saythanks.io/to/ruan.ru.bekker@gmail.com"><img src="https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg" alt="Say Thanks!" /></a></p>
-
-<p>Thanks for reading, check out my <strong><a href="" rel="nofollow" target="_blank">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker" rel="nofollow" target="_blank">@ruanbekker</a></strong> on Twitter.</p>
 ]]></content>
   </entry>
   

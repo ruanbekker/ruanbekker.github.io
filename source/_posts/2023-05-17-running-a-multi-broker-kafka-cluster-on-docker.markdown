@@ -31,7 +31,6 @@ This is the `docker-compose.yaml` that we will be using to run a kafka cluster w
 All the source code is available on my [quick-starts github repository](https://github.com/ruanbekker/quick-starts/tree/main/docker/kafka) .
 
 ```yaml
----
 version: "3.9"
 
 services:

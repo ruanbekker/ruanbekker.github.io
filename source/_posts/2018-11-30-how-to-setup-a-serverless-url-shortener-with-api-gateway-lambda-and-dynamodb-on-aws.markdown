@@ -5,7 +5,8 @@ date: 2018-11-30 02:51:24 -0500
 comments: true
 categories: ["aws", "serverless", "api-gateway", "lambda", "dynamodb", "python"] 
 ---
-![](https://objects.ruanbekker.com/assets/images/aws-logo.png)
+
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/5b850ec9-bee3-4623-a87a-2a174af5e664)
 
 Today we will set a Serverless URL Shortener using API Gateway, Lambda with Python and DynamoDB.
 
@@ -73,13 +74,13 @@ Head over to [IAM Roles](https://console.aws.amazon.com/iam/home?region=eu-west-
 
 Next, head over to [DynamoDB](https://eu-west-1.console.aws.amazon.com/dynamodb/home?region=eu-west-1#create-table:) create a table, in my case the table name: `url-shortener-table` and the primary key `short_id` set to string:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-02.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/ec55e963-610a-4b3c-a4ea-064f53c08914)
 
 ## Lambda Functions
 
 Once the table is created, head over to [Lambda](https://eu-west-1.console.aws.amazon.com/lambda/home?region=eu-west-1#/create?firstrun=true) and create a Lambda function, in my case using Python 3.6 and provide a name, where I used: `url-shortener-create` and select the IAM role from the previous role that we created, this function will be the lambda function that will create the shortened urls:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-03-lambda.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/d51782ed-15ef-4bea-b75c-130d7d152fac)
 
 The code for your lambda function which will take care of creating the short urls and save them to dynamodb, take note on the region and table name to ensure that it matches your setup:
 
@@ -157,7 +158,7 @@ def lambda_handler(event, context):
 
 Set a couple of environment variables that will be used in our function, min and max chars from the screenshot below is the amount of characters that will be used in a random manner to make the short id unique. The app_url will be your domain name, as this will be returned to the client with the short id eg. `https://tiny.myserverlessapp.net/t/3f8Hf38n398t` :
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-04-lambda.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/2a3bc1e2-4a0c-45d9-830a-3f3beabc2f80)
 
 While you are on Lambda, create the function that will retrieve the long url, in my case `url-shortener-retrieve`:
 
@@ -197,56 +198,56 @@ def lambda_handler(event, context):
 
 Head over to [API Gateway](https://console.aws.amazon.com/apigateway/home?region=us-east-1#/apis) and create your API, in my case `url-shortener-api` 
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-05-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/a97ecae8-8cb4-4aff-90ee-a78900bb00fd)
 
 Head over to Resources:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-06-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/187cb4ba-bec8-48d0-b0a0-624c280bb986)
 
 and create a new resource called `/create`:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-07-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/9fa4e58f-f604-40fc-89cc-4996a9246330)
 
 Once the resource is created, create a post method on the `create` resource and select Lambda as the integration type and lambda proxy integration as seen below:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-09-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/8943829f-6663-4355-a66a-415541dbc483)
 
 Once you save it, it will ask to give api gateway permission to invoike your lambda function wich you can accept by hitting ok as below:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-10-iam-permission.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/428100ad-da67-40e3-8c9f-2adc8cb4ba09)
 
 When you look at the POST method on your create resource, it should look like this:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-12-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/81edbccf-da59-4428-bcff-986e2c10c6d9)
 
 Select the root resource `/` and from Actions create a new resource `/t`:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-13-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/30265753-f81b-464b-ba07-ec10983707c6)
 
 Select the `/t` resource and create a new resource named `shortid` and provide `{shortid}` in the resource path as this will be the data that will be proxied through to our lambda function:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-14-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/4a21c6eb-bcca-4d01-b2f7-0eb84ceda7a0)
 
 Create a GET method on the `/t/{shortid}` resource and select `url-shortener-retrieve` lambda function as the function from the lambda integration selection as seen below:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-17-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/4b54c050-99ac-4318-8a22-9a234cfbe316)
 
 Again, grant api gateway permission to invoke your function:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-18-iam-permission.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/13621736-5f6e-407c-b612-4f6e935d396b)
 
 When you select the GET method, it should look like this:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-19-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/425d6c33-46c8-4d32-ba6c-0ee3e113b5ee)
 
 Select the Integration Request and head over to Mapping Templates:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-20-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/1cfcb0e0-a6e3-4b16-8677-5ce1f343619d)
 
 from the Request body passtrhough, add a mapping template `application/json` and provide the following mapping template:
 
 
-```
+```json
 {
     "short_id": "$input.params('shortid')"
 }
@@ -254,29 +255,29 @@ from the Request body passtrhough, add a mapping template `application/json` and
 
 On the Method Response:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-21-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/0635b7ba-3d13-4acd-9da6-2aaf86eab1c1)
 
 Delete the 200 HTTP Status Response and create a new response by "Add Response", add `301` HTTP Status, add `Location` Header to the response.
 
 Navigate to the Integration Response from the `/{shortid}` GET method:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-21-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/ac7caa14-1c46-4dc8-b702-8933ffb38ebb)
 
 delete the 200 HTTP Response, add "integration response", set method response status to 301 and add header mapping for location to integration.response.body.location as below:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-23-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/8b598aab-aedb-4524-bade-2c86c51b71b5)
 
 make sure to select the integration response to - so that the method response reflects to 301:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-24-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/495e2d00-22af-4184-8127-898b15a24ea0)
 
 Navigate to Actions and select "Deploy API", select your stage, in my case `test` and deploy:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-25-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/c62ef0e0-aa2f-42f4-a197-0a795d44ac77)
 
 Go to stages, select your stage, select the post request to reveal the API URL:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-26-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/57080a15-ceb1-4186-9338-63e1abd43066)
 
 Time to test out the URL Shortener:
 
@@ -293,13 +294,13 @@ Head back to API Gateway to associate the Domain and ACM Certificate to our API:
 
 From the "Custom Domain Names" section, create a custom domain name, once you selected regional, it will ask for the target domain name, which will be the resolved to your API Endpoint that was created, and from the "Base Path Mappings" section, select `/` as the path to your API stage, in my case `url-shortener-api:test`:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-28-api-gateway.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/86e569e2-321c-49f3-8b27-d87c7160378b)
 
 ## Route 53
 
 Last part is to create a Route53 entry for tiny.yourdomain.com to resolve to the CNAME value of the target domain name that was provided in the custom domain names section:
 
-![](https://objects.ruanbekker.com/assets/images/tiny-url-setup-29-route53.png)
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/c25bba2d-7c76-44b1-a492-a66c81b29a0f)
 
 ## Demo the URL Shortener Service:
 
@@ -363,13 +364,3 @@ Please feel free to show support by, **sharing** this post, making a **donation*
 
 <br>
 
-<script type="text/javascript">
-  ( function() {
-    if (window.CHITIKA === undefined) { window.CHITIKA = { 'units' : [] }; };
-    var unit = {"calltype":"async[2]","publisher":"rbekker87","width":728,"height":90,"sid":"Chitika Default"};
-    var placement_id = window.CHITIKA.units.length;
-    window.CHITIKA.units.push(unit);
-    document.write('<div id="chitikaAdBlock-' + placement_id + '"></div>');
-}());
-</script>
-<script type="text/javascript" src="//cdn.chitika.net/getads.js" async></script>

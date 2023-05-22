@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: Kafka | Ruan Bekker's Blog]]></title>
+  <link href="https://blog.ruanbekker.com/blog/categories/kafka/atom.xml" rel="self"/>
+  <link href="https://blog.ruanbekker.com/"/>
+  <updated>2023-05-22T01:59:37-04:00</updated>
+  <id>https://blog.ruanbekker.com/</id>
+  <author>
+    <name><![CDATA[Ruan]]></name>
+    <email><![CDATA[ruan@ruanbekker.com]]></email>
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Running a Multi-Broker Kafka Cluster on Docker]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/05/17/running-a-multi-broker-kafka-cluster-on-docker/"/>
+    <updated>2023-05-17T10:50:57-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/05/17/running-a-multi-broker-kafka-cluster-on-docker</id>
+    <content type="html"><![CDATA[<p>In this post we will run a kakfa cluster with 3 kafka brokers on docker compose and using a producer to send messages to our topics and a consumer that will receive the messages from the topics.</p>
+
+<h2>What is Kafka?</h2>
+
+<p>Kafka is a distributed event store and stream processing platform. Kafka is used to build real-time streaming data pipelines and real-time streaming applications.</p>
+
+<p>This is a fantastic resource if you want to understand the components better in detail:
+- <a href="https://www.upsolver.com/blog/apache-kafka-architecture-what-you-need-to-know">https://www.upsolver.com/blog/apache-kafka-architecture-what-you-need-to-know</a></p>
+
+<p>But on a high level, the components of a typical Kafka setup:</p>
+
+<ol>
+<li>Zookeeper: Kafka relies on Zookeeper to do leadership election of Kafka Brokers and Topic Partitions.</li>
+<li>Broker: Kafka server that receives messages from producers, assigns them to offsets and commit the messages to disk storage. A offset is used for data consistency in a event of failure, so that consumers know from where to consume from their last message.</li>
+<li>Topic: A topic can be thought of categories to organize messages. Producers writes messages to topics, consumers reads from those topics.</li>
+<li>Partitions: A topic is split into multiple partitions. This improves scalability through parallelism (not just one broker). Kafka also does replication</li>
+</ol>
+
+
+<p>For great in detail information about kafka and its components, I encourage you to visit the <a href="https://www.upsolver.com/blog/apache-kafka-architecture-what-you-need-to-know">mentioned post</a> from above.</p>
+
+<h2>Launch Kafka</h2>
+
+<p>This is the <code>docker-compose.yaml</code> that we will be using to run a kafka cluster with 3 broker containers, 1 zookeeper container, 1 producer, 1 consumer and a kafka-ui.</p>
+
+<p>All the source code is available on my <a href="https://github.com/ruanbekker/quick-starts/tree/main/docker/kafka">quick-starts github repository</a> .</p>
+
+<pre><code class="yaml">---
+version: "3.9"
+
+services:
+  zookeeper:
+    platform: linux/amd64
+    image: confluentinc/cp-zookeeper:${CONFLUENT_PLATFORM_VERSION:-7.4.0}
+    container_name: zookeeper
+    restart: unless-stopped
+    ports:
+      - '32181:32181'
+      - '2888:2888'
+      - '3888:3888'
+    environment:
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_CLIENT_PORT: 32181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_SERVERS: zookeeper:2888:3888
+    healthcheck:
+      test: echo stat | nc localhost 32181
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    networks:
+      - kafka
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  kafka-ui: 
+    container_name: kafka-ui 
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8080:8080
+    depends_on:
+      - broker-1
+      - broker-2
+      - broker-3
+    environment:
+      KAFKA_CLUSTERS_0_NAME: broker-1
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker-1:29091
+      KAFKA_CLUSTERS_0_METRICS_PORT: 19101
+      KAFKA_CLUSTERS_1_NAME: broker-2
+      KAFKA_CLUSTERS_1_BOOTSTRAPSERVERS: broker-2:29092
+      KAFKA_CLUSTERS_1_METRICS_PORT: 19102
+      KAFKA_CLUSTERS_2_NAME: broker-3
+      KAFKA_CLUSTERS_2_BOOTSTRAPSERVERS: broker-3:29093
+      KAFKA_CLUSTERS_2_METRICS_PORT: 19103
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    networks:
+      - kafka
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  broker-1:
+    platform: linux/amd64
+    image: confluentinc/cp-kafka:${CONFLUENT_PLATFORM_VERSION:-7.4.0}
+    container_name: broker-1
+    restart: unless-stopped
+    ports:
+      - '9091:9091'
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:32181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-1:29091,EXTERNAL://localhost:9091
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_JMX_PORT: 19101
+      KAFKA_JMX_HOSTNAME: localhost
+    healthcheck:
+      test: nc -vz localhost 9091
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    networks:
+      - kafka
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  broker-2:
+    platform: linux/amd64
+    image: confluentinc/cp-kafka:${CONFLUENT_PLATFORM_VERSION:-7.4.0}
+    container_name: broker-2
+    restart: unless-stopped
+    ports:
+      - '9092:9092'
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:32181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-2:29092,EXTERNAL://localhost:9092
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_JMX_PORT: 19102
+      KAFKA_JMX_HOSTNAME: localhost
+    healthcheck:
+      test: nc -vz localhost 9092
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    networks:
+      - kafka
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  broker-3:
+    platform: linux/amd64
+    image: confluentinc/cp-kafka:${CONFLUENT_PLATFORM_VERSION:-7.4.0}
+    container_name: broker-3
+    restart: unless-stopped
+    ports:
+      - '9093:9093'
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:32181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-3:29093,EXTERNAL://localhost:9093
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_JMX_PORT: 19103
+      KAFKA_JMX_HOSTNAME: localhost
+    healthcheck:
+      test: nc -vz localhost 9093
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    networks:
+      - kafka
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  producer:
+    platform: linux/amd64
+    container_name: producer
+    build: ./python-client/
+    restart: always
+    environment:
+      - ACTION=producer
+      - BOOTSTRAP_SERVERS=broker-1:29091,broker-2:29092,broker-3:29093
+      - TOPIC=my-topic
+      - PYTHONUNBUFFERED=1 # https://github.com/docker/compose/issues/4837#issuecomment-302765592
+    networks:
+      - kafka
+    depends_on:
+      - zookeeper
+      - broker-1
+      - broker-2
+      - broker-3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  consumer:
+    platform: linux/amd64
+    container_name: consumer
+    build: ./python-client/
+    restart: always
+    environment:
+      - ACTION=consumer
+      - BOOTSTRAP_SERVERS=broker-1:29091,broker-2:29092,broker-3:29093
+      - TOPIC=my-topic
+      - CONSUMER_GROUP=cg-group-id
+      - PYTHONUNBUFFERED=1 # https://github.com/docker/compose/issues/4837#issuecomment-302765592
+    networks:
+      - kafka
+    depends_on:
+      - zookeeper
+      - broker-1
+      - broker-2
+      - broker-3
+      - producer
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+networks:
+  kafka:
+    name: kafka
+</code></pre>
+
+<p>In our compose file we defined our core stack:</p>
+
+<ul>
+<li>1 Zookeeper Container</li>
+<li>3 Kafka Broker Containers</li>
+<li>1 Kafka UI</li>
+</ul>
+
+
+<p>Then we have our clients:</p>
+
+<ul>
+<li>1 Producer that will send messages to our topics (source code: <a href="https://github.com/ruanbekker/quick-starts/blob/main/docker/kafka/python-client/produce.py">https://github.com/ruanbekker/quick-starts/blob/main/docker/kafka/python-client/produce.py</a> )</li>
+<li>1 Consumer that will read the messages from our topics (source code: <a href="https://github.com/ruanbekker/quick-starts/blob/main/docker/kafka/python-client/consume.py">https://github.com/ruanbekker/quick-starts/blob/main/docker/kafka/python-client/consume.py</a> )</li>
+</ul>
+
+
+<p>We can boot the stack with:</p>
+
+<pre><code class="bash">docker-compose up --build -d
+</code></pre>
+
+<p>You can verify that the brokers are passing their health checks with:</p>
+
+<pre><code class="bash">docker-compose ps
+</code></pre>
+
+<h2>Producers and Consumers</h2>
+
+<p>The producer generates random data and sends it to a topic, where the consumer will listen on the same topic and read messages from that topic.</p>
+
+<p>To view the output of what the <code>producer</code> is doing, you can tail the logs:</p>
+
+<pre><code class="bash">docker logs -f producer
+</code></pre>
+
+<p>And to view the output of what the <code>consumer</code> is doing, you can tail the logs:</p>
+
+<pre><code class="bash">docker logs -f consumer
+</code></pre>
+
+<h2>Kafka UI</h2>
+
+<p>The Kafka UI will be available on <a href="http://localhost:8080">http://localhost:8080</a></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

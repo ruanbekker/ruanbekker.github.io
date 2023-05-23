@@ -6,14 +6,14 @@ comments: true
 categories: ["docker", "kafka"]
 ---
 
-In this post we will run a kakfa cluster with 3 kafka brokers on docker compose and using a producer to send messages to our topics and a consumer that will receive the messages from the topics.
+In this post we will run a [Kakfa](https://kafka.apache.org/) cluster with 3 kafka brokers on docker compose and using a producer to send messages to our topics and a consumer that will receive the messages from the topics, which we will develop in python and explore the [kafka-ui](https://github.com/provectus/kafka-ui). 
 
 ## What is Kafka?
 
 Kafka is a distributed event store and stream processing platform. Kafka is used to build real-time streaming data pipelines and real-time streaming applications.
 
 This is a fantastic resource if you want to understand the components better in detail:
-- https://www.upsolver.com/blog/apache-kafka-architecture-what-you-need-to-know
+- [apache-kafka-architecture-what-you-need-to-know](https://www.upsolver.com/blog/apache-kafka-architecture-what-you-need-to-know)
 
 But on a high level, the components of a typical Kafka setup:
 
@@ -185,7 +185,8 @@ services:
   producer:
     platform: linux/amd64
     container_name: producer
-    build: ./python-client/
+    image: ruanbekker/kafka-producer-consumer:2023-05-17
+    # source: https://github.com/ruanbekker/quick-starts/tree/main/docker/kafka/python-client
     restart: always
     environment:
       - ACTION=producer
@@ -207,7 +208,8 @@ services:
   consumer:
     platform: linux/amd64
     container_name: consumer
-    build: ./python-client/
+    image: ruanbekker/kafka-producer-consumer:2023-05-17
+    # source: https://github.com/ruanbekker/quick-starts/tree/main/docker/kafka/python-client
     restart: always
     environment:
       - ACTION=consumer
@@ -233,6 +235,8 @@ networks:
     name: kafka
 ```
 
+**Note**: This docker-compose yaml can be found in my [kafka quick-starts](https://github.com/ruanbekker/quick-starts/tree/main/docker/kafka) repository.
+
 In our compose file we defined our core stack:
 
 - 1 Zookeeper Container
@@ -247,13 +251,22 @@ Then we have our clients:
 We can boot the stack with:
 
 ```bash
-docker-compose up --build -d
+docker-compose up -d
 ```
 
 You can verify that the brokers are passing their health checks with:
 
 ```bash
 docker-compose ps
+
+NAME                IMAGE                                           COMMAND                  SERVICE             CREATED             STATUS                   PORTS
+broker-1            confluentinc/cp-kafka:7.4.0                     "/etc/confluent/dock…"   broker-1            5 minutes ago       Up 4 minutes (healthy)   0.0.0.0:9091->9091/tcp, :::9091->9091/tcp, 9092/tcp
+broker-2            confluentinc/cp-kafka:7.4.0                     "/etc/confluent/dock…"   broker-2            5 minutes ago       Up 4 minutes (healthy)   0.0.0.0:9092->9092/tcp, :::9092->9092/tcp
+broker-3            confluentinc/cp-kafka:7.4.0                     "/etc/confluent/dock…"   broker-3            5 minutes ago       Up 4 minutes (healthy)   9092/tcp, 0.0.0.0:9093->9093/tcp, :::9093->9093/tcp
+consumer            ruanbekker/kafka-producer-consumer:2023-05-17   "sh /src/run.sh $ACT…"   consumer            5 minutes ago       Up 4 minutes
+kafka-ui            provectuslabs/kafka-ui:latest                   "/bin/sh -c 'java --…"   kafka-ui            5 minutes ago       Up 4 minutes             0.0.0.0:8080->8080/tcp, :::8080->8080/tcp
+producer            ruanbekker/kafka-producer-consumer:2023-05-17   "sh /src/run.sh $ACT…"   producer            5 minutes ago       Up 4 minutes
+zookeeper           confluentinc/cp-zookeeper:7.4.0                 "/etc/confluent/dock…"   zookeeper           5 minutes ago       Up 5 minutes (healthy)   0.0.0.0:2888->2888/tcp, :::2888->2888/tcp, 0.0.0.0:3888->3888/tcp, :::3888->3888/tcp, 2181/tcp, 0.0.0.0:32181->32181/tcp, :::32181->32181/tcp
 ```
 
 ## Producers and Consumers
@@ -264,17 +277,52 @@ To view the output of what the `producer` is doing, you can tail the logs:
 
 ```bash
 docker logs -f producer
+
+setting up producer, checking if brokers are available
+brokers not available yet
+brokers are available and ready to produce messages
+message sent to kafka with squence id of 1
+message sent to kafka with squence id of 2
+message sent to kafka with squence id of 3
 ```
 
 And to view the output of what the `consumer` is doing, you can tail the logs:
 
 ```bash
 docker logs -f consumer
+
+starting consumer, checks if brokers are availabe
+brokers not availbe yet
+brokers are available and ready to consume messages
+{'sequence_id': 10, 'user_id': '20520', 'transaction_id': '4026fd10-2aca-4d2e-8bd2-8ef0201af2dd', 'product_id': '17974', 'address': '71741 Lopez Throughway | South John | BT', 'signup_at': '2023-05-11 06:54:52', 'platform_id': 'Tablet', 'message': 'transaction made by userid 119740995334901'}
+{'sequence_id': 11, 'user_id': '78172', 'transaction_id': '4089cee1-0a58-4d9b-9489-97b6bc4b768f', 'product_id': '21477', 'address': '735 Jasmine Village Apt. 009 | South Deniseland | BN', 'signup_at': '2023-05-17 09:54:10', 'platform_id': 'Tablet', 'message': 'transaction made by userid 159204336307945'}
 ```
 
 ## Kafka UI
 
 The Kafka UI will be available on [http://localhost:8080](http://localhost:8080)
+
+Where we can view lots of information, but in the below screenshot we can see our topics:
+
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/5da40db5-a56a-4c7b-8f8c-929568e9eb81)
+
+And when we look at the `my-topic`, we can see a overview dashboard of our topic information:
+
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/f9feb32f-5828-41a5-91f5-9d614feb8e7c)
+
+We can also look at the messages in our topic, and also search for messages:
+
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/48f58970-d665-4bd5-8e76-5a770e885993)
+
+And we can also look at the current consumers:
+
+![image](https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/68a25d64-9899-4073-ae02-76becc4c149a)
+
+## Resources
+
+My Quick-Starts Github Repository:
+
+- https://github.com/ruanbekker/quick-starts
 
 ## Thank You
 

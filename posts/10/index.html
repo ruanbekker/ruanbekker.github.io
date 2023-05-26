@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we will deploy OpenFaas on Kubernetes locally using k3sup and k3d, then deploy a Traefik Ingress so that we can access the OpenFaas &hellip;">
+  <meta name="description" content="In this post we will explore how to use asynchronous functions in OpenFaas. What are we doing A synchronous request blocks the client until operation &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,464 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2020/02/17/python-asynchronous-function-with-openfaas/">Asynchronous Function With OpenFaas</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2020-02-17T23:51:22+02:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>17</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>11:51 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this post we will explore how to use asynchronous functions in OpenFaas.</p>
+
+<h2>What are we doing</h2>
+
+<p>A synchronous request blocks the client until operation completes, where a asynchronous request doesn’t block the client, which is nice to use for long-running tasks or function invocations to run in the background through the use of NATS Streaming.</p>
+
+<p>We will be building a Python Flask API Server which will act as our webhook service. When we invoke our function by making a http request, we also include a callback url as a header which will be the address where the queue worker will post it&rsquo;s results.</p>
+
+<p>Then we will make a http request to the synchronous function where we will get the response from the function and a http request to the asynchronous function, where we will get the response from the webhook service&rsquo;s logs</p>
+
+<h2>Deploy OpenFaas</h2>
+
+<p>Deploy OpenFaas on a k3d Kubernetes Cluster if you want to follow along on your laptop. You can follow this post to deploy a kubernetes cluster and deploying openfaas:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/">https://blog.ruanbekker.com/blog/2020/02/17/traefik-ingress-for-openfaas-on-kubernetes-k3d/</a></li>
+</ul>
+
+
+<h2>Webhook Service</h2>
+
+<p>Lets build the Python Flask Webhook Service, our application code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">request</span>
+</span><span class='line'><span class="kn">from</span> <span class="nn">logging.config</span> <span class="kn">import</span> <span class="n">dictConfig</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">dictConfig</span><span class="p">({</span>
+</span><span class='line'>    <span class="s">&#39;version&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span><span class='line'>    <span class="s">&#39;formatters&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;default&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;format&#39;</span><span class="p">:</span> <span class="s">&#39;[</span><span class="si">%(asctime)s</span><span class="s">] </span><span class="si">%(levelname)s</span><span class="s"> in </span><span class="si">%(module)s</span><span class="s">: </span><span class="si">%(message)s</span><span class="s">&#39;</span><span class="p">,</span>
+</span><span class='line'>    <span class="p">}},</span>
+</span><span class='line'>    <span class="s">&#39;handlers&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;wsgi&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;class&#39;</span><span class="p">:</span> <span class="s">&#39;logging.StreamHandler&#39;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&#39;stream&#39;</span><span class="p">:</span> <span class="s">&#39;ext://flask.logging.wsgi_errors_stream&#39;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&#39;formatter&#39;</span><span class="p">:</span> <span class="s">&#39;default&#39;</span>
+</span><span class='line'>    <span class="p">}},</span>
+</span><span class='line'>    <span class="s">&#39;root&#39;</span><span class="p">:</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;level&#39;</span><span class="p">:</span> <span class="s">&#39;INFO&#39;</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&#39;handlers&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s">&#39;wsgi&#39;</span><span class="p">]</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'><span class="p">})</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s">&quot;POST&quot;</span><span class="p">,</span> <span class="s">&quot;GET&quot;</span><span class="p">])</span>
+</span><span class='line'><span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">==</span> <span class="s">&quot;GET&quot;</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">response</span><span class="p">[</span><span class="s">&quot;event&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s">&quot;GET&quot;</span>
+</span><span class='line'>        <span class="n">app</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&quot;Received Event: GET&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">==</span> <span class="s">&quot;POST&quot;</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">response</span><span class="p">[</span><span class="s">&quot;event&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_data</span><span class="p">()</span>
+</span><span class='line'>        <span class="n">app</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&quot;Receveid Event: {}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">response</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">else</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">response</span><span class="p">[</span><span class="s">&quot;event&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s">&quot;OTHER&quot;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="s">&quot;Received Event:&quot;</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'>    <span class="k">return</span> <span class="s">&quot;event: {} </span><span class="se">\n</span><span class="s">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&quot;__main__&quot;</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s">&quot;0.0.0.0&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>Dockerfile</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">FROM</span> <span class="n">python</span><span class="p">:</span><span class="mf">3.7</span><span class="o">-</span><span class="n">alpine</span>
+</span><span class='line'><span class="n">RUN</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">flask</span>
+</span><span class='line'><span class="n">ADD</span> <span class="n">app</span><span class="o">.</span><span class="n">py</span> <span class="o">/</span><span class="n">app</span><span class="o">.</span><span class="n">py</span>
+</span><span class='line'><span class="n">EXPOSE</span> <span class="mi">5000</span>
+</span><span class='line'><span class="n">CMD</span> <span class="p">[</span><span class="s">&quot;python&quot;</span><span class="p">,</span> <span class="s">&quot;/app.py&quot;</span><span class="p">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Building and Pushing to Docker Hub (or you can use my docker image):</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">docker</span> <span class="n">build</span> <span class="o">-</span><span class="n">t</span> <span class="n">yourusername</span><span class="o">/</span><span class="n">python</span><span class="o">-</span><span class="n">flask</span><span class="o">-</span><span class="n">webhook</span><span class="p">:</span><span class="n">openfaas</span> <span class="o">.</span>
+</span><span class='line'><span class="err">$</span> <span class="n">docker</span> <span class="n">push</span> <span class="n">yourusername</span><span class="o">/</span><span class="n">python</span><span class="o">-</span><span class="n">flask</span><span class="o">-</span><span class="n">webhook</span><span class="p">:</span><span class="n">openfaas</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Create the deployment manifest <code>webhook.yml</code> for our webhook service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">cat</span> <span class="o">&gt;</span> <span class="n">webhook</span><span class="o">.</span><span class="n">yml</span> <span class="o">&lt;&lt;</span> <span class="n">EOF</span>
+</span><span class='line'><span class="n">apiVersion</span><span class="p">:</span> <span class="n">v1</span>
+</span><span class='line'><span class="n">kind</span><span class="p">:</span> <span class="n">Service</span>
+</span><span class='line'><span class="n">metadata</span><span class="p">:</span>
+</span><span class='line'>  <span class="n">name</span><span class="p">:</span> <span class="n">webhook</span><span class="o">-</span><span class="n">service</span>
+</span><span class='line'><span class="n">spec</span><span class="p">:</span>
+</span><span class='line'>  <span class="n">selector</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="p">:</span> <span class="n">webhook</span>
+</span><span class='line'>  <span class="n">ports</span><span class="p">:</span>
+</span><span class='line'>    <span class="o">-</span> <span class="n">protocol</span><span class="p">:</span> <span class="n">TCP</span>
+</span><span class='line'>      <span class="n">port</span><span class="p">:</span> <span class="mi">5000</span>
+</span><span class='line'>      <span class="n">targetPort</span><span class="p">:</span> <span class="mi">5000</span>
+</span><span class='line'>      <span class="n">name</span><span class="p">:</span> <span class="n">web</span>
+</span><span class='line'><span class="o">---</span>
+</span><span class='line'><span class="n">apiVersion</span><span class="p">:</span> <span class="n">extensions</span><span class="o">/</span><span class="n">v1beta1</span>
+</span><span class='line'><span class="n">kind</span><span class="p">:</span> <span class="n">Ingress</span>
+</span><span class='line'><span class="n">metadata</span><span class="p">:</span>
+</span><span class='line'>  <span class="n">name</span><span class="p">:</span> <span class="n">webhook</span><span class="o">-</span><span class="n">ingress</span>
+</span><span class='line'>  <span class="n">annotations</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">kubernetes</span><span class="o">.</span><span class="n">io</span><span class="o">/</span><span class="n">ingress</span><span class="o">.</span><span class="n">class</span><span class="p">:</span> <span class="n">traefik</span>
+</span><span class='line'><span class="n">spec</span><span class="p">:</span>
+</span><span class='line'>  <span class="n">rules</span><span class="p">:</span>
+</span><span class='line'>  <span class="o">-</span> <span class="n">host</span><span class="p">:</span> <span class="n">webhook</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span>
+</span><span class='line'>    <span class="n">http</span><span class="p">:</span>
+</span><span class='line'>      <span class="n">paths</span><span class="p">:</span>
+</span><span class='line'>      <span class="o">-</span> <span class="n">backend</span><span class="p">:</span>
+</span><span class='line'>          <span class="n">serviceName</span><span class="p">:</span> <span class="n">webhook</span><span class="o">-</span><span class="n">service</span>
+</span><span class='line'>          <span class="n">servicePort</span><span class="p">:</span> <span class="mi">5000</span>
+</span><span class='line'><span class="o">---</span>
+</span><span class='line'><span class="n">apiVersion</span><span class="p">:</span> <span class="n">apps</span><span class="o">/</span><span class="n">v1</span>
+</span><span class='line'><span class="n">kind</span><span class="p">:</span> <span class="n">Deployment</span>
+</span><span class='line'><span class="n">metadata</span><span class="p">:</span>
+</span><span class='line'>  <span class="n">labels</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">app</span><span class="p">:</span> <span class="n">webhook</span>
+</span><span class='line'>  <span class="n">name</span><span class="p">:</span> <span class="n">webhook</span>
+</span><span class='line'><span class="n">spec</span><span class="p">:</span>
+</span><span class='line'>  <span class="n">replicas</span><span class="p">:</span> <span class="mi">1</span>
+</span><span class='line'>  <span class="n">selector</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">matchLabels</span><span class="p">:</span>
+</span><span class='line'>      <span class="n">app</span><span class="p">:</span> <span class="n">webhook</span>
+</span><span class='line'>  <span class="n">template</span><span class="p">:</span>
+</span><span class='line'>    <span class="n">metadata</span><span class="p">:</span>
+</span><span class='line'>      <span class="n">labels</span><span class="p">:</span>
+</span><span class='line'>        <span class="n">app</span><span class="p">:</span> <span class="n">webhook</span>
+</span><span class='line'>    <span class="n">spec</span><span class="p">:</span>
+</span><span class='line'>      <span class="n">containers</span><span class="p">:</span>
+</span><span class='line'>      <span class="o">-</span> <span class="n">name</span><span class="p">:</span> <span class="n">webhook</span>
+</span><span class='line'>        <span class="n">image</span><span class="p">:</span> <span class="n">ruanbekker</span><span class="o">/</span><span class="n">python</span><span class="o">-</span><span class="n">flask</span><span class="o">-</span><span class="n">webhook</span><span class="p">:</span><span class="n">openfaas</span>
+</span><span class='line'>        <span class="n">imagePullPolicy</span><span class="p">:</span> <span class="n">IfNotPresent</span>
+</span><span class='line'>        <span class="n">ports</span><span class="p">:</span>
+</span><span class='line'>        <span class="o">-</span> <span class="n">containerPort</span><span class="p">:</span> <span class="mi">5000</span>
+</span><span class='line'>          <span class="n">name</span><span class="p">:</span> <span class="n">http</span>
+</span><span class='line'>          <span class="n">protocol</span><span class="p">:</span> <span class="n">TCP</span>
+</span><span class='line'><span class="n">EOF</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now deploy to kubernetes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">kubectl</span> <span class="nb">apply</span> <span class="o">-</span><span class="n">f</span> <span class="n">webhook</span><span class="o">.</span><span class="n">yml</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After a minute or so, verify that you get a response when making a http request:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">curl</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">webhook</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span>
+</span><span class='line'><span class="n">event</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;event&#39;</span><span class="p">:</span> <span class="s">&#39;GET&#39;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy the OpenFaas Function</h2>
+
+<p>We will deploy a dockerfile type function which will return the data that we feed it:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">faas</span><span class="o">-</span><span class="n">cli</span> <span class="n">new</span> <span class="o">--</span><span class="n">lang</span> <span class="n">dockerfile</span> <span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span><span class='line'><span class="err">$</span> <span class="n">faas</span><span class="o">-</span><span class="n">cli</span> <span class="n">up</span> <span class="o">-</span><span class="n">f</span> <span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span><span class="o">.</span><span class="n">yml</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">Deploying</span><span class="p">:</span> <span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span><span class="o">.</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">Deployed</span><span class="o">.</span> <span class="mi">202</span> <span class="n">Accepted</span><span class="o">.</span>
+</span><span class='line'><span class="n">URL</span><span class="p">:</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">openfaas</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span><span class="o">/</span><span class="n">function</span><span class="o">/</span><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>List the functions:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">faas</span><span class="o">-</span><span class="n">cli</span> <span class="nb">list</span>
+</span><span class='line'><span class="n">Function</span>                       <span class="n">Invocations</span>      <span class="n">Replicas</span>
+</span><span class='line'><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>            <span class="mi">0</span>               <span class="mi">1</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Describe the function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">faas</span><span class="o">-</span><span class="n">cli</span> <span class="n">describe</span> <span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span><span class='line'><span class="n">Name</span><span class="p">:</span>                <span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span><span class='line'><span class="n">Status</span><span class="p">:</span>              <span class="n">Ready</span>
+</span><span class='line'><span class="n">Replicas</span><span class="p">:</span>            <span class="mi">1</span>
+</span><span class='line'><span class="n">Available</span> <span class="n">replicas</span><span class="p">:</span>  <span class="mi">1</span>
+</span><span class='line'><span class="n">Invocations</span><span class="p">:</span>         <span class="mi">0</span>
+</span><span class='line'><span class="n">Image</span><span class="p">:</span>               <span class="n">ruanbekker</span><span class="o">/</span><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span><span class="p">:</span><span class="n">latest</span>
+</span><span class='line'><span class="n">Function</span> <span class="n">process</span><span class="p">:</span>
+</span><span class='line'><span class="n">URL</span><span class="p">:</span>                 <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">openfaas</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span><span class="o">/</span><span class="n">function</span><span class="o">/</span><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span><span class='line'><span class="n">Async</span> <span class="n">URL</span><span class="p">:</span>           <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">openfaas</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span><span class="o">/</span><span class="n">async</span><span class="o">-</span><span class="n">function</span><span class="o">/</span><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span><span class='line'><span class="n">Labels</span><span class="p">:</span>              <span class="n">faas_function</span> <span class="p">:</span> <span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span>
+</span><span class='line'><span class="n">Annotations</span><span class="p">:</span>         <span class="n">prometheus</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">scrape</span> <span class="p">:</span> <span class="n">false</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Testing</h2>
+
+<p>Test synchronous function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">curl</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">openfaas</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span><span class="o">/</span><span class="n">function</span><span class="o">/</span><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span> <span class="o">-</span><span class="n">d</span> <span class="s">&quot;test&quot;</span>
+</span><span class='line'><span class="n">test</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Test asynchronous function, remember, here we need to provide the callback url which the queue worker will inform, which will be our webhook service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">curl</span> <span class="o">-</span><span class="n">i</span> <span class="o">-</span><span class="n">H</span> <span class="s">&quot;X-Callback-Url: http://webhook-service.default.svc.cluster.local:5000&quot;</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">openfaas</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span><span class="o">/</span><span class="n">async</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">function</span><span class="o">/</span><span class="n">function</span><span class="o">-</span><span class="n">async</span><span class="o">-</span><span class="n">task</span> <span class="o">-</span><span class="n">d</span> <span class="s">&quot;asyyyyync&quot;</span>
+</span><span class='line'><span class="n">HTTP</span><span class="o">/</span><span class="mf">1.1</span> <span class="mi">202</span> <span class="n">Accepted</span>
+</span><span class='line'><span class="n">Content</span><span class="o">-</span><span class="n">Length</span><span class="p">:</span> <span class="mi">0</span>
+</span><span class='line'><span class="n">Date</span><span class="p">:</span> <span class="n">Mon</span><span class="p">,</span> <span class="mi">17</span> <span class="n">Feb</span> <span class="mi">2020</span> <span class="mi">13</span><span class="p">:</span><span class="mi">57</span><span class="p">:</span><span class="mi">26</span> <span class="n">GMT</span>
+</span><span class='line'><span class="n">Vary</span><span class="p">:</span> <span class="n">Accept</span><span class="o">-</span><span class="n">Encoding</span>
+</span><span class='line'><span class="n">X</span><span class="o">-</span><span class="n">Call</span><span class="o">-</span><span class="n">Id</span><span class="p">:</span> <span class="n">d757c10f</span><span class="o">-</span><span class="mi">4293</span><span class="o">-</span><span class="mi">4</span><span class="n">daa</span><span class="o">-</span><span class="n">bf52</span><span class="o">-</span><span class="n">bbdc17b7dea3</span>
+</span><span class='line'><span class="n">X</span><span class="o">-</span><span class="n">Start</span><span class="o">-</span><span class="n">Time</span><span class="p">:</span> <span class="mi">1581947846737501600</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check the logs of the webhook pod:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">kubectl</span> <span class="n">logs</span> <span class="o">-</span><span class="n">f</span> <span class="n">pod</span><span class="o">/</span><span class="err">$</span><span class="p">(</span><span class="n">kubectl</span> <span class="n">get</span> <span class="n">pods</span> <span class="o">--</span><span class="n">selector</span><span class="o">=</span><span class="n">app</span><span class="o">=</span><span class="n">webhook</span> <span class="o">--</span><span class="n">output</span><span class="o">=</span><span class="n">jsonpath</span><span class="o">=</span><span class="s">&quot;{.items..metadata.name}&quot;</span><span class="p">)</span>
+</span><span class='line'><span class="p">[</span><span class="mi">2020</span><span class="o">-</span><span class="mo">02</span><span class="o">-</span><span class="mi">17</span> <span class="mi">13</span><span class="p">:</span><span class="mi">57</span><span class="p">:</span><span class="mi">26</span><span class="p">,</span><span class="mi">774</span><span class="p">]</span> <span class="n">INFO</span> <span class="ow">in</span> <span class="n">app</span><span class="p">:</span> <span class="n">Receveid</span> <span class="n">Event</span><span class="p">:</span> <span class="p">{</span><span class="s">&#39;event&#39;</span><span class="p">:</span> <span class="n">b</span><span class="s">&#39;asyyyyync&#39;</span><span class="p">}</span>
+</span><span class='line'><span class="p">[</span><span class="mi">2020</span><span class="o">-</span><span class="mo">02</span><span class="o">-</span><span class="mi">17</span> <span class="mi">13</span><span class="p">:</span><span class="mi">57</span><span class="p">:</span><span class="mi">26</span><span class="p">,</span><span class="mi">775</span><span class="p">]</span> <span class="n">INFO</span> <span class="ow">in</span> <span class="n">internal</span><span class="p">:</span> <span class="mf">10.42</span><span class="o">.</span><span class="mf">0.6</span> <span class="o">-</span> <span class="o">-</span> <span class="p">[</span><span class="mi">17</span><span class="o">/</span><span class="n">Feb</span><span class="o">/</span><span class="mi">2020</span> <span class="mi">13</span><span class="p">:</span><span class="mi">57</span><span class="p">:</span><span class="mi">26</span><span class="p">]</span> <span class="s">&quot;POST / HTTP/1.1&quot;</span> <span class="mi">200</span> <span class="o">-</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Check the logs of the queue worker:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">kubectl</span> <span class="n">logs</span> <span class="o">-</span><span class="n">f</span> <span class="n">deployment</span><span class="o">/</span><span class="n">queue</span><span class="o">-</span><span class="n">worker</span> <span class="o">-</span><span class="n">n</span> <span class="n">openfaas</span>
+</span><span class='line'><span class="p">[</span><span class="mi">45</span><span class="p">]</span> <span class="n">Received</span> <span class="n">on</span> <span class="p">[</span><span class="n">faas</span><span class="o">-</span><span class="n">request</span><span class="p">]:</span> <span class="s">&#39;sequence:45 subject:&quot;faas-request&quot; data:&quot;{</span><span class="se">\&quot;</span><span class="s">Header</span><span class="se">\&quot;</span><span class="s">:{</span><span class="se">\&quot;</span><span class="s">Accept</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">*/*</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">Accept-Encoding</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">gzip</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">Content-Length</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">9</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">Content-Type</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">application/x-www-form-urlencoded</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">User-Agent</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">curl/7.54.0</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Call-Id</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">d757c10f-4293-4daa-bf52-bbdc17b7dea3</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Callback-Url</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">http://webhook-service.default.svc.cluster.local:5000</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Forwarded-For</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">10.42.0.0</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Forwarded-Host</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">openfaas.localdns.xyz</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Forwarded-Port</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">80</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Forwarded-Proto</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">http</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Forwarded-Server</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">traefik-6787cddb4b-87zss</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Real-Ip</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">10.42.0.0</span><span class="se">\&quot;</span><span class="s">],</span><span class="se">\&quot;</span><span class="s">X-Start-Time</span><span class="se">\&quot;</span><span class="s">:[</span><span class="se">\&quot;</span><span class="s">1581947846737501600</span><span class="se">\&quot;</span><span class="s">]},</span><span class="se">\&quot;</span><span class="s">Host</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">openfaas.localdns.xyz</span><span class="se">\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Body</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">YXN5eXl5eW5j</span><span class="se">\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Method</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">POST</span><span class="se">\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Path</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">QueryString</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Function</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">openfaas-function-cat</span><span class="se">\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">CallbackUrl</span><span class="se">\&quot;</span><span class="s">:{</span><span class="se">\&quot;</span><span class="s">Scheme</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">http</span><span class="se">\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Opaque</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">User</span><span class="se">\&quot;</span><span class="s">:null,</span><span class="se">\&quot;</span><span class="s">Host</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">webhook-service.default.svc.cluster.local:5000</span><span class="se">\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Path</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">RawPath</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">ForceQuery</span><span class="se">\&quot;</span><span class="s">:false,</span><span class="se">\&quot;</span><span class="s">RawQuery</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">,</span><span class="se">\&quot;</span><span class="s">Fragment</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;\&quot;</span><span class="s">}}&quot; timestamp:1581947846738308800 &#39;</span>
+</span><span class='line'><span class="n">Invoking</span><span class="p">:</span> <span class="n">openfaas</span><span class="o">-</span><span class="n">function</span><span class="o">-</span><span class="n">cat</span> <span class="k">with</span> <span class="mi">9</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">via</span><span class="p">:</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">gateway</span><span class="o">.</span><span class="n">openfaas</span><span class="o">.</span><span class="n">svc</span><span class="o">.</span><span class="n">cluster</span><span class="o">.</span><span class="n">local</span><span class="p">:</span><span class="mi">8080</span><span class="o">/</span><span class="n">function</span><span class="o">/</span><span class="n">openfaas</span><span class="o">-</span><span class="n">function</span><span class="o">-</span><span class="n">cat</span><span class="o">/</span>
+</span><span class='line'><span class="n">Invoked</span><span class="p">:</span> <span class="n">openfaas</span><span class="o">-</span><span class="n">function</span><span class="o">-</span><span class="n">cat</span> <span class="p">[</span><span class="mi">200</span><span class="p">]</span> <span class="ow">in</span> <span class="mf">0.029029</span><span class="n">s</span>
+</span><span class='line'><span class="n">Callback</span> <span class="n">to</span><span class="p">:</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">webhook</span><span class="o">-</span><span class="n">service</span><span class="o">.</span><span class="n">default</span><span class="o">.</span><span class="n">svc</span><span class="o">.</span><span class="n">cluster</span><span class="o">.</span><span class="n">local</span><span class="p">:</span><span class="mi">5000</span>
+</span><span class='line'><span class="n">openfaas</span><span class="o">-</span><span class="n">function</span><span class="o">-</span><span class="n">cat</span> <span class="n">returned</span> <span class="mi">9</span> <span class="nb">bytes</span>
+</span><span class='line'><span class="n">Posted</span> <span class="n">result</span> <span class="k">for</span> <span class="n">openfaas</span><span class="o">-</span><span class="n">function</span><span class="o">-</span><span class="n">cat</span> <span class="n">to</span> <span class="n">callback</span><span class="o">-</span><span class="n">url</span><span class="p">:</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">webhook</span><span class="o">-</span><span class="n">service</span><span class="o">.</span><span class="n">default</span><span class="o">.</span><span class="n">svc</span><span class="o">.</span><span class="n">cluster</span><span class="o">.</span><span class="n">local</span><span class="p">:</span><span class="mi">5000</span><span class="p">,</span> <span class="n">status</span><span class="p">:</span> <span class="mi">200</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Make 1000 Requests:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">date</span> <span class="o">&gt;</span> <span class="n">time</span><span class="o">.</span><span class="n">date</span>
+</span><span class='line'>  <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">{</span><span class="mf">1.</span><span class="o">.</span><span class="mi">1000</span><span class="p">}</span>
+</span><span class='line'>    <span class="n">do</span>
+</span><span class='line'>      <span class="n">curl</span> <span class="o">-</span><span class="n">i</span> <span class="o">-</span><span class="n">H</span> <span class="s">&quot;X-Callback-Url: http://webhook-service.default.svc.cluster.local:5000&quot;</span> <span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">openfaas</span><span class="o">.</span><span class="n">localdns</span><span class="o">.</span><span class="n">xyz</span><span class="o">/</span><span class="n">async</span><span class="o">-</span><span class="n">function</span><span class="o">/</span><span class="n">openfaas</span><span class="o">-</span><span class="n">function</span><span class="o">-</span><span class="n">cat</span> <span class="o">-</span><span class="n">d</span> <span class="s">&quot;asyyyyync&quot;</span>
+</span><span class='line'>    <span class="n">done</span>
+</span><span class='line'>  <span class="n">date</span> <span class="o">&gt;&gt;</span> <span class="n">time</span><span class="o">.</span><span class="n">date</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>View the log file that we wrote before we started and finished our requests:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">cat</span> <span class="n">time</span><span class="o">.</span><span class="n">date</span>
+</span><span class='line'><span class="n">Mon</span> <span class="n">Feb</span> <span class="mi">17</span> <span class="mi">16</span><span class="p">:</span><span class="mo">03</span><span class="p">:</span><span class="mi">16</span> <span class="n">SAST</span> <span class="mi">2020</span>
+</span><span class='line'><span class="n">Mon</span> <span class="n">Feb</span> <span class="mi">17</span> <span class="mi">16</span><span class="p">:</span><span class="mo">03</span><span class="p">:</span><span class="mi">48</span> <span class="n">SAST</span> <span class="mi">2020</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The last request was actioned at:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="p">[</span><span class="mi">2020</span><span class="o">-</span><span class="mo">02</span><span class="o">-</span><span class="mi">17</span> <span class="mi">14</span><span class="p">:</span><span class="mo">03</span><span class="p">:</span><span class="mi">52</span><span class="p">,</span><span class="mi">421</span><span class="p">]</span> <span class="n">INFO</span> <span class="ow">in</span> <span class="n">internal</span><span class="p">:</span> <span class="mf">10.42</span><span class="o">.</span><span class="mf">0.6</span> <span class="o">-</span> <span class="o">-</span> <span class="p">[</span><span class="mi">17</span><span class="o">/</span><span class="n">Feb</span><span class="o">/</span><span class="mi">2020</span> <span class="mi">14</span><span class="p">:</span><span class="mo">03</span><span class="p">:</span><span class="mi">52</span><span class="p">]</span> <span class="s">&quot;POST / HTTP/1.1&quot;</span> <span class="mi">200</span> <span class="o">-</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>This was a basic example to demonstrate async functions using OpenFaas</p>
+
+<h2>OpenFaas Documentation:</h2>
+
+<ul>
+<li><a href="https://docs.openfaas.com">https://docs.openfaas.com</a></li>
+<li><a href="https://docs.openfaas.com/reference/async/">https://docs.openfaas.com/reference/async/</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -1906,189 +2364,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/01/11/setup-a-wireguard-vpn-server-on-linux/">Setup a WireGuard VPN Server on Linux</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-01-11T23:37:03+02:00'><span class='date'><span class='date-month'>Jan</span> <span class='date-day'>11</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>11:37 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><h2>Installation</h2>
-
-<p>I will be installing my wireguard vpn server on a ubuntu 18 server, for other distributions you can have a look at their <a href="https://www.wireguard.com/install/">docs</a></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ sudo add-apt-repository ppa:wireguard/wireguard
-</span><span class='line'>$ sudo apt update
-</span><span class='line'>$ sudo apt install wireguard -y</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Configuration</h2>
-
-<p>On the Server, create they keys directory where we will save our keys:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p /etc/wireguard/keys</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the private and public key:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wg genkey | tee privatekey | wg pubkey &gt; publickey</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Generate the pre-shared key:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wg genpsk &gt; client.psk</span></code></pre></td></tr></table></div></figure>
-
-
-<p>On the client, create the keys directory:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ mkdir -p ~/wireguard/keys</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Create the private and public keys:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cd ~/wireguard/keys
-</span><span class='line'>$ wg genkey | tee privatekey | wg pubkey &gt; publickey</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Populate the server config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/wireguard/wg0.conf
-</span><span class='line'>[Interface]
-</span><span class='line'>PrivateKey = &lt;output-of-client.privatekey&gt;
-</span><span class='line'>Address = 192.168.199.1/32
-</span><span class='line'>ListenPort = 8999
-</span><span class='line'>PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ens3 -j MASQUERADE
-</span><span class='line'>PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ens3 -j MASQUERADE
-</span><span class='line'>
-</span><span class='line'>[Peer]
-</span><span class='line'>PublicKey = &lt;output-of-server.publickey&gt;
-</span><span class='line'>PresharedKey = &lt;output-of-client.psk&gt;
-</span><span class='line'>AllowedIPs = 192.168.199.2/32</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Populate the client config:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat ~/wireguard/wg0.conf
-</span><span class='line'>[Interface]
-</span><span class='line'>PrivateKey = &lt;output-of-client.privatekey&gt;
-</span><span class='line'>Address = 192.168.199.2/24
-</span><span class='line'>DNS = 1.1.1.1
-</span><span class='line'>
-</span><span class='line'>[Peer]
-</span><span class='line'>PublicKey = &lt;output-of-server.publickey&gt;
-</span><span class='line'>PresharedKey = &lt;output-of-client.psk&gt;
-</span><span class='line'>Endpoint = &lt;server-public-ip&gt;:8999
-</span><span class='line'>AllowedIPs = 0.0.0.0/0
-</span><span class='line'>PersistentKeepalive = 25</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Start the Server</h2>
-
-<p>On the server, enable and start the service:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ systemctl enable wg-quick@wg0.service
-</span><span class='line'>$ wg-quick up wg0</span></code></pre></td></tr></table></div></figure>
-
-
-<p>On the client, connect the VPN:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wg-quick up ~/wireguard/wg0.conf</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Verify the status:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ wg show
-</span><span class='line'>interface: wg0
-</span><span class='line'>  public key: +Giwk8Y5KS5wx9mw0nEIdQODI+DsR+3TcbMxjJqfZys=
-</span><span class='line'>  private key: (hidden)
-</span><span class='line'>  listening port: 8999
-</span><span class='line'>
-</span><span class='line'>peer: Q8LGMj6CeCYQJp+sTu74mLMRoPFAprV8PsnS0cu9fDI=
-</span><span class='line'>  preshared key: (hidden)
-</span><span class='line'>  endpoint: 102.132.208.80:57800
-</span><span class='line'>  allowed ips: 192.168.199.2/32
-</span><span class='line'>  latest handshake: 22 seconds ago
-</span><span class='line'>  transfer: 292.00 KiB received, 322.15 KiB sent</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Check if you can ping the private ip address of the VPN:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ ping 192.168.199.2
-</span><span class='line'>PING 192.168.199.2 (192.168.199.2): 56 data bytes
-</span><span class='line'>64 bytes from 192.168.199.2: icmp_seq=0 ttl=63 time=304.844 ms</span></code></pre></td></tr></table></div></figure>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/11">&larr; Older</a>
@@ -2162,6 +2437,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/05/26/how-to-run-a-amd64-bit-linux-vm-on-a-mac-m1/">How to Run a AMD64 Bit Linux VM on a Mac M1</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/05/17/running-a-multi-broker-kafka-cluster-on-docker/">Running a Multi-Broker Kafka Cluster on Docker</a>
       </li>
     
@@ -2175,10 +2454,6 @@
     
       <li class="post">
         <a href="/blog/2023/01/24/everything-you-need-to-know-about-helm/">Everything You Need to Know About Helm</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2023/01/14/getting-started-with-wiremock/">Getting Started With Wiremock</a>
       </li>
     
   </ul>

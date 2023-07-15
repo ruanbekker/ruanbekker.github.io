@@ -30,7 +30,7 @@ We will be doing the following:
 
 The following `docker-compose.yaml` defines a postgres container which will be used as the database engine for ferretdb, and then we define the ferretdb container, which connects to postgres via the environment variable `FERRETDB_POSTGRESQL_URL`.
 
-```yaml
+```yml
 version: "3.9"
 
 services:

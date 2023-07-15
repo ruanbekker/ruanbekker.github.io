@@ -83,5 +83,5 @@ networks:
     name: ferretdb
 
 volumes:
-  pgvol: {}
+  pgvol: 
 ```

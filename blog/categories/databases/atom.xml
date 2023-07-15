@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Databases | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/databases/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-05-26T16:34:51-04:00</updated>
+  <updated>2023-07-15T17:16:57-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,605 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Getting Started With FerretDB on Docker]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/07/14/getting-started-with-ferretdb-on-docker/"/>
+    <updated>2023-07-14T22:00:00-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/07/14/getting-started-with-ferretdb-on-docker</id>
+    <content type="html"><![CDATA[<p>In this post we will have a look at <strong>FerretDB</strong> which is a opensource proxy that translates MongoDB queries to SQL, where PostgreSQL being the database engine.</p>
+
+<h2>More about FerretDB</h2>
+
+<p>From <a href="https://www.ferretdb.io/">FerretDB</a>&rsquo;s website, they describe FerretDB as:</p>
+
+<blockquote><p>Initially built as open-source software, MongoDB was a game-changer for many developers, enabling them to build fast and robust applications. Its ease of use and extensive documentation made it a top choice for many developers looking for an open-source database. However, all this changed when they switched to an SSPL license, moving away from their open-source roots.</p>
+
+<p>In light of this, FerretDB was founded to become the true open-source alternative to MongoDB, making it the go-to choice for most MongoDB users looking for an open-source alternative to MongoDB. With FerretDB, users can run the same MongoDB protocol queries without needing to learn a new language or command.</p></blockquote>
+
+<h2>What can you expect from this tutorial</h2>
+
+<p>We will be doing the following:</p>
+
+<ul>
+<li>deploying ferretdb and postgres on docker containers using docker compose</li>
+<li>then use <code>mongosh</code> as a client to logon to ferretdb using the ferretdb endpoint</li>
+<li>explore some example queries to insert and read data from ferretdb</li>
+<li>use scripting to generate data into ferretedb</li>
+<li>explore the embedded prometheus endpoint for metrics</li>
+</ul>
+
+
+<h2>Deploy FerretDB</h2>
+
+<p>The following <code>docker-compose.yaml</code> defines a postgres container which will be used as the database engine for ferretdb, and then we define the ferretdb container, which connects to postgres via the environment variable <code>FERRETDB_POSTGRESQL_URL</code>.</p>
+
+<pre><code class="yaml">version: "3.9"
+
+services:
+  postgres:
+    image: postgres:14.8-bullseye
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=ferret
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=ferretdb
+    volumes:
+      - pgvol:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready", "-d", "db_prod"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ferretdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+
+  ferretdb:
+    image: ghcr.io/ferretdb/ferretdb:1.1.0
+    container_name: ferretdb
+    restart: unless-stopped
+    ports:
+      - 27017:27017
+      - 8080:8080
+    environment:
+      - FERRETDB_POSTGRESQL_URL=postgres://postgres:5432/ferretdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ferretdb
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+
+networks:
+  ferretdb:
+    name: ferretdb
+
+volumes:
+  pgvol: {}
+</code></pre>
+
+<p>Once you have the content above saved in <code>docker-compose.yaml</code> you can run the following to run the containers in a detached mode:</p>
+
+<pre><code class="bash">docker-compose up -d
+</code></pre>
+
+<h2>Connect to FerretDB</h2>
+
+<p>Once the containers started, we can connect to our ferretdb server using mongosh, which is a shell utility to connect to the database). I will make use of a container to do this, where I will reference the network which we defined in our docker compose file, and set the endpoint that mongosh need to connect to:</p>
+
+<pre><code class="bash">docker run --rm -it --network=ferretdb --entrypoint=mongosh mongo:6.0 "mongodb://ferret:password@ferretdb/ferretdb?authMechanism=PLAIN"
+</code></pre>
+
+<p>Once it successfully connects to ferretdb, we should see the following prompt:</p>
+
+<pre><code class="bash">Current Mongosh Log ID: 64626c5c259916d1a68b7dad
+Connecting to:      mongodb://&lt;credentials&gt;@ferretdb/ferretdb?authMechanism=PLAIN&amp;directConnection=true&amp;appName=mongosh+1.8.2
+Using MongoDB:      6.0.42
+Using Mongosh:      1.8.2
+
+ferretdb&gt;
+</code></pre>
+
+<h2>Run example queries on FerretDB</h2>
+
+<p>If you are familiar with MongoDB, you will find the following identical to MongoDB.</p>
+
+<p>First we show the current databases:</p>
+
+<pre><code class="sql">ferretdb&gt; show dbs;
+public  0 B
+</code></pre>
+
+<p>The we create and use the database named <code>mydb</code>:</p>
+
+<pre><code class="sql">ferretdb&gt; use mydb
+switched to db mydb
+</code></pre>
+
+<p>To see which database are we currently connected to:</p>
+
+<pre><code class="sql">mydb&gt; db
+mydb
+</code></pre>
+
+<p>Now we can create a collection named <code>mycol1</code> and <code>mycol2</code>:</p>
+
+<pre><code class="sql">mydb&gt; db.createCollection("mycol1")
+{ ok: 1 }
+mydb&gt; db.createCollection("mycol2")
+{ ok: 1 }
+</code></pre>
+
+<p>We can view our collections by running the following:</p>
+
+<pre><code class="sql">mydb&gt; show collections
+mycol1
+mycol2
+</code></pre>
+
+<p>To write one document into our collection named <code>col1</code> with the following data:</p>
+
+<pre><code class="json">{
+  "name": "ruan", 
+  "age": 32, 
+  "hobbies": [
+    "golf", 
+    "programming", 
+    "music"
+  ]
+}
+</code></pre>
+
+<p>We can execute:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.insertOne({"name": "ruan", "age": 32, "hobbies": ["golf", "programming", "music"]})
+{
+  acknowledged: true,
+  insertedIds: { '0': ObjectId("64626cea259916d1a68b7dae") }
+}
+</code></pre>
+
+<p>And we can insert another document:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.insertOne({"name": "michelle", "age": 28, "hobbies": ["art", "music", "reading"]})
+{
+  acknowledged: true,
+  insertedIds: { '0': ObjectId("64626cf1259916d1a68b7daf") }
+}
+</code></pre>
+
+<p>We can then use <code>countDocuments()</code> to view the number of documents in our collection named <code>mycol1</code>:</p>
+
+<pre><code class="sql">ferretdb&gt; db.mycol1.countDocuments()
+2
+</code></pre>
+
+<p>If we want to find all our documents in our <code>mycol1</code> collection:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.find()
+[
+  {
+    _id: ObjectId("64626cea259916d1a68b7dae"),
+    name: 'ruan',
+    age: 32,
+    hobbies: [ 'golf', 'programming', 'music' ]
+  },
+  {
+    _id: ObjectId("64626cf1259916d1a68b7daf"),
+    name: 'michelle',
+    age: 28,
+    hobbies: [ 'art', 'music', 'reading' ]
+  }
+]
+</code></pre>
+
+<p>If we want to only display specific fields in our response, such as name and age, we can project fields to return from our query:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.find({}, {"name": 1, "age": 1})
+[
+  { _id: ObjectId("64626cea259916d1a68b7dae"), name: 'ruan', age: 32 },
+  {
+    _id: ObjectId("64626cf1259916d1a68b7daf"),
+    name: 'michelle',
+    age: 28
+  }
+]
+</code></pre>
+
+<p>We can also suppress the <code>_id</code> field by setting the value to <code>0</code>:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.find({}, {"_id": 0, "name": 1, "age": 1})
+[
+  { name: 'ruan', age: 32 },
+  { name: 'michelle', age: 28 }
+]
+</code></pre>
+
+<p>Next we can return all the fields name and age from our collection where the age field is equals to 32:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.find({"age": 32}, {"_id": 0, "name": 1, "age": 1})
+[ { name: 'ruan', age: 32 } ]
+</code></pre>
+
+<p>We can also find a specific document by its id as example, and return only the field value, like name:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.findOne({_id: ObjectId("64626cea259916d1a68b7dae")}).name
+ruan
+</code></pre>
+
+<p>Next we will find all documents where the age is greater than 30:</p>
+
+<pre><code class="sql">mydb&gt; db.mycol1.find({"age": {"$gt": 30}})
+[
+  {
+    _id: ObjectId("64626cea259916d1a68b7dae"),
+    name: 'ruan',
+    age: 32,
+    hobbies: [ 'golf', 'programming', 'music' ]
+  }
+]
+</code></pre>
+
+<p>Let&rsquo;s explore how to insert many documents at once using <code>insertMany()</code>, first create a new collection:</p>
+
+<pre><code class="sql">ferretdb&gt; db.createCollection("mycol2")
+{ ok: 1 }
+</code></pre>
+
+<p>We can then define the docs variable, and assign a array with 2 json documents:</p>
+
+<pre><code class="sql">ferretdb&gt; var docs = [{name: "peter", age: 34, hobbies: ["ski", "programming", "music"]}, {name: "sam", age: 39, hobbies: ["running", "camping", "music"]}]
+</code></pre>
+
+<p>Now we can insert our documents to ferretdb using <code>insertMany()</code>:</p>
+
+<pre><code class="sql">ferretdb&gt; db.mycol2.insertMany(docs)
+{
+  acknowledged: true,
+  insertedIds: {
+    '0': ObjectId("6464ceb1413cee26e9bf709f"),
+    '1': ObjectId("6464ceb1413cee26e9bf70a0")
+  }
+}
+</code></pre>
+
+<p>We can count the documents inside our collection using:</p>
+
+<pre><code class="sql">ferretdb&gt; db.mycol2.countDocuments()
+2
+</code></pre>
+
+<p>And we can search for all the documents inside the collection:</p>
+
+<pre><code class="sql">ferretdb&gt; db.mycol2.find()
+[
+  {
+    _id: ObjectId("6464ceb1413cee26e9bf709f"),
+    name: 'peter',
+    age: 34,
+    hobbies: [ 'ski', 'programming', 'music' ]
+  },
+  {
+    _id: ObjectId("6464ceb1413cee26e9bf70a0"),
+    name: 'sam',
+    age: 39,
+    hobbies: [ 'running', 'camping', 'music' ]
+  }
+]
+</code></pre>
+
+<p>And searching for any data using the name <code>peter</code>:</p>
+
+<pre><code class="sql">ferretdb&gt; db.mycol2.find({name: "peter"})
+[
+  {
+    _id: ObjectId("6464ceb1413cee26e9bf709f"),
+    name: 'peter',
+    age: 34,
+    hobbies: [ 'ski', 'programming', 'music' ]
+  }
+]
+</code></pre>
+
+<h2>Scripting</h2>
+
+<p>We will create a script so that we can generate data that we want to write into FerretDB.</p>
+
+<p>Create the following script, <code>write.js</code>:</p>
+
+<pre><code class="javascript">var txs = []
+for (var x = 0; x &lt; 1000 ; x++) {
+ var transaction_types = ["credit card", "cash", "account"];
+ var store_names = ["edgards", "cna", "makro", "picknpay", "checkers"];
+ var random_transaction_type = Math.floor(Math.random() * (2 - 0 + 1)) + 0;
+ var random_store_name = Math.floor(Math.random() * (4 - 0 + 1)) + 0;
+ var random_age = Math.floor(Math.random() * (80 - 18) + 18)
+ txs.push({
+   transaction: 'tx_' + x,
+   transaction_price: Math.round(Math.random()*1000),
+   transaction_type: transaction_types[random_transaction_type],
+   store_name: store_names[random_store_name],
+   age: random_age
+   });
+}
+console.log("drop and recreate the collection")
+db.mycollection1.drop()
+db.createCollection("mycollection1")
+console.log("insert documents into collection")
+db.mycollection1.insertMany(txs)
+</code></pre>
+
+<p>The script will loop a 1000 times and create documents that will include fields of <code>transaction_types</code>, <code>store_names</code>, <code>random_transaction_type</code>, <code>random_store_name</code> and <code>random_age</code>.</p>
+
+<p>Use docker, mount the file inside the container, point the database endpoint to ferretdb and load the file that we want to execute:</p>
+
+<pre><code class="bash">docker run --rm -it --network=ferretdb -v $PWD/write.js:/src/write.js --entrypoint=mongosh mongo:6.0 "mongodb://ferret:password@ferretdb/ferretdb?authMechanism=PLAIN" --eval 'load("/src/write.js")'
+</code></pre>
+
+<p>Now when we run a mongosh client:</p>
+
+<pre><code class="bash">docker run --rm -it --network=ferretdb -v $PWD/write.js:/src/write.js --entrypoint=mongosh mongo:6.0 "mongodb://ferret:password@ferretdb/ferretdb?authMechanism=PLAIN" 
+</code></pre>
+
+<p>And we query for the <code>store_name: picknpay</code> and only show the <code>transaction_type</code> and <code>transaction</code> fields:</p>
+
+<pre><code class="bash">ferretdb&gt; db.mycollection1.find({"store_name": "picknpay"}, {_id: 0, transaction_type: 1, transaction: 1})
+[
+  { transaction_type: 'credit card', transaction: 'tx_3' },
+  { transaction_type: 'cash', transaction: 'tx_9' },
+  { transaction_type: 'account', transaction: 'tx_10' },
+  { transaction_type: 'credit card', transaction: 'tx_15' },
+  { transaction_type: 'credit card', transaction: 'tx_19' },
+  { transaction_type: 'cash', transaction: 'tx_21' },
+  { transaction_type: 'cash', transaction: 'tx_28' },
+  { transaction_type: 'account', transaction: 'tx_31' },
+  { transaction_type: 'cash', transaction: 'tx_37' },
+  { transaction_type: 'cash', transaction: 'tx_39' },
+  { transaction_type: 'account', transaction: 'tx_40' },
+  { transaction_type: 'cash', transaction: 'tx_51' },
+  { transaction_type: 'account', transaction: 'tx_52' },
+  { transaction_type: 'cash', transaction: 'tx_58' },
+  { transaction_type: 'credit card', transaction: 'tx_62' },
+  { transaction_type: 'credit card', transaction: 'tx_65' },
+  { transaction_type: 'account', transaction: 'tx_69' },
+  { transaction_type: 'account', transaction: 'tx_71' },
+  { transaction_type: 'cash', transaction: 'tx_72' },
+  { transaction_type: 'account', transaction: 'tx_74' }
+]
+</code></pre>
+
+<p>We can also use the <code>--eval</code> flag with the mongosh container to run ad-hoc queries such as counting documents for a collection:</p>
+
+<pre><code class="bash">docker run --rm -it --network=ferretdb \
+  -v $PWD/write.js:/src/write.js:ro \
+  --entrypoint=mongosh mongo:6.0 \
+  "mongodb://ferret:password@ferretdb/ferretdb?authMechanism=PLAIN" --eval 'db.mycollection1.countDocuments()'
+</code></pre>
+
+<h2>Prometheus Metrics</h2>
+
+<p>FerretDB provides prometheus metrics out of the box, and outputs prometheus metrics on the <code>:8080/debug/metrics</code> endpoint:</p>
+
+<pre><code class="bash">curl http://localhost:8080/debug/metrics
+</code></pre>
+
+<p>Which will output metrics more or less like the following:</p>
+
+<pre><code># HELP ferretdb_client_accepts_total Total number of accepted client connections.
+# TYPE ferretdb_client_accepts_total counter
+ferretdb_client_accepts_total{error="0"} 98
+# HELP ferretdb_client_connected The current number of connected clients.
+# TYPE ferretdb_client_connected gauge
+ferretdb_client_connected 0
+# HELP ferretdb_client_requests_total Total number of requests.
+# TYPE ferretdb_client_requests_total counter
+ferretdb_client_requests_total{command="aggregate",opcode="OP_MSG"} 5
+ferretdb_client_requests_total{command="atlasVersion",opcode="OP_MSG"} 27
+ferretdb_client_requests_total{command="buildInfo",opcode="OP_MSG"} 27
+ferretdb_client_requests_total{command="buildinfo",opcode="OP_MSG"} 2
+ferretdb_client_requests_total{command="count",opcode="OP_MSG"} 5
+ferretdb_client_requests_total{command="create",opcode="OP_MSG"} 7
+ferretdb_client_requests_total{command="drop",opcode="OP_MSG"} 3
+ferretdb_client_requests_total{command="dropDatabase",opcode="OP_MSG"} 4
+ferretdb_client_requests_total{command="find",opcode="OP_MSG"} 27
+ferretdb_client_requests_total{command="getCmdLineOpts",opcode="OP_MSG"} 27
+ferretdb_client_requests_total{command="getFreeMonitoringStatus",opcode="OP_MSG"} 20
+ferretdb_client_requests_total{command="getLog",opcode="OP_MSG"} 20
+ferretdb_client_requests_total{command="getParameter",opcode="OP_MSG"} 27
+ferretdb_client_requests_total{command="hello",opcode="OP_MSG"} 20
+ferretdb_client_requests_total{command="insert",opcode="OP_MSG"} 15
+ferretdb_client_requests_total{command="ismaster",opcode="OP_MSG"} 238
+ferretdb_client_requests_total{command="listCollections",opcode="OP_MSG"} 49
+ferretdb_client_requests_total{command="listDatabases",opcode="OP_MSG"} 12
+ferretdb_client_requests_total{command="ping",opcode="OP_MSG"} 40
+ferretdb_client_requests_total{command="saslStart",opcode="OP_MSG"} 70
+ferretdb_client_requests_total{command="setFreeMonitoring",opcode="OP_MSG"} 1
+ferretdb_client_requests_total{command="unknown",opcode="OP_QUERY"} 96
+# HELP ferretdb_client_responses_total Total number of responses.
+# TYPE ferretdb_client_responses_total counter
+ferretdb_client_responses_total{argument="unknown",command="aggregate",opcode="OP_MSG",result="ok"} 5
+ferretdb_client_responses_total{argument="unknown",command="atlasVersion",opcode="OP_MSG",result="CommandNotFound"} 27
+ferretdb_client_responses_total{argument="unknown",command="buildInfo",opcode="OP_MSG",result="ok"} 27
+ferretdb_client_responses_total{argument="unknown",command="buildinfo",opcode="OP_MSG",result="ok"} 2
+ferretdb_client_responses_total{argument="unknown",command="count",opcode="OP_MSG",result="ok"} 5
+ferretdb_client_responses_total{argument="unknown",command="create",opcode="OP_MSG",result="ok"} 7
+ferretdb_client_responses_total{argument="unknown",command="drop",opcode="OP_MSG",result="NamespaceNotFound"} 2
+ferretdb_client_responses_total{argument="unknown",command="drop",opcode="OP_MSG",result="ok"} 1
+ferretdb_client_responses_total{argument="unknown",command="dropDatabase",opcode="OP_MSG",result="ok"} 4
+ferretdb_client_responses_total{argument="unknown",command="find",opcode="OP_MSG",result="ok"} 27
+ferretdb_client_responses_total{argument="unknown",command="getCmdLineOpts",opcode="OP_MSG",result="ok"} 27
+ferretdb_client_responses_total{argument="unknown",command="getFreeMonitoringStatus",opcode="OP_MSG",result="ok"} 20
+ferretdb_client_responses_total{argument="unknown",command="getLog",opcode="OP_MSG",result="ok"} 20
+ferretdb_client_responses_total{argument="unknown",command="getParameter",opcode="OP_MSG",result="Unset"} 27
+ferretdb_client_responses_total{argument="unknown",command="hello",opcode="OP_MSG",result="ok"} 20
+ferretdb_client_responses_total{argument="unknown",command="insert",opcode="OP_MSG",result="ok"} 15
+ferretdb_client_responses_total{argument="unknown",command="ismaster",opcode="OP_MSG",result="ok"} 238
+ferretdb_client_responses_total{argument="unknown",command="listCollections",opcode="OP_MSG",result="ok"} 49
+ferretdb_client_responses_total{argument="unknown",command="listDatabases",opcode="OP_MSG",result="ok"} 12
+ferretdb_client_responses_total{argument="unknown",command="ping",opcode="OP_MSG",result="ok"} 40
+ferretdb_client_responses_total{argument="unknown",command="saslStart",opcode="OP_MSG",result="ok"} 70
+ferretdb_client_responses_total{argument="unknown",command="setFreeMonitoring",opcode="OP_MSG",result="ok"} 1
+ferretdb_client_responses_total{argument="unknown",command="unknown",opcode="OP_REPLY",result="ok"} 93
+ferretdb_client_responses_total{argument="unknown",command="unknown",opcode="OP_REPLY",result="unhandled"} 3
+# HELP ferretdb_up FerretDB instance state.
+# TYPE ferretdb_up gauge
+ferretdb_up{branch="unknown",commit="3344cbb98bb744dd044bcf2d51fe9ab65db22f0b",debug="false",dirty="true",package="docker",telemetry="disabled",update_available="false",uuid="08174d33-05fd-45ed-adb9-d2e343e0af83",version="v1.1.0"} 1
+# HELP go_gc_duration_seconds A summary of the pause duration of garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 3.9636e-05
+go_gc_duration_seconds{quantile="0.25"} 7.349e-05
+go_gc_duration_seconds{quantile="0.5"} 0.00012919
+go_gc_duration_seconds{quantile="0.75"} 0.000661169
+go_gc_duration_seconds{quantile="1"} 0.010074466
+go_gc_duration_seconds_sum 0.505121341
+go_gc_duration_seconds_count 964
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 16
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.20.3"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated and still in use.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 2.322216e+06
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated, even if freed.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 1.229839784e+09
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 1.676321e+06
+# HELP go_memstats_frees_total Total number of frees.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 9.331026e+06
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 8.818944e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and still in use.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 2.322216e+06
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 1.1853824e+07
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use.
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 4.399104e+06
+# HELP go_memstats_heap_objects Number of allocated objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 10726
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 1.1853824e+07
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 1.6252928e+07
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.684330039366246e+09
+# HELP go_memstats_lookups_total Total number of pointer lookups.
+# TYPE go_memstats_lookups_total counter
+go_memstats_lookups_total 0
+# HELP go_memstats_mallocs_total Total number of mallocs.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 9.341752e+06
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 1200
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 15600
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 81760
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 228480
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 4.946672e+06
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 398967
+# HELP go_memstats_stack_inuse_bytes Number of bytes in use by the stack allocator.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 524288
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 524288
+# HELP go_memstats_sys_bytes Number of bytes obtained from system.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 2.7915528e+07
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 7
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 16.98
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1.048576e+06
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 13
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 2.5714688e+07
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.68425346762e+09
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 7.52529408e+08
+# HELP process_virtual_memory_max_bytes Maximum amount of virtual memory available in bytes.
+# TYPE process_virtual_memory_max_bytes gauge
+process_virtual_memory_max_bytes 1.8446744073709552e+19
+# HELP promhttp_metric_handler_errors_total Total number of internal errors encountered by the promhttp metric handler.
+# TYPE promhttp_metric_handler_errors_total counter
+promhttp_metric_handler_errors_total{cause="encoding"} 0
+promhttp_metric_handler_errors_total{cause="gathering"} 0
+# HELP promhttp_metric_handler_requests_in_flight Current number of scrapes being served.
+# TYPE promhttp_metric_handler_requests_in_flight gauge
+promhttp_metric_handler_requests_in_flight 1
+# HELP promhttp_metric_handler_requests_total Total number of scrapes by HTTP status code.
+# TYPE promhttp_metric_handler_requests_total counter
+promhttp_metric_handler_requests_total{code="200"} 2
+promhttp_metric_handler_requests_total{code="500"} 0
+promhttp_metric_handler_requests_total{code="503"} 0
+</code></pre>
+
+<h2>Resources</h2>
+
+<p>Please see the follwoing resources for FerretDB:</p>
+
+<ul>
+<li><a href="https://docs.ferretdb.io/">https://docs.ferretdb.io/</a></li>
+<li><a href="https://github.com/ferretdb/FerretDB/pkgs/container/ferretdb">https://github.com/ferretdb/FerretDB/pkgs/container/ferretdb</a></li>
+<li><a href="https://docs.ferretdb.io/quickstart-guide/docker/">https://docs.ferretdb.io/quickstart-guide/docker/</a></li>
+<li><a href="https://github.com/ruanbekker/cheatsheets/tree/master/mongodb/shell">https://github.com/ruanbekker/cheatsheets/tree/master/mongodb/shell</a></li>
+</ul>
+
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Improve MySQL Write Performance Using Batch Writes]]></title>
@@ -620,7 +1219,7 @@ Inserted Multiple Documents:  [ObjectID("5cb717dcf597b44112523420") ObjectID("5c
 
 <pre><code>func main() {
     ..
-    filter := bson.Dname
+    filter := bson.D{{"name", "Frankie"}}
     update := bson.D{
         {"$inc", bson.D{
             {"age", 1},
@@ -647,7 +1246,7 @@ Matched 1 documents and updated 1 documents.
 
 <pre><code class="go">funct main() {
     ..
-    filter := bson.Dname
+    filter := bson.D{{"name", "Frankie"}}
     var result Trainer
 
     err = collection.FindOne(context.TODO(), filter).Decode(&amp;result)
@@ -674,7 +1273,7 @@ Found a single document: {Name:Frankie Age:32 City:Nairobi}
 <pre><code class="go">func main() {
     ..
     var results []*Trainer
-    cur, err := collection.Find(context.TODO(), bson.D, findOptions)
+    cur, err := collection.Find(context.TODO(), bson.D{{}}, findOptions)
     if err != nil {
         log.Fatal(err)
     }
@@ -710,7 +1309,7 @@ Found multiple documents (array of pointers): [0xc0001215c0 0xc0001215f0]
 
 <pre><code class="go">func main(){
     ..
-    deleteResult, err := collection.DeleteMany(context.TODO(), bson.D)
+    deleteResult, err := collection.DeleteMany(context.TODO(), bson.D{{}})
     if err != nil {
         log.Fatal(err)
     }
@@ -900,171 +1499,6 @@ name        credit_card_num      product_name  product_category   product_price
 ----------  -------------------  ------------  -----------------  -------------
 ruan        2345-8970-6712-4352  burger        fast foods         101.02   
 </code></pre>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Shrink Your Elasticsearch Index by Reducing the Shard Count With the Shards API]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2019/04/06/shrink-your-elasticsearch-index-by-reducing-the-shard-count-with-the-shards-api/"/>
-    <updated>2019-04-06T15:33:48-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2019/04/06/shrink-your-elasticsearch-index-by-reducing-the-shard-count-with-the-shards-api</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/53352581-b3892f80-392b-11e9-9532-5db5cbfc8f1c.jpg" alt="elasticsearch" /></p>
-
-<p>Resize your Elasticsearch Index with fewer Primary Shards by using the Shrink API.</p>
-
-<p>In Elasticsearch, every index consists of multiple shards and every shard in your elasticsearch cluster contributes to the usage of your cpu, memory, file descriptors etc. This definitely helps for performance in parallel processing. As for an example with time series data, you would write and read a lot to an index with ie the current date.</p>
-
-<p>If that index drops in requests and only read from the index every now and then, we dont need that many shards anymore and if we have multiple indexes, they may build up and take up unessacary compute power.</p>
-
-<p>For a scenario where we want to reduce the size of our indexes, we can use the Shrink API to reduce the number of primary shards.</p>
-
-<h2>The Shrink API</h2>
-
-<p>The shrink index API allows you to shrink an existing index into a new index with fewer primary shards. The requested number of primary shards in the target index must be a factor of the number of shards in the source index. For example an index with 8 primary shards can be shrunk into 4, 2 or 1 primary shards or an index with 15 primary shards can be shrunk into 5, 3 or 1. If the number of shards in the index is a prime number it can only be shrunk into a single primary shard. Before shrinking, a (primary or replica) copy of every shard in the index must be present on the same node.</p>
-
-<p>Steps on Shrinking:</p>
-
-<p>Create the target index with the same definition as the source index, but with a smaller number of primary shards.
-Then it hard-links segments from the source index into the target index.
-Finally, it recovers the target index as though it were a closed index which had just been re-opened.</p>
-
-<h2>Reduce the Primary Shards of an Index.</h2>
-
-<p>As you may know, you can only set the Primary Shards on Index Creation time and Replica Shards you can set on the fly.</p>
-
-<p>In this example we have a source index: <code>my-index-2019.01.10</code> with 5 primary shards and 1 replica shard, which gives us 10 shards for that index, that we would like to shrink to an index named: <code>archive_my-index-2019.01.10</code> with 1 primary shard and 1 replica shard, which will give us 2 shards for that index.</p>
-
-<p>Have a look at your index:</p>
-
-<pre><code>$ curl -XGET "http://127.0.0.1:9200/_cat/indices/my-index-2019.01.*?v"
-health status index                                     uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   my-index-2019.01.10                       xAijUTSevXirdyTZTN3cuA   5   1   80795533            0      5.9gb          2.9gb
-green  open   my-index-2019.01.11                       yb8Cjy9eQwqde8mJhR_vlw   5   5   80590481            0      5.7gb          2.8gb
-...
-</code></pre>
-
-<p>And have a look at the nodes, as we will relocate the shards to a specific node:</p>
-
-<pre><code>$ curl http://127.0.0.1:9200/_cat/nodes?v
-ip            heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
-x.x.x.x             8          98   0    0.04    0.03     0.01 m         -      3E9yp60
-x.x.x.x            65          99   4    0.43    0.23     0.36 di        -      znFrs18
-</code></pre>
-
-<p>In this demonstration we only have 2 nodes with a replication factor of 1, which means a index&rsquo;s shards will always reside on both nodes. In a case with more nodes, we need to ensure that we choose a node where a primary index reside on.</p>
-
-<p>Look at the shards api, by passing the index name to get the index to shard allocation:</p>
-
-<pre><code>$ curl http://127.0.0.1:9200/_cat/shards/my-index-2019.01.10?v'
-index               shard prirep state   docs  store ip       node
-my-index-2019.01.10 2     p      STARTED  193  101mb x.x.x.x  Lq9P7eP
-my-index-2019.01.10 2     r      STARTED  193  101mb x.x.x.x  F5edOwK
-my-index-2019.01.10 4     p      STARTED  197  101mb x.x.x.x  Lq9P7eP
-my-index-2019.01.10 4     r      STARTED  197  101mb x.x.x.x  F5edOwK
-my-index-2019.01.10 3     r      STARTED  184  101mb x.x.x.x  Lq9P7eP
-my-index-2019.01.10 3     p      STARTED  184  101mb x.x.x.x  F5edOwK
-my-index-2019.01.10 1     r      STARTED  180  101mb x.x.x.x  Lq9P7eP
-my-index-2019.01.10 1     p      STARTED  180  101mb x.x.x.x  F5edOwK
-my-index-2019.01.10 0     p      STARTED  187  101mb x.x.x.x  Lq9P7eP
-my-index-2019.01.10 0     r      STARTED  187  101mb x.x.x.x  F5edOwK
-</code></pre>
-
-<p>Create the target index:</p>
-
-<pre><code>$ curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/archive_my-index-2019.01.10 -d '
-{
-    "settings": {
-        "number_of_shards": "1",
-        "number_of_replicas": "1"
-    }
-}
-'
-</code></pre>
-
-<p>Set the index as read only and relocate every copy of shard to node we indentified in a previous step:</p>
-
-<pre><code>$ curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/my-index-2019.01.10/_settings -d '
-{
-    "settings": {
-        "index.routing.allocation.require._name": "Lq9P7eP",
-        "index.blocks.write": true
-    }
-}
-'
-</code></pre>
-
-<p>Now shrink the source index (my-index-2019.01.10) to the target index (archive_my-index-2019.01.10):</p>
-
-<pre><code>$ curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9200/my-index-2019.01.10/_shrink/archive_my-index-2019.01.10
-</code></pre>
-
-<p>You can monitor the progress by using the Recovery API:</p>
-
-<pre><code>$ curl -s -XGET "http://127.0.0.1:9200/_cat/recovery/my-index-2019.01.10?human&amp;detailed=true"
-my-index-2019.01.10 0 23.3s peer done x.x.x.x  F5edOwK x.x.x.x Lq9P7eP n/a n/a 15 15 100.0% 15 635836677 635836677 100.0% 635836677 0 0 100.0%
-my-index-2019.01.10 1 22s   peer done x.x.x.x  Lq9P7eP x.x.x.x Lq9P7eP n/a n/a 15 15 100.0% 15 636392649 636392649 100.0% 636392649 0 0 100.0%
-my-index-2019.01.10 2 19.6s peer done x.x.x.x  F5edOwK x.x.x.x Lq9P7eP n/a n/a 15 15 100.0% 15 636809671 636809671 100.0% 636809671 0 0 100.0%
-my-index-2019.01.10 3 21.5s peer done x.x.x.x  Lq9P7eP x.x.x.x Lq9P7eP n/a n/a 15 15 100.0% 15 636378870 636378870 100.0% 636378870 0 0 100.0%
-my-index-2019.01.10 4 23.3s peer done x.x.x.x F5edOwK- x.x.x.x Lq9P7eP n/a n/a 15 15 100.0% 15 636545756 636545756 100.0% 636545756 0 0 100.0%
-</code></pre>
-
-<p>You can also pass aliases as your table columns for output:</p>
-
-<pre><code>$ curl -s -XGET "http://127.0.0.1:9200/_cat/recovery/my-index-2019.01.10?v&amp;detailed=true&amp;h=index,shard,time,ty,st,shost,thost,f,fp,b,bp"
-index                            shard time  ty   st   shost         thost        f  fp     b         bp
-my-index-2019.01.10              0     23.3s peer done x.x.x.x x.x.x.x 15 100.0% 635836677 100.0%
-...
-</code></pre>
-
-<p>When the job is done, have a look at your indexes:</p>
-
-<pre><code>$ curl -XGET "http://127.0.0.1:9200/_cat/indices/*my-index-2019.01.10?v"
-health status index                                     uuid                   pri rep docs.count docs.deleted store.size pri.store.size
-green  open   archive_my-index-2019.01.10               PAijUTSeRvirdyTZTN3cuA   1   1   80795533            0      5.9gb          2.9gb
-green  open   my-index-2019.01.10                       Cb8Cjy9CQwqde8mJhR_vlw   5   1   80795533            0      2.9gb          2.9gb
-</code></pre>
-
-<p>Remove the block on your old index in order to make it writable:</p>
-
-<pre><code>$ curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/my-index-2019.01.10/_settings" -d '
-{
-    "settings": {
-        "index.routing.allocation.require._name": null,
-        "index.blocks.write": null
-    }
-}
-'
-</code></pre>
-
-<p>Delete the old index:</p>
-
-<pre><code>$ curl -XDELETE -H 'Content-Type: application/json' http://127.0.0.1:9200/my-index-2019.01.10
-</code></pre>
-
-<p>Note:, On AWS Elasticsearch Service, if you dont remove the block and you trigger a redeployment, you will end up with something like this. Shard may still be constraint to a node.</p>
-
-<pre><code>$ curl -s -XGET ${ES_HOST/_cat/allocation?v
-shards disk.indices disk.used disk.avail disk.total disk.percent host          ip  node
-     0           0b    51.2gb    956.5gb   1007.8gb            5 x.x.x.x  x.x.x.x  ap9Mx1R
-     1        3.6gb    54.9gb    952.8gb   1007.8gb            5 x.x.x.x  x.x.x.x  PqmoQpN   &lt;-----------
-     0           0b    51.2gb    956.5gb   1007.8gb            5 x.x.x.x  x.x.x.x  5p7x4Lc
-     0           0b    51.2gb    956.5gb   1007.8gb            5 x.x.x.x  x.x.x.x  c8kniP3
-     0           0b    51.2gb    956.5gb   1007.8gb            5 x.x.x.x  x.x.x.x  jPwlwsD
-     0           0b    51.2gb    956.5gb   1007.8gb            5 x.x.x.x  x.x.x.x  ljos4mu
-   481      904.1gb   990.3gb    521.3gb      1.4tb           65 x.x.x.x  x.x.x.x  qAF-gIU
-   481      820.2gb   903.6gb    608.1gb      1.4tb           59 x.x.x.x  x.x.x.x  dR3sNwA
-   481      824.6gb   909.1gb    602.6gb      1.4tb           60 x.x.x.x  x.x.x.x  fvL4A9X
-   481      792.7gb   876.5gb    635.2gb      1.4tb           57 x.x.x.x  x.x.x.x  lk4svht
-   481      779.2gb   864.4gb    647.3gb      1.4tb           57 x.x.x.x  x.x.x.x  uLsej9m
-     0           0b    51.2gb    956.5gb   1007.8gb            5 x.x.x.x  x.x.x.x  yM4Ka9l
-</code></pre>
-
-<h2>Resources:</h2>
-
-<ul>
-<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/master/indices-shrink-index.html">https://www.elastic.co/guide/en/elasticsearch/reference/master/indices-shrink-index.html</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

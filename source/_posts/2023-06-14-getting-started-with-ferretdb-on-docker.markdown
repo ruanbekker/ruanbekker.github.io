@@ -6,6 +6,8 @@ comments: true
 categories: ["ferretdb", "mongodb", "docker", "databases", "nosql"]
 ---
 
+![how-to-run-ferretdb-on-docker](https://blog.ruanbekker.com/images/how-to-run-ferretdb-on-docker.png)
+
 In this post we will have a look at **FerretDB** which is a opensource proxy that translates MongoDB queries to SQL, where PostgreSQL being the database engine. 
 
 ## More about FerretDB

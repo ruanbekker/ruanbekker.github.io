@@ -341,7 +341,7 @@ We will create a script so that we can generate data that we want to write into 
 
 Create the following script, `write.js`:
 
-```javascript
+```
 var txs = []
 for (var x = 0; x < 1000 ; x++) {
  var transaction_types = ["credit card", "cash", "account"];

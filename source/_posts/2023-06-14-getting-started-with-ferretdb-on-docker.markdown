@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Getting Started with FerretDB on Docker"
-date: 2023-07-14 22:00:00 -0400
+date: 2023-06-14 22:00:00 -0400
 comments: true
 categories: ["ferretdb", "mongodb", "docker", "databases", "nosql"]
 ---

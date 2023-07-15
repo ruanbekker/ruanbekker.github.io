@@ -93,22 +93,3 @@ Once you have the content above saved in `docker-compose.yaml` you can run the f
 docker-compose up -d
 ```
 
-## Connect to FerretDB
-
-Once the containers started, we can connect to our ferretdb server using mongosh, which is a shell utility to connect to the database). I will make use of a container to do this, where I will reference the network which we defined in our docker compose file, and set the endpoint that mongosh need to connect to:
-
-```bash
-docker run --rm -it --network=ferretdb --entrypoint=mongosh mongo:6.0 "mongodb://ferret:password@ferretdb/ferretdb?authMechanism=PLAIN"
-```
-
-Once it successfully connects to ferretdb, we should see the following prompt:
-
-```bash
-Current Mongosh Log ID:	64626c5c259916d1a68b7dad
-Connecting to:		mongodb://<credentials>@ferretdb/ferretdb?authMechanism=PLAIN&directConnection=true&appName=mongosh+1.8.2
-Using MongoDB:		6.0.42
-Using Mongosh:		1.8.2
-
-ferretdb>
-```
-

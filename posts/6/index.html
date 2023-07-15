@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this post we wil set up a drone-ci and gitea stack using docker-compose and then running a test pipeline. I have posted a few times about this &hellip;">
+  <meta name="description" content="In this tutorial, we will connect the DHT22 sensor to the Raspberry Pi Zero via the GPIO pins to measure temperature and humidity and visualize it &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,435 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2021/03/10/visualize-weather-data-with-grafana-and-the-dht22-sensor/">Visualize Weather Data With Grafana and the DHT22 Sensor</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2021-03-10T00:06:31-05:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2021</span></span> <span class='time'>12:06 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial, we will connect the <a href="https://learn.adafruit.com/dht">DHT22</a> sensor to the Raspberry Pi Zero via the GPIO pins to measure temperature and humidity and visualize it with Grafana.</p>
+
+<p><em>Note</em>: This post was originally posted on my <a href="https://blog.pistack.co.za/monitor-temperature-with-the-dht22-sensor-on-the-raspberry-pi/">RaspberryPi Blog</a></p>
+
+<p>Then we will write a Python exporter for prometheus to expose our metrics so that we can visualize it in Grafana.</p>
+
+<h2>The Endgoal</h2>
+
+<p><img src="https://user-images.githubusercontent.com/30043398/104296987-fd9d3f00-54ca-11eb-8623-f3fd4a63e3cc.png" alt="image" /></p>
+
+<h2>The Hardware</h2>
+
+<p>This is how the sensor looks like (I got it from <a href="https://www.communica.co.za/products/bmt-temp-humd-snsr-dht22-on-pcb">Communica</a>)</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/103872941-ba605c00-50d7-11eb-9f60-531995a185e6.png" alt="image" /></p>
+
+<h2>Connecting the Sensor</h2>
+
+<p>You can use the following graphic to connect your sensor to your raspberry pi:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/103873892-27c0bc80-50d9-11eb-9c41-3f3b2ff5aee2.png" alt="image" /></p>
+
+<h2>Installing Software</h2>
+
+<p>To install the required software, we will be using pip:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ pip3 install Adafruit_DHT --user</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once we installed the software we can configure it</p>
+
+<h2>Interact with the Sensor</h2>
+
+<p>Enter your python interpreter:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ python3
+</span><span class='line'>&gt;&gt;&gt;</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then import the library, and get the current temperature and humidity:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>&gt;&gt;&gt; import Adafruit_DHT as dht
+</span><span class='line'>&gt;&gt;&gt; humidity, temperature = dht.read_retry(dht.DHT22, 4)
+</span><span class='line'>&gt;&gt;&gt; humidity = format(humidity, ".2f") + "%"
+</span><span class='line'>&gt;&gt;&gt; humidity
+</span><span class='line'>'47.20%'
+</span><span class='line'>&gt;&gt;&gt; temperature = format(temperature, ".2f") + "C"
+</span><span class='line'>&gt;&gt;&gt; temperature
+</span><span class='line'>'29.10C'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s create a python script for it:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat temps.py
+</span><span class='line'>#!/usr/bin/env python3
+</span><span class='line'>
+</span><span class='line'>import Adafruit_DHT as dht_sensor
+</span><span class='line'>import time
+</span><span class='line'>
+</span><span class='line'>def get_temperature_readings():
+</span><span class='line'>    humidity, temperature = dht_sensor.read_retry(dht_sensor.DHT22, 4)
+</span><span class='line'>    humidity = format(humidity, ".2f") + "%"
+</span><span class='line'>    temperature = format(temperature, ".2f") + "C"
+</span><span class='line'>    return {"temperature": temperature, "humidity": humidity}
+</span><span class='line'>
+</span><span class='line'>while True:
+</span><span class='line'>    print(get_temperature_readings())
+</span><span class='line'>    time.sleep(30)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And run it:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ python3 temps.py
+</span><span class='line'>{'temperature': '28.00C', 'humidity': '47.40%'}
+</span><span class='line'>{'temperature': '28.00C', 'humidity': '47.30%'}
+</span><span class='line'>{'temperature': '28.00C', 'humidity': '47.70%'}
+</span><span class='line'>{'temperature': '28.00C', 'humidity': '47.40%'}
+</span><span class='line'>{'temperature': '28.00C', 'humidity': '47.60%'}</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Visualize with Grafana</h2>
+
+<p>Let&rsquo;s visualize our data with Grafana. For this, we need to write an exporter so that Prometheus can scrape the data.</p>
+
+<p>Let&rsquo;s create a python flask application with the prometheus client library for python to expose the metrics to prometheus with a <code>/metrics</code> endpoint.</p>
+
+<p>Note: I have used <a href="https://openweathermap.org/api">OpenWeatherMap</a>&rsquo;s API to get the outside temperature for my location.</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat flask_temps.py
+</span><span class='line'>#!/usr/bin/env python3
+</span><span class='line'>
+</span><span class='line'>import Adafruit_DHT as dht_sensor
+</span><span class='line'>import time
+</span><span class='line'>from flask import Flask, Response
+</span><span class='line'>from prometheus_client import Counter, Gauge, start_http_server, generate_latest
+</span><span class='line'>import requests
+</span><span class='line'>
+</span><span class='line'>params = {"lat": "-xx.xxxxx", "lon": "xx.xxxx", "units": "metric", "appid": "your-api-key"}
+</span><span class='line'>baseurl = "https://api.openweathermap.org/data/2.5/weather"
+</span><span class='line'>content_type = str('text/plain; version=0.0.4; charset=utf-8')
+</span><span class='line'>
+</span><span class='line'>def get_temperature_readings():
+</span><span class='line'>    humidity, temperature = dht_sensor.read_retry(dht_sensor.DHT22, 4)
+</span><span class='line'>    humidity = format(humidity, ".2f")
+</span><span class='line'>    temperature = format(temperature, ".2f")
+</span><span class='line'>    outside_temp = get_outside_weather()
+</span><span class='line'>    if all(v is not None for v in [humidity, temperature, outside_temp]):
+</span><span class='line'>        response = {"temperature": temperature, "humidity": humidity, "outside_temp": outside_temp}
+</span><span class='line'>        return response
+</span><span class='line'>    else:
+</span><span class='line'>        time.sleep(0.2)
+</span><span class='line'>        humidity, temperature = dht_sensor.read_retry(dht_sensor.DHT22, 4)
+</span><span class='line'>        humidity = format(humidity, ".2f")
+</span><span class='line'>        temperature = format(temperature, ".2f")
+</span><span class='line'>        outside_temp = get_outside_weather()
+</span><span class='line'>        response = {"temperature": temperature, "humidity": humidity, "outside_temp": outside_temp}
+</span><span class='line'>        return response
+</span><span class='line'>
+</span><span class='line'>def get_outside_weather():
+</span><span class='line'>    response = requests.get(baseurl, params=params)
+</span><span class='line'>    temp = response.json()['main']['temp']
+</span><span class='line'>    return temp
+</span><span class='line'>
+</span><span class='line'>app = Flask(__name__)
+</span><span class='line'>
+</span><span class='line'>current_humidity = Gauge(
+</span><span class='line'>        'current_humidity',
+</span><span class='line'>        'the current humidity percentage, this is a gauge as the value can increase or decrease',
+</span><span class='line'>        ['room']
+</span><span class='line'>)
+</span><span class='line'>
+</span><span class='line'>current_temperature = Gauge(
+</span><span class='line'>        'current_temperature',
+</span><span class='line'>        'the current temperature in celsius, this is a gauge as the value can increase or decrease',
+</span><span class='line'>        ['room']
+</span><span class='line'>)
+</span><span class='line'>
+</span><span class='line'>current_temperature_outside = Gauge(
+</span><span class='line'>        'current_temperature_outside',
+</span><span class='line'>        'the current outside temperature in celsius, this is a gauge as the value can increase or decrease',
+</span><span class='line'>        ['location']
+</span><span class='line'>)
+</span><span class='line'>
+</span><span class='line'>@app.route('/metrics')
+</span><span class='line'>def metrics():
+</span><span class='line'>    metrics = get_temperature_readings()
+</span><span class='line'>    current_humidity.labels('study').set(metrics['humidity'])
+</span><span class='line'>    current_temperature.labels('study').set(metrics['temperature'])
+</span><span class='line'>    current_temperature_outside.labels('za_ct').set(metrics['outside_temp'])
+</span><span class='line'>    return Response(generate_latest(), mimetype=content_type)
+</span><span class='line'>
+</span><span class='line'>if __name__ == '__main__':
+</span><span class='line'>    app.run(host='0.0.0.0', port=5000)</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then install the flask and prometheus_client package:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ python3 -m pip install flask prometheus_client --user</span></code></pre></td></tr></table></div></figure>
+
+
+<p>When you run the program, you should be able to retrieve metrics from the exporter by making a request on port 5000 on the <code>/metrics</code> request path:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ curl http://localhost:5000/metrics
+</span><span class='line'># HELP python_gc_objects_collected_total Objects collected during gc
+</span><span class='line'># TYPE python_gc_objects_collected_total counter
+</span><span class='line'>python_gc_objects_collected_total{generation="0"} 646.0
+</span><span class='line'>python_gc_objects_collected_total{generation="1"} 129.0
+</span><span class='line'>python_gc_objects_collected_total{generation="2"} 0.0
+</span><span class='line'># HELP python_gc_objects_uncollectable_total Uncollectable object found during GC
+</span><span class='line'># TYPE python_gc_objects_uncollectable_total counter
+</span><span class='line'>python_gc_objects_uncollectable_total{generation="0"} 0.0
+</span><span class='line'>python_gc_objects_uncollectable_total{generation="1"} 0.0
+</span><span class='line'>python_gc_objects_uncollectable_total{generation="2"} 0.0
+</span><span class='line'># HELP python_gc_collections_total Number of times this generation was collected
+</span><span class='line'># TYPE python_gc_collections_total counter
+</span><span class='line'>python_gc_collections_total{generation="0"} 104.0
+</span><span class='line'>python_gc_collections_total{generation="1"} 9.0
+</span><span class='line'>python_gc_collections_total{generation="2"} 0.0
+</span><span class='line'># HELP python_info Python platform information
+</span><span class='line'># TYPE python_info gauge
+</span><span class='line'>python_info{implementation="CPython",major="3",minor="7",patchlevel="3",version="3.7.3"} 1.0
+</span><span class='line'># HELP process_virtual_memory_bytes Virtual memory size in bytes.
+</span><span class='line'># TYPE process_virtual_memory_bytes gauge
+</span><span class='line'>process_virtual_memory_bytes 4.4761088e+07
+</span><span class='line'># HELP process_resident_memory_bytes Resident memory size in bytes.
+</span><span class='line'># TYPE process_resident_memory_bytes gauge
+</span><span class='line'>process_resident_memory_bytes 2.7267072e+07
+</span><span class='line'># HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+</span><span class='line'># TYPE process_start_time_seconds gauge
+</span><span class='line'>process_start_time_seconds 1.61044381853e+09
+</span><span class='line'># HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+</span><span class='line'># TYPE process_cpu_seconds_total counter
+</span><span class='line'>process_cpu_seconds_total 5.86
+</span><span class='line'># HELP process_open_fds Number of open file descriptors.
+</span><span class='line'># TYPE process_open_fds gauge
+</span><span class='line'>process_open_fds 6.0
+</span><span class='line'># HELP process_max_fds Maximum number of open file descriptors.
+</span><span class='line'># TYPE process_max_fds gauge
+</span><span class='line'>process_max_fds 1024.0
+</span><span class='line'># HELP current_humidity the current humidity percentage, this is a gauge as the value can increase or decrease
+</span><span class='line'># TYPE current_humidity gauge
+</span><span class='line'>current_humidity{room="study"} 47.0
+</span><span class='line'># HELP current_temperature the current temperature in celsius, this is a gauge as the value can increase or decrease
+</span><span class='line'># TYPE current_temperature gauge
+</span><span class='line'>current_temperature{room="study"} 25.7
+</span><span class='line'># HELP current_temperature_outside the current outside temperature in celsius, this is a gauge as the value can increase or decrease
+</span><span class='line'># TYPE current_temperature_outside gauge
+</span><span class='line'>current_temperature_outside{location="za_ct"} 27.97</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now to configure our prometheus scrape config to scrape our endpoint:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>$ cat /etc/prometheus/prometheus.yml
+</span><span class='line'>...
+</span><span class='line'>scrape_configs:
+</span><span class='line'>  - job_name: 'temperature-exporter'
+</span><span class='line'>    scrape_interval: 15s
+</span><span class='line'>    static_configs:
+</span><span class='line'>    - targets: ['192.168.0.5:5000']
+</span><span class='line'>      labels:
+</span><span class='line'>        instance: 'pi-zero'
+</span><span class='line'>        room: 'study'</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then restart prometheus and head over to Grafana.</p>
+
+<p>We will be adding a new panel with a graph visualization, and from our prometheus datasource, we will be referencing the 2 metrics (different from the screenshot):</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>current_humidity{room="study"} 47.0
+</span><span class='line'>current_temperature{room="study"} 25.7
+</span><span class='line'>current_temperature_outside{location="za_ct"} 27.97</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As can be seen below:</p>
+
+<p><img src="https://user-images.githubusercontent.com/567298/103987136-a169b080-5194-11eb-8a61-6d36f45caf5c.png" alt="image" /></p>
+
+<p>After a bit of customization, you can get something more or less like this:</p>
+
+<p><img src="https://user-images.githubusercontent.com/30043398/104296987-fd9d3f00-54ca-11eb-8623-f3fd4a63e3cc.png" alt="image" /></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you like my content feel free to visit my website <strong><a href="https://ruan.dev">ruan.dev</a></strong> or follow me on Twitter <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2412,210 +2841,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2020/11/06/sending-slack-messages-with-python/">Sending Slack Messages With Python</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2020-11-06T13:58:50+00:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>6</span><span class='date-suffix'>th</span>, <span class='date-year'>2020</span></span> <span class='time'>1:58 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this post I will demonstrate how to send messages to slack using python based on the status of an event.</p>
-
-<p>We will keep it basic, that when something is down or up, it should send a slack message with the status, message, color and embed your grafana dashboard links inside the alert (or any links that you would like).</p>
-
-<h2>Create a Webhook</h2>
-
-<p>From a previous post on <a href="https://blog.ruanbekker.com/blog/2019/04/18/setup-a-slack-webhook-for-sending-messages-from-applications/">how to use curl to send slack messages</a> I showed how to create your webhook, so you can just follow that post if you want to follow along.</p>
-
-<p>Once you have a webhook, which will look like <code>https://hooks.slack.com/services/xx/yy/zz</code>, you are good to follow to the next step.</p>
-
-<h2>Creating the Script</h2>
-
-<p>First we need requests:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>$ pip install requests</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then we will create the <code>slack_notifier.py</code>, just ensure that you replace your slack webhook url and slack channel to yours:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-<span class='line-number'>52</span>
-<span class='line-number'>53</span>
-<span class='line-number'>54</span>
-<span class='line-number'>55</span>
-<span class='line-number'>56</span>
-<span class='line-number'>57</span>
-<span class='line-number'>58</span>
-<span class='line-number'>59</span>
-<span class='line-number'>60</span>
-<span class='line-number'>61</span>
-<span class='line-number'>62</span>
-<span class='line-number'>63</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">requests</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">sys</span>
-</span><span class='line'><span class="kn">import</span> <span class="nn">os</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">SLACK_WEBHOOK_URL</span> <span class="o">=</span> <span class="s">&#39;https://hooks.slack.com/&lt;your&gt;/&lt;slack&gt;/&lt;webhook&gt;&#39;</span>
-</span><span class='line'><span class="n">SLACK_CHANNEL</span> <span class="o">=</span> <span class="s">&quot;#your-slack-channel&quot;</span>
-</span><span class='line'><span class="n">ALERT_STATE</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">alert_map</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>    <span class="s">&quot;emoji&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;up&quot;</span><span class="p">:</span> <span class="s">&quot;:white_check_mark:&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;down&quot;</span><span class="p">:</span> <span class="s">&quot;:fire:&quot;</span>
-</span><span class='line'>    <span class="p">},</span>
-</span><span class='line'>    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;up&quot;</span><span class="p">:</span> <span class="s">&quot;RESOLVED&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;down&quot;</span><span class="p">:</span> <span class="s">&quot;FIRING&quot;</span>
-</span><span class='line'>    <span class="p">},</span>
-</span><span class='line'>    <span class="s">&quot;message&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;up&quot;</span><span class="p">:</span> <span class="s">&quot;Everything is good!&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;down&quot;</span><span class="p">:</span> <span class="s">&quot;Stuff is burning!&quot;</span>
-</span><span class='line'>    <span class="p">},</span>
-</span><span class='line'>    <span class="s">&quot;color&quot;</span><span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;up&quot;</span><span class="p">:</span> <span class="s">&quot;#32a852&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;down&quot;</span><span class="p">:</span> <span class="s">&quot;#ad1721&quot;</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'><span class="p">}</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">def</span> <span class="nf">alert_to_slack</span><span class="p">(</span><span class="n">status</span><span class="p">,</span> <span class="n">log_url</span><span class="p">,</span> <span class="n">metric_url</span><span class="p">):</span>
-</span><span class='line'>    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
-</span><span class='line'>        <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;AlertManager&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;username&quot;</span><span class="p">:</span> <span class="s">&quot;Notifications&quot;</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;channel&quot;</span><span class="p">:</span> <span class="n">SLACK_CHANNEL</span><span class="p">,</span>
-</span><span class='line'>        <span class="s">&quot;attachments&quot;</span><span class="p">:</span> <span class="p">[</span>
-</span><span class='line'>        <span class="p">{</span>
-</span><span class='line'>            <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;{emoji} [*{state}*] Status Checker</span><span class="se">\n</span><span class="s"> {message}&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
-</span><span class='line'>                <span class="n">emoji</span><span class="o">=</span><span class="n">alert_map</span><span class="p">[</span><span class="s">&quot;emoji&quot;</span><span class="p">][</span><span class="n">status</span><span class="p">],</span>
-</span><span class='line'>                <span class="n">state</span><span class="o">=</span><span class="n">alert_map</span><span class="p">[</span><span class="s">&quot;text&quot;</span><span class="p">][</span><span class="n">status</span><span class="p">],</span>
-</span><span class='line'>                <span class="n">message</span><span class="o">=</span><span class="n">alert_map</span><span class="p">[</span><span class="s">&quot;message&quot;</span><span class="p">][</span><span class="n">status</span><span class="p">]</span>
-</span><span class='line'>            <span class="p">),</span>
-</span><span class='line'>            <span class="s">&quot;color&quot;</span><span class="p">:</span> <span class="n">alert_map</span><span class="p">[</span><span class="s">&quot;color&quot;</span><span class="p">][</span><span class="n">status</span><span class="p">],</span>
-</span><span class='line'>            <span class="s">&quot;attachment_type&quot;</span><span class="p">:</span> <span class="s">&quot;default&quot;</span><span class="p">,</span>
-</span><span class='line'>            <span class="s">&quot;actions&quot;</span><span class="p">:</span> <span class="p">[</span>
-</span><span class='line'>                <span class="p">{</span>
-</span><span class='line'>                    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;Logs&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Logs&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;type&quot;</span><span class="p">:</span> <span class="s">&quot;button&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;style&quot;</span><span class="p">:</span> <span class="s">&quot;primary&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;url&quot;</span><span class="p">:</span> <span class="n">log_url</span>
-</span><span class='line'>                <span class="p">},</span>
-</span><span class='line'>                <span class="p">{</span>
-</span><span class='line'>                    <span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;Metrics&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;text&quot;</span><span class="p">:</span> <span class="s">&quot;Metrics&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;type&quot;</span><span class="p">:</span> <span class="s">&quot;button&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;style&quot;</span><span class="p">:</span> <span class="s">&quot;primary&quot;</span><span class="p">,</span>
-</span><span class='line'>                    <span class="s">&quot;url&quot;</span><span class="p">:</span> <span class="n">metric_url</span>
-</span><span class='line'>                <span class="p">}</span>
-</span><span class='line'>            <span class="p">]</span>
-</span><span class='line'>        <span class="p">}]</span>
-</span><span class='line'>    <span class="p">}</span>
-</span><span class='line'>    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">SLACK_WEBHOOK_URL</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">r</span><span class="o">.</span><span class="n">status_code</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">alert_to_slack</span><span class="p">(</span><span class="n">ALERT_STATE</span><span class="p">,</span> <span class="s">&quot;https://grafana-logs.dashboard.local&quot;</span><span class="p">,</span> <span class="s">&quot;https://grafana-metrics.dashboard.local&quot;</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Testing it out</h2>
-
-<p>Time to test it out, so let&rsquo;s assume something is down, then we can react on that event and action the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python</span> <span class="n">slack_notifier</span><span class="o">.</span><span class="n">py</span> <span class="n">down</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Which will look like the following on slack:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98374881-fdf00880-2049-11eb-9d7f-7599665871db.png" alt="image" /></p>
-
-<p>And when recovery is in place, we can action the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="err">$</span> <span class="n">python</span> <span class="n">slack_notifier</span><span class="o">.</span><span class="n">py</span> <span class="n">up</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Which will look like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/98374958-1eb85e00-204a-11eb-8ab0-c6a8a0640752.png" alt="image" /></p>
-
-<h2>Thanks</h2>
-
-<p>That was a basic example on how you can use python to send slack messages.</p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/7">&larr; Older</a>
@@ -2689,6 +2914,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/06/14/getting-started-with-ferretdb-on-docker/">Getting Started With FerretDB on Docker</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/05/26/how-to-run-a-amd64-bit-linux-vm-on-a-mac-m1/">How to Run a AMD64 Bit Linux VM on a Mac M1</a>
       </li>
     
@@ -2702,10 +2931,6 @@
     
       <li class="post">
         <a href="/blog/2023/03/05/persisting-terraform-remote-state-in-gitlab/">Persisting Terraform Remote State in Gitlab</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2023/01/24/everything-you-need-to-know-about-helm/">Everything You Need to Know About Helm</a>
       </li>
     
   </ul>

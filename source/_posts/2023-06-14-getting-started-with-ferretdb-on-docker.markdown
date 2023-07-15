@@ -119,28 +119,28 @@ If you are familiar with MongoDB, you will find the following identical to Mongo
 
 First we show the current databases:
 
-```sql
+```bash
 ferretdb> show dbs;
 public  0 B
 ```
 
 The we create and use the database named `mydb`:
 
-```sql
+```bash
 ferretdb> use mydb
 switched to db mydb
 ```
 
 To see which database are we currently connected to:
 
-```sql
+```bash
 mydb> db
 mydb
 ```
 
 Now we can create a collection named `mycol1` and `mycol2`:
 
-```sql
+```bash
 mydb> db.createCollection("mycol1")
 { ok: 1 }
 mydb> db.createCollection("mycol2")
@@ -149,7 +149,7 @@ mydb> db.createCollection("mycol2")
 
 We can view our collections by running the following:
 
-```sql
+```bash
 mydb> show collections
 mycol1
 mycol2
@@ -171,7 +171,7 @@ To write one document into our collection named `col1` with the following data:
 
 We can execute:
 
-```sql
+```bash
 mydb> db.mycol1.insertOne({"name": "ruan", "age": 32, "hobbies": ["golf", "programming", "music"]})
 {
   acknowledged: true,
@@ -181,7 +181,7 @@ mydb> db.mycol1.insertOne({"name": "ruan", "age": 32, "hobbies": ["golf", "progr
 
 And we can insert another document:
 
-```sql
+```bash
 mydb> db.mycol1.insertOne({"name": "michelle", "age": 28, "hobbies": ["art", "music", "reading"]})
 {
   acknowledged: true,
@@ -191,14 +191,14 @@ mydb> db.mycol1.insertOne({"name": "michelle", "age": 28, "hobbies": ["art", "mu
 
 We can then use `countDocuments()` to view the number of documents in our collection named `mycol1`:
 
-```sql
+```bash
 ferretdb> db.mycol1.countDocuments()
 2
 ```
 
 If we want to find all our documents in our `mycol1` collection:
 
-```sql
+```bash
 mydb> db.mycol1.find()
 [
   {
@@ -218,7 +218,7 @@ mydb> db.mycol1.find()
 
 If we want to only display specific fields in our response, such as name and age, we can project fields to return from our query:
 
-```sql
+```bash
 mydb> db.mycol1.find({}, {"name": 1, "age": 1})
 [
   { _id: ObjectId("64626cea259916d1a68b7dae"), name: 'ruan', age: 32 },
@@ -232,7 +232,7 @@ mydb> db.mycol1.find({}, {"name": 1, "age": 1})
 
 We can also suppress the `_id` field by setting the value to `0`:
 
-```sql
+```bash
 mydb> db.mycol1.find({}, {"_id": 0, "name": 1, "age": 1})
 [
   { name: 'ruan', age: 32 },
@@ -242,21 +242,21 @@ mydb> db.mycol1.find({}, {"_id": 0, "name": 1, "age": 1})
 
 Next we can return all the fields name and age from our collection where the age field is equals to 32:
 
-```sql
+```bash
 mydb> db.mycol1.find({"age": 32}, {"_id": 0, "name": 1, "age": 1})
 [ { name: 'ruan', age: 32 } ]
 ```
 
 We can also find a specific document by its id as example, and return only the field value, like name:
 
-```sql
+```bash
 mydb> db.mycol1.findOne({_id: ObjectId("64626cea259916d1a68b7dae")}).name
 ruan
 ```
 
 Next we will find all documents where the age is greater than 30:
 
-```sql
+```bash
 mydb> db.mycol1.find({"age": {"$gt": 30}})
 [
   {
@@ -270,20 +270,20 @@ mydb> db.mycol1.find({"age": {"$gt": 30}})
 
 Let's explore how to insert many documents at once using `insertMany()`, first create a new collection:
 
-```sql
+```bash
 ferretdb> db.createCollection("mycol2")
 { ok: 1 }
 ```
 
 We can then define the docs variable, and assign a array with 2 json documents:
 
-```sql
+```bash
 ferretdb> var docs = [{name: "peter", age: 34, hobbies: ["ski", "programming", "music"]}, {name: "sam", age: 39, hobbies: ["running", "camping", "music"]}]
 ```
 
 Now we can insert our documents to ferretdb using `insertMany()`:
 
-```sql
+```bash
 ferretdb> db.mycol2.insertMany(docs)
 {
   acknowledged: true,
@@ -296,14 +296,14 @@ ferretdb> db.mycol2.insertMany(docs)
 
 We can count the documents inside our collection using:
 
-```sql
+```bash
 ferretdb> db.mycol2.countDocuments()
 2
 ```
 
 And we can search for all the documents inside the collection:
 
-```sql
+```bash
 ferretdb> db.mycol2.find()
 [
   {
@@ -323,7 +323,7 @@ ferretdb> db.mycol2.find()
 
 And searching for any data using the name `peter`:
 
-```sql
+```bash
 ferretdb> db.mycol2.find({name: "peter"})
 [
   {

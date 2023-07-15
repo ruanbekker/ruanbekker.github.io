@@ -415,28 +415,3 @@ docker run --rm -it --network=ferretdb \
   "mongodb://ferret:password@ferretdb/ferretdb?authMechanism=PLAIN" --eval 'db.mycollection1.countDocuments()'
 ```
 
-## Prometheus Metrics
-
-FerretDB provides prometheus metrics out of the box, and outputs prometheus metrics on the `:8080/debug/metrics` endpoint:
-
-```bash
-curl http://localhost:8080/debug/metrics
-```
-
-## Resources
-
-Please see the follwoing resources for FerretDB:
-
-- https://docs.ferretdb.io/
-- https://github.com/ferretdb/FerretDB/pkgs/container/ferretdb
-- https://docs.ferretdb.io/quickstart-guide/docker/
-- https://github.com/ruanbekker/cheatsheets/tree/master/mongodb/shell
-
-## Thank You
-
-Thanks for reading, feel free to check out my [website](https://ruan.dev/), feel free to subscribe to my [newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog) or follow me at [@ruanbekker](https://twitter.com/ruanbekker) on Twitter.
-
-- Linktree: https://go.ruan.dev/links
-- Patreon: https://go.ruan.dev/patreon
-
-

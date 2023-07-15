@@ -26,3 +26,8 @@ We will be doing the following:
 - use scripting to generate data into ferretedb
 - explore the embedded prometheus endpoint for metrics
 
+## Deploy FerretDB
+
+The following `docker-compose.yaml` defines a postgres container which will be used as the database engine for ferretdb, and then we define the ferretdb container, which connects to postgres via the environment variable `FERRETDB_POSTGRESQL_URL`.
+
+

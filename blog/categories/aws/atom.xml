@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Aws | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/aws/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-07-15T19:42:41-04:00</updated>
+  <updated>2023-07-15T20:18:35-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,318 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use the AWS Terraform Provider]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-aws-terraform-provider/"/>
+    <updated>2023-07-15T20:01:13-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-aws-terraform-provider</id>
+    <content type="html"><![CDATA[<p>In this post we will be using the AWS Terraform provider, from how to install Terraform, create a AWS IAM User, configure the AWS Provider and deploy a EC2 instance using Terraform.</p>
+
+<h2>AWS IAM User</h2>
+
+<p>In order to authenticate against AWS’s APIs, we need to create a AWS IAM User and create Access Keys for Terraform to use to authenticate.</p>
+
+<p>From <a href="https://aws.amazon.com/">https://aws.amazon.com/</a> logon to your account, then search for IAM:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/c53d15d3-1af2-4e15-aafb-229cc4274bf5" alt="aws-iam-search-result" /></p>
+
+<p>Select IAM, then select “Users” on the left hand side and select “Create User”, then provide the username for your AWS IAM User:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/35f74a94-98d3-44c4-9651-a504780e5a6e" alt="aws-iam-user-creation-wizard" /></p>
+
+<p>Now we need to assign permissions to our new AWS IAM User. For this scenario I will be assigning a IAM Policy directly to the user and I will be selecting the “AdministratorAccess” policy. Keep in mind that this allows admin access to your whole AWS account:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/779f2dac-0da9-4751-8e89-2ff33c088ae8" alt="permissions-for-your-aws-iam-user" /></p>
+
+<p>Once you select the policy, select “Next” and select “Create User”. Once the user has been created, select “Users” on the left hand side, search for your user that we created, in my case “medium-terraform”.</p>
+
+<p>Select the user and click on “Security credentials”. If you scroll down to the “Access keys” section, you will notice we don’t have any access keys for this user:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/45b5eb1f-999f-4e81-b439-9e8cd90f83a3" alt="aws-iam-access-keys" /></p>
+
+<p>In order to allow Terraform access to our AWS Account, we need to create access keys that Terraform will use, and because we assigned full admin access to the user, Terraform will be able to manage resources in our AWS Account.</p>
+
+<p>Click “Create access key”, then select the “CLI” option and select the confirmation at the bottom:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/22b13879-6256-4de8-ab5f-aecece3be432" alt="aws-iam-access-keys-wizard" /></p>
+
+<p>Select “Next” and then select “Create access key”. I am providing a screenshot of the Access Key and Secret Access Key that has been provided, but by the time this post has been published, the key will be deleted.</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/a7a4124f-dc9c-4700-b0ed-d21d7df4fa6c" alt="retrieve-aws-iam-access-keys" /></p>
+
+<p>Store your Access Key and Secret Access Key in a secure place and treat this like your passwords. If someone gets access to these keys they can manage your whole AWS Account.</p>
+
+<p>I will be using the <a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html">AWS CLI</a> to configure my Access Key and Secret Access Key, as I will configure Terraform later to read my Access Keys from the Credential Provider config.</p>
+
+<p>First we need to configure the AWS CLI by passing the profile name, which I have chosen <code>medium</code> for this demonstration:</p>
+
+<pre><code class="bash">aws --profile medium configure
+</code></pre>
+
+<p>We will be asked to provide the access key, secret access key, aws region and the default output:</p>
+
+<pre><code class="bash">AWS Access Key ID [None]: AKIATPRT2G4SGXLAC3HJ
+AWS Secret Access Key [None]: KODnR[............]nYTYbd
+Default region name [None]: eu-west-1
+Default output format [None]: json
+</code></pre>
+
+<p>To verify if everything works as expected we can use the following command to verify:</p>
+
+<pre><code class="bash">aws --profile medium sts get-caller-identity
+</code></pre>
+
+<p>The response should look something similar to the following:</p>
+
+<pre><code class="json">{
+    "UserId": "AIDATPRT2G4SOAO5Y7S5Z",
+    "Account": "000000000000",
+    "Arn": "arn:aws:iam::000000000000:user/medium-terraform"
+}
+</code></pre>
+
+<h2>Terraform</h2>
+
+<p>Now that we have our AWS IAM User configured, we can install Terraform, if you don’t have Terraform installed yet, you can follow their <a href="https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli">Installation Documentation</a>.</p>
+
+<p>Once you have Terraform installed, we can setup our workspace where we will ultimately deploy a EC2 instance, but before we get there we need to create our project directory and change to that directory:</p>
+
+<pre><code class="bash">mkdir ~/terraform-demo
+cd ~/terraform-demo
+</code></pre>
+
+<p>Then we will create 4 files with <code>.tf</code> extensions:</p>
+
+<pre><code class="bash">touch main.tf
+touch outputs.tf
+touch providers.tf
+touch variables.tf
+</code></pre>
+
+<p>We will define our Terraform definitions on how we want our desired infrastructure to look like. We will get to the content in the files soon.</p>
+
+<p>I personally love Terraform’s documentation as they are rich in examples and really easy to use.</p>
+
+<p>Head over to the <a href="https://registry.terraform.io/providers/hashicorp/aws/latest/docs">Terraform AWS Provider</a> documentation and you scroll a bit down, you can see the <a href="https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication-and-configuration">Authentication and Configuration</a> section where they outline the order in how Terraform will look for credentials and we will be making use of the shared credentials file as that is where our access key and secret access key is stored.</p>
+
+<p>If you look at the top right corner of the Terraform AWS Provider documentation, they show you how to use the AWS Provider:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/03a55c32-bb1c-4f48-a441-c09918c824db" alt="terraform-aws-provider-docs" /></p>
+
+<p>We can copy that code snippet and paste it into our <code>providers.tf</code> file and configure the aws provider section with the <code>medium</code> profile that we’ve created earlier.</p>
+
+<p>This will tell Terraform where to look for credentials in order to authenticate with AWS.</p>
+
+<p>Open <code>providers.tf</code> with your editor of choice:</p>
+
+<pre><code class="bash">terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+      version = "5.8.0"
+    }
+  }
+}
+
+provider "aws" {
+  shared_credentials_files = ["~/.aws/credentials"]
+  profile                  = "medium"
+  region                   = "eu-west-1"
+}
+</code></pre>
+
+<p>Then we can open <code>main.tf</code> and populate the following to define the EC2 instance that we want to provision:</p>
+
+<pre><code class="bash">data "aws_ami" "latest_ubuntu" {
+  most_recent = true
+  owners = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-*-server-*"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+}
+
+resource "aws_instance" "ec2" {
+  ami           = data.aws_ami.latest_ubuntu.id
+  instance_type = var.instance_type
+  tags = {
+    Name = "${var.instance_name}-ec2-instance"
+  }
+}
+</code></pre>
+
+<p>In the above example we are filtering for the latest Ubuntu 22.04 64bit AMI then we are defining a EC2 instance and specifying the AMI ID that we filtered from our data source.</p>
+
+<p>Note that we haven’t specified a SSH Keypair, as we are just focusing on how to provision a EC2 instance.</p>
+
+<p>As you can see we are also referencing variables, which we need to define in <code>variables.tf</code> :</p>
+
+<pre><code class="bash">variable "instance_name" {
+  description = "Instance Name for EC2."
+  type        = string
+  default     = "test"
+}
+
+variable "instance_type" {
+  description = "Instance Type for EC2."
+  type        = string
+  default     = "t2.micro"
+}
+</code></pre>
+
+<p>And then lastly we need to define our <code>outputs.tf</code> which will be used to output the instance id and ip address:</p>
+
+<pre><code class="bash">output "instance_id" {
+  value = aws_instance.ec2.id
+}
+
+output "ip" {
+  value = aws_instance.ec2.public_ip
+}
+</code></pre>
+
+<h2>Deploy our EC2 with Terraform</h2>
+
+<p>Now that our infrastructure has been defined as code, we can first initialise terraform which will initialise the backend and download all the providers that has been defined:</p>
+
+<pre><code class="bash">terraform init
+</code></pre>
+
+<p>Once that has done we can run a “plan” which will show us what Terraform will deploy:</p>
+
+<pre><code class="bash">terraform plan
+</code></pre>
+
+<p>Now terraform will show us the difference in what we have defined, and what is actually in AWS, as we know its a new account with zero infrastructure, the diff should show us that it needs to create a EC2 instance.</p>
+
+<p>The response from the <code>terraform plan</code> shows us the following:</p>
+
+<pre><code class="bash">Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # aws_instance.ec2 will be created
+  + resource "aws_instance" "ec2" {
+      + ami                                  = "ami-0f56955469757e5aa"
+      + arn                                  = (known after apply)
+      + id                                   = (known after apply)
+      + instance_type                        = "t2.micro"
+      + key_name                             = (known after apply)
+      + private_ip                           = (known after apply)
+      + public_ip                            = (known after apply)
+      + security_groups                      = (known after apply)
+      + subnet_id                            = (known after apply)
+      + tags                                 = {
+          + "Name" = "test-ec2-instance"
+        }
+      + tags_all                             = {
+          + "Name" = "test-ec2-instance"
+        }
+      + vpc_security_group_ids               = (known after apply)
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + instance_id = (known after apply)
+  + ip          = (known after apply)
+</code></pre>
+
+<p>As you can see terraform has looked up the AMI ID using the data source, and we can see that terraform will provision 1 resource which is a EC2 instance. Once we hare happy with the plan, we can run a apply which will show us the same but this time prompt us if we want to proceed:</p>
+
+<pre><code class="bash">Do you want to perform these actions?
+  Terraform will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: yes
+
+aws_instance.ec2: Creating...
+aws_instance.ec2: Still creating... [10s elapsed]
+aws_instance.ec2: Still creating... [20s elapsed]
+aws_instance.ec2: Still creating... [30s elapsed]
+aws_instance.ec2: Creation complete after 35s [id=i-005c08b899229fff0]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+instance_id = "i-005c08b899229fff0"
+ip = "34.253.196.167"
+</code></pre>
+
+<p>And now we can see our EC2 instance was provisioned and our outputs returned the instance id as well as the public ip address.</p>
+
+<p>We can also confirm this by looking at the AWS EC2 Console:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/82b4d742-1c45-4d21-8766-10a5c0d074a1" alt="aws-ec2-instances-in-console" /></p>
+
+<p>Note that Terraform Configuration is idempotent, so when we run a terraform apply again, terraform will check what we have defined as what we want our desired infrastructure to be like, and what we actually have in our AWS Account, and since we haven’t made any changes there should be no changes.</p>
+
+<p>We can run a terraform apply to validate that:</p>
+
+<pre><code class="bash">terraform apply
+</code></pre>
+
+<p>And we can see the response shows:</p>
+
+<pre><code class="bash">data.aws_vpc.selected: Reading...
+data.aws_ami.latest_ubuntu: Reading...
+data.aws_ami.latest_ubuntu: Read complete after 1s [id=ami-0f56955469757e5aa]
+data.aws_vpc.selected: Read complete after 1s [id=vpc-063d7ac3124053dfa]
+data.aws_subnet.selected: Reading...
+data.aws_subnet.selected: Read complete after 1s [id=subnet-0b7acd7593611c1bb]
+aws_instance.ec2: Refreshing state... [id=i-005c08b899229fff0]
+
+Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+</code></pre>
+
+<h2>Cleanup</h2>
+
+<p>Destroy the infrastructure that we provisioned:</p>
+
+<pre><code class="bash">terraform destroy
+</code></pre>
+
+<p>It will show us what terraform will destroy, then upon confirming we should see the following output:</p>
+
+<pre><code class="bash">Plan: 0 to add, 0 to change, 1 to destroy.
+
+Changes to Outputs:
+  - instance_id = "i-005c08b899229fff0" -&gt; null
+  - ip          = "34.253.196.167" -&gt; null
+
+Do you really want to destroy all resources?
+  Terraform will destroy all your managed infrastructure, as shown above.
+  There is no undo. Only 'yes' will be accepted to confirm.
+
+  Enter a value: yes
+
+aws_instance.ec2: Destroying... [id=i-005c08b899229fff0]
+aws_instance.ec2: Still destroying... [id=i-005c08b899229fff0, 10s elapsed]
+aws_instance.ec2: Still destroying... [id=i-005c08b899229fff0, 20s elapsed]
+aws_instance.ec2: Still destroying... [id=i-005c08b899229fff0, 30s elapsed]
+aws_instance.ec2: Destruction complete after 31s
+
+Destroy complete! Resources: 1 destroyed.
+</code></pre>
+
+<p>If you followed along and you also want to clean up the AWS IAM user, head over to the AWS IAM Console and delete the “medium-terraform” IAM User.</p>
+
+<h2>Thank You</h2>
+
+<p>I hope you enjoyed this post, I will be posting more terraform related content.</p>
+
+<p>Should you want to reach out to me, you can follow me on Twitter at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> or check out my website at <a href="https://ruan.dev">https://ruan.dev</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Create a AWS Lambda Layer With Docker]]></title>
@@ -576,109 +888,6 @@ LC_ALL=en_US.utf-8
 <pre><code class="python">import boto3
 sqs = boto3.Session(region_name='eu-west-1').client('sqs')
 </code></pre>
-
-<h2>Thanks</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[SSH Using AWS SSM Session Manager]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2021/03/10/ssh-using-aws-ssm-session-manager/"/>
-    <updated>2021-03-10T00:52:54-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2021/03/10/ssh-using-aws-ssm-session-manager</id>
-    <content type="html"><![CDATA[<p>You can use SSM Session Manager to connect to your EC2 instances, as long as your EC2 instance has the associated IAM Role which includes the AmazonSSMManagedInstanceCore managed policy.</p>
-
-<h2>AWS EC2 Console</h2>
-
-<p>Head over to &ldquo;Connect&rdquo; and select &ldquo;Session Manager&rdquo;:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/103775580-e8da2a80-5036-11eb-9e00-0fd9b4d9d467.png" alt="image" /></p>
-
-<p>You should get a shell:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/103775597-f2639280-5036-11eb-8101-768f1c81108a.png" alt="image" /></p>
-
-<h2>AWS CLI</h2>
-
-<p>You can also use the CLI:</p>
-
-<pre><code>aws --profile prod ssm start-session --target i-0ebba722b102179b6
-</code></pre>
-
-<p>If you get this error:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/103775625-ff808180-5036-11eb-88dc-be8fde3586ad.png" alt="image" /></p>
-
-<p>Head over to:</p>
-
-<p><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html">https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html</a></p>
-
-<p>Install the session manager plugin, for Mac:</p>
-
-<pre><code>$ curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac/sessionmanager-bundle.zip" -o "sessionmanager-bundle.zip"
-$ unzip sessionmanager-bundle.zip
-$ sudo ./sessionmanager-bundle/install -i /usr/local/sessionmanagerplugin -b /usr/local/bin/session-manager-plugin
-$ rm -rf sessionmanager-bundle
-</code></pre>
-
-<p>After installation:</p>
-
-<pre><code>$ aws --profile prod ssm start-session --target i-0ebba722b102179b6
-Starting session with SessionId: ruan.bekker-0b07cbbe261885ad3
-
-sh-4.2$ sudo su - ec2-user
-Last login: Wed Jan  6 12:55:03 UTC 2021 on pts/0
-[ec2-user@ip-172-31-23-246 ~]$
-</code></pre>
-
-<p>Note: when you are using ssm session manager you don’t require security groups or a direct routable network to your instance.</p>
-
-<h2>Bash Functions FTW</h2>
-
-<p>You can implement this into a bash function:</p>
-
-<pre><code>$ cat ~/.functions.aws
-aws-ssh(){
-  instance_name=${1}
-  instance_id=$(aws --profile prod ec2 describe-instances --filter "Name=tag:Name,Values=${instance_name}" --query "Reservations[].Instances[?State.Name == 'running'].InstanceId[]" --output text)
-  aws --profile prod ssm start-session --target ${instance_id}
-}
-
-$ aws-ssh ssm-session-manager-ssh-test2
-Starting session with SessionId: ruan.bekker-04daf56c5f3668790
-sh-4.2$
-</code></pre>
-
-<p>If you have your own SSH key, you can use this ~/.ssh/config:</p>
-
-<pre><code># AWS SSM Session Manager
-Host i-*
-    ProxyCommand sh -c "aws --profile prod ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
-</code></pre>
-
-
-
-<pre><code>$ ssh -i ~/.ssh/infra.pem ec2-user@i-0ebba722b102179b6
-Warning: Permanently added 'i-0ebba722b102179b6' (ECDSA) to the list of known hosts.
-Last login: Wed Jan  6 13:04:03 2021
-
-       __|  __|_  )
-       _|  (     /   Amazon Linux 2 AMI
-      ___|\___|___|
-
-https://aws.amazon.com/amazon-linux-2/
-[ec2-user@ip-172-31-23-246 ~]$
-</code></pre>
-
-<h2>Related:</h2>
-
-<ul>
-<li><a href="https://aws.amazon.com/blogs/mt/amazon-ec2-instance-port-forwarding-with-aws-systems-manager/">https://aws.amazon.com/blogs/mt/amazon-ec2-instance-port-forwarding-with-aws-systems-manager/</a></li>
-<li><a href="https://aws.amazon.com/blogs/aws/new-port-forwarding-using-aws-system-manager-sessions-manager/">https://aws.amazon.com/blogs/aws/new-port-forwarding-using-aws-system-manager-sessions-manager/</a></li>
-</ul>
-
 
 <h2>Thanks</h2>
 

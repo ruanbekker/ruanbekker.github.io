@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Terraform | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/terraform/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-07-15T19:42:41-04:00</updated>
+  <updated>2023-07-15T20:18:35-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,318 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use the AWS Terraform Provider]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-aws-terraform-provider/"/>
+    <updated>2023-07-15T20:01:13-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-aws-terraform-provider</id>
+    <content type="html"><![CDATA[<p>In this post we will be using the AWS Terraform provider, from how to install Terraform, create a AWS IAM User, configure the AWS Provider and deploy a EC2 instance using Terraform.</p>
+
+<h2>AWS IAM User</h2>
+
+<p>In order to authenticate against AWS’s APIs, we need to create a AWS IAM User and create Access Keys for Terraform to use to authenticate.</p>
+
+<p>From <a href="https://aws.amazon.com/">https://aws.amazon.com/</a> logon to your account, then search for IAM:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/c53d15d3-1af2-4e15-aafb-229cc4274bf5" alt="aws-iam-search-result" /></p>
+
+<p>Select IAM, then select “Users” on the left hand side and select “Create User”, then provide the username for your AWS IAM User:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/35f74a94-98d3-44c4-9651-a504780e5a6e" alt="aws-iam-user-creation-wizard" /></p>
+
+<p>Now we need to assign permissions to our new AWS IAM User. For this scenario I will be assigning a IAM Policy directly to the user and I will be selecting the “AdministratorAccess” policy. Keep in mind that this allows admin access to your whole AWS account:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/779f2dac-0da9-4751-8e89-2ff33c088ae8" alt="permissions-for-your-aws-iam-user" /></p>
+
+<p>Once you select the policy, select “Next” and select “Create User”. Once the user has been created, select “Users” on the left hand side, search for your user that we created, in my case “medium-terraform”.</p>
+
+<p>Select the user and click on “Security credentials”. If you scroll down to the “Access keys” section, you will notice we don’t have any access keys for this user:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/45b5eb1f-999f-4e81-b439-9e8cd90f83a3" alt="aws-iam-access-keys" /></p>
+
+<p>In order to allow Terraform access to our AWS Account, we need to create access keys that Terraform will use, and because we assigned full admin access to the user, Terraform will be able to manage resources in our AWS Account.</p>
+
+<p>Click “Create access key”, then select the “CLI” option and select the confirmation at the bottom:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/22b13879-6256-4de8-ab5f-aecece3be432" alt="aws-iam-access-keys-wizard" /></p>
+
+<p>Select “Next” and then select “Create access key”. I am providing a screenshot of the Access Key and Secret Access Key that has been provided, but by the time this post has been published, the key will be deleted.</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/a7a4124f-dc9c-4700-b0ed-d21d7df4fa6c" alt="retrieve-aws-iam-access-keys" /></p>
+
+<p>Store your Access Key and Secret Access Key in a secure place and treat this like your passwords. If someone gets access to these keys they can manage your whole AWS Account.</p>
+
+<p>I will be using the <a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html">AWS CLI</a> to configure my Access Key and Secret Access Key, as I will configure Terraform later to read my Access Keys from the Credential Provider config.</p>
+
+<p>First we need to configure the AWS CLI by passing the profile name, which I have chosen <code>medium</code> for this demonstration:</p>
+
+<pre><code class="bash">aws --profile medium configure
+</code></pre>
+
+<p>We will be asked to provide the access key, secret access key, aws region and the default output:</p>
+
+<pre><code class="bash">AWS Access Key ID [None]: AKIATPRT2G4SGXLAC3HJ
+AWS Secret Access Key [None]: KODnR[............]nYTYbd
+Default region name [None]: eu-west-1
+Default output format [None]: json
+</code></pre>
+
+<p>To verify if everything works as expected we can use the following command to verify:</p>
+
+<pre><code class="bash">aws --profile medium sts get-caller-identity
+</code></pre>
+
+<p>The response should look something similar to the following:</p>
+
+<pre><code class="json">{
+    "UserId": "AIDATPRT2G4SOAO5Y7S5Z",
+    "Account": "000000000000",
+    "Arn": "arn:aws:iam::000000000000:user/medium-terraform"
+}
+</code></pre>
+
+<h2>Terraform</h2>
+
+<p>Now that we have our AWS IAM User configured, we can install Terraform, if you don’t have Terraform installed yet, you can follow their <a href="https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli">Installation Documentation</a>.</p>
+
+<p>Once you have Terraform installed, we can setup our workspace where we will ultimately deploy a EC2 instance, but before we get there we need to create our project directory and change to that directory:</p>
+
+<pre><code class="bash">mkdir ~/terraform-demo
+cd ~/terraform-demo
+</code></pre>
+
+<p>Then we will create 4 files with <code>.tf</code> extensions:</p>
+
+<pre><code class="bash">touch main.tf
+touch outputs.tf
+touch providers.tf
+touch variables.tf
+</code></pre>
+
+<p>We will define our Terraform definitions on how we want our desired infrastructure to look like. We will get to the content in the files soon.</p>
+
+<p>I personally love Terraform’s documentation as they are rich in examples and really easy to use.</p>
+
+<p>Head over to the <a href="https://registry.terraform.io/providers/hashicorp/aws/latest/docs">Terraform AWS Provider</a> documentation and you scroll a bit down, you can see the <a href="https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication-and-configuration">Authentication and Configuration</a> section where they outline the order in how Terraform will look for credentials and we will be making use of the shared credentials file as that is where our access key and secret access key is stored.</p>
+
+<p>If you look at the top right corner of the Terraform AWS Provider documentation, they show you how to use the AWS Provider:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/03a55c32-bb1c-4f48-a441-c09918c824db" alt="terraform-aws-provider-docs" /></p>
+
+<p>We can copy that code snippet and paste it into our <code>providers.tf</code> file and configure the aws provider section with the <code>medium</code> profile that we’ve created earlier.</p>
+
+<p>This will tell Terraform where to look for credentials in order to authenticate with AWS.</p>
+
+<p>Open <code>providers.tf</code> with your editor of choice:</p>
+
+<pre><code class="bash">terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+      version = "5.8.0"
+    }
+  }
+}
+
+provider "aws" {
+  shared_credentials_files = ["~/.aws/credentials"]
+  profile                  = "medium"
+  region                   = "eu-west-1"
+}
+</code></pre>
+
+<p>Then we can open <code>main.tf</code> and populate the following to define the EC2 instance that we want to provision:</p>
+
+<pre><code class="bash">data "aws_ami" "latest_ubuntu" {
+  most_recent = true
+  owners = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-*-server-*"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+}
+
+resource "aws_instance" "ec2" {
+  ami           = data.aws_ami.latest_ubuntu.id
+  instance_type = var.instance_type
+  tags = {
+    Name = "${var.instance_name}-ec2-instance"
+  }
+}
+</code></pre>
+
+<p>In the above example we are filtering for the latest Ubuntu 22.04 64bit AMI then we are defining a EC2 instance and specifying the AMI ID that we filtered from our data source.</p>
+
+<p>Note that we haven’t specified a SSH Keypair, as we are just focusing on how to provision a EC2 instance.</p>
+
+<p>As you can see we are also referencing variables, which we need to define in <code>variables.tf</code> :</p>
+
+<pre><code class="bash">variable "instance_name" {
+  description = "Instance Name for EC2."
+  type        = string
+  default     = "test"
+}
+
+variable "instance_type" {
+  description = "Instance Type for EC2."
+  type        = string
+  default     = "t2.micro"
+}
+</code></pre>
+
+<p>And then lastly we need to define our <code>outputs.tf</code> which will be used to output the instance id and ip address:</p>
+
+<pre><code class="bash">output "instance_id" {
+  value = aws_instance.ec2.id
+}
+
+output "ip" {
+  value = aws_instance.ec2.public_ip
+}
+</code></pre>
+
+<h2>Deploy our EC2 with Terraform</h2>
+
+<p>Now that our infrastructure has been defined as code, we can first initialise terraform which will initialise the backend and download all the providers that has been defined:</p>
+
+<pre><code class="bash">terraform init
+</code></pre>
+
+<p>Once that has done we can run a “plan” which will show us what Terraform will deploy:</p>
+
+<pre><code class="bash">terraform plan
+</code></pre>
+
+<p>Now terraform will show us the difference in what we have defined, and what is actually in AWS, as we know its a new account with zero infrastructure, the diff should show us that it needs to create a EC2 instance.</p>
+
+<p>The response from the <code>terraform plan</code> shows us the following:</p>
+
+<pre><code class="bash">Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # aws_instance.ec2 will be created
+  + resource "aws_instance" "ec2" {
+      + ami                                  = "ami-0f56955469757e5aa"
+      + arn                                  = (known after apply)
+      + id                                   = (known after apply)
+      + instance_type                        = "t2.micro"
+      + key_name                             = (known after apply)
+      + private_ip                           = (known after apply)
+      + public_ip                            = (known after apply)
+      + security_groups                      = (known after apply)
+      + subnet_id                            = (known after apply)
+      + tags                                 = {
+          + "Name" = "test-ec2-instance"
+        }
+      + tags_all                             = {
+          + "Name" = "test-ec2-instance"
+        }
+      + vpc_security_group_ids               = (known after apply)
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + instance_id = (known after apply)
+  + ip          = (known after apply)
+</code></pre>
+
+<p>As you can see terraform has looked up the AMI ID using the data source, and we can see that terraform will provision 1 resource which is a EC2 instance. Once we hare happy with the plan, we can run a apply which will show us the same but this time prompt us if we want to proceed:</p>
+
+<pre><code class="bash">Do you want to perform these actions?
+  Terraform will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: yes
+
+aws_instance.ec2: Creating...
+aws_instance.ec2: Still creating... [10s elapsed]
+aws_instance.ec2: Still creating... [20s elapsed]
+aws_instance.ec2: Still creating... [30s elapsed]
+aws_instance.ec2: Creation complete after 35s [id=i-005c08b899229fff0]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+instance_id = "i-005c08b899229fff0"
+ip = "34.253.196.167"
+</code></pre>
+
+<p>And now we can see our EC2 instance was provisioned and our outputs returned the instance id as well as the public ip address.</p>
+
+<p>We can also confirm this by looking at the AWS EC2 Console:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker.github.io/assets/567298/82b4d742-1c45-4d21-8766-10a5c0d074a1" alt="aws-ec2-instances-in-console" /></p>
+
+<p>Note that Terraform Configuration is idempotent, so when we run a terraform apply again, terraform will check what we have defined as what we want our desired infrastructure to be like, and what we actually have in our AWS Account, and since we haven’t made any changes there should be no changes.</p>
+
+<p>We can run a terraform apply to validate that:</p>
+
+<pre><code class="bash">terraform apply
+</code></pre>
+
+<p>And we can see the response shows:</p>
+
+<pre><code class="bash">data.aws_vpc.selected: Reading...
+data.aws_ami.latest_ubuntu: Reading...
+data.aws_ami.latest_ubuntu: Read complete after 1s [id=ami-0f56955469757e5aa]
+data.aws_vpc.selected: Read complete after 1s [id=vpc-063d7ac3124053dfa]
+data.aws_subnet.selected: Reading...
+data.aws_subnet.selected: Read complete after 1s [id=subnet-0b7acd7593611c1bb]
+aws_instance.ec2: Refreshing state... [id=i-005c08b899229fff0]
+
+Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+</code></pre>
+
+<h2>Cleanup</h2>
+
+<p>Destroy the infrastructure that we provisioned:</p>
+
+<pre><code class="bash">terraform destroy
+</code></pre>
+
+<p>It will show us what terraform will destroy, then upon confirming we should see the following output:</p>
+
+<pre><code class="bash">Plan: 0 to add, 0 to change, 1 to destroy.
+
+Changes to Outputs:
+  - instance_id = "i-005c08b899229fff0" -&gt; null
+  - ip          = "34.253.196.167" -&gt; null
+
+Do you really want to destroy all resources?
+  Terraform will destroy all your managed infrastructure, as shown above.
+  There is no undo. Only 'yes' will be accepted to confirm.
+
+  Enter a value: yes
+
+aws_instance.ec2: Destroying... [id=i-005c08b899229fff0]
+aws_instance.ec2: Still destroying... [id=i-005c08b899229fff0, 10s elapsed]
+aws_instance.ec2: Still destroying... [id=i-005c08b899229fff0, 20s elapsed]
+aws_instance.ec2: Still destroying... [id=i-005c08b899229fff0, 30s elapsed]
+aws_instance.ec2: Destruction complete after 31s
+
+Destroy complete! Resources: 1 destroyed.
+</code></pre>
+
+<p>If you followed along and you also want to clean up the AWS IAM user, head over to the AWS IAM Console and delete the “medium-terraform” IAM User.</p>
+
+<h2>Thank You</h2>
+
+<p>I hope you enjoyed this post, I will be posting more terraform related content.</p>
+
+<p>Should you want to reach out to me, you can follow me on Twitter at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> or check out my website at <a href="https://ruan.dev">https://ruan.dev</a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Manage Helm Releases With Terraform]]></title>
@@ -1203,640 +1515,6 @@ foobar.rbkr.xyz. 300    IN      A       127.0.0.1
 ;; SERVER: 172.31.0.2#53(172.31.0.2)
 ;; WHEN: Wed Feb 02 13:57:59 SAST 2022
 ;; MSG SIZE  rcvd: 68
-</code></pre>
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Run Docker Containers With Terraform]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform/"/>
-    <updated>2021-11-23T11:06:03-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2021/11/23/run-docker-containers-with-terraform</id>
-    <content type="html"><![CDATA[<p>In this post I will demonstrate how to use the terraform <a href="https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs/resources/container">docker_container</a> resource from the <a href="https://github.com/kreuzwerker/terraform-provider-docker">docker provider</a> to run two docker containers, traefik and nginx and use the random provider to generate a random url for us.</p>
-
-<h2>Pre-Requisites</h2>
-
-<p>You will require <a href="https://www.terraform.io/downloads.html">terraform</a> and <a href="https://docs.docker.com/get-docker/">docker</a> to be installed.</p>
-
-<h2>Project Structure</h2>
-
-<p>The source code for this post is available on my github repository, but the project structure will look like the following:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/143061769-c619e7eb-c5b1-42bc-9fa4-ed59c15448fa.png" alt="image" /></p>
-
-<p>Our <code>providers.tf</code>:</p>
-
-<pre><code>terraform {
-  required_providers {
-    docker = {
-      source  = "kreuzwerker/docker"
-      version = "2.15.0"
-    }
-    random = {
-      version = "~&gt; 3.0"
-    }
-  }
-}
-
-provider "docker" {
-  host = "unix:///var/run/docker.sock"
-}
-
-provider "random" {}
-</code></pre>
-
-<p>Our <code>variables.tf</code>:</p>
-
-<pre><code>variable "domain" {
-  type    = string
-  default = "localdns.xyz"
-}
-</code></pre>
-
-<p>Our <code>outputs.tf</code>:</p>
-
-<pre><code>output "nginx_container_name" {
-  value = docker_container.nginx.name
-}
-
-output "traefik_container_name" {
-  value = docker_container.traefik.name
-}
-
-output "traefik_url" {
-  value = "http://traefik.${var.domain}/"
-}
-
-output "nginx_url" {
-  value = "http://www.${random_string.nginx.result}.${var.domain}/"
-}
-</code></pre>
-
-<p>Our <code>main.tf</code>:</p>
-
-<pre><code>resource "random_string" "nginx" {
-  length  = 8
-  upper   = false
-  special = false
-}
-
-resource "docker_image" "nginx" {
-  name = "nginx:stable-alpine"
-}
-
-resource "docker_image" "traefik" {
-  name = "traefik:1.7.14"
-}
-
-resource "docker_network" "nginx" {
-  name   = "docknet"
-  driver = "bridge"
-}
-
-resource "docker_container" "traefik" {
-  name  = "traefik"
-  image = docker_image.traefik.name
-
-  networks_advanced {
-    name    = docker_network.nginx.name
-    aliases = ["docknet"]
-  }
-
-  restart = "unless-stopped"
-  destroy_grace_seconds = 30
-  must_run = true
-  memory = 256
-
-  volumes {
-    host_path      = "/var/run/docker.sock"
-    container_path = "/var/run/docker.sock"
-  }
-
-  command = [
-    "--api",
-    "--docker",
-    "--docker.watch",
-    "--entrypoints=Name:http Address::80",
-    "--logLevel=INFO"
-  ]
-
-  ports {
-    internal = 80
-    external = 80
-    ip       = "0.0.0.0"
-  }
-
-  labels {
-    label = "traefik.enable"
-    value = true
-  }
-
-  labels {
-    label = "traefik.docker.network"
-    value = "docknet"
-  }
-
-  labels {
-    label = "traefik.frontend.rule"
-    value = "Host:traefik.${var.domain}"
-  }
-
-  labels {
-    label = "traefik.port"
-    value = 8080
-  }
-
-}
-
-resource "docker_container" "nginx" {
-  name  = "nginx"
-  image = docker_image.nginx.name
-
-  networks_advanced {
-    name    = docker_network.nginx.name
-    aliases = ["docknet"]
-  }
-
-  restart = "unless-stopped"
-  destroy_grace_seconds = 30
-  must_run = true
-  memory = 256
-
-  volumes {
-    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
-    container_path = "/usr/share/nginx/html"
-  }
-
-  volumes {
-    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
-    container_path = "/etc/nginx/nginx.conf"
-  }
-
-  volumes {
-    host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
-    container_path = "/etc/nginx/conf.d/app.conf"
-  }
-
-  env = [
-    "PUID=501",
-    "PGID=20"
-  ]
-
-  labels {
-    label = "traefik.enable"
-    value = true
-  }
-
-  labels {
-    label = "traefik.docker.network"
-    value = "docknet"
-  }
-
-  labels {
-    label = "traefik.frontend.rule"
-    value = "Host:www.${random_string.nginx.result}.${var.domain}"
-  }
-
-  labels {
-    label = "traefik.port"
-    value = 80
-  }
-
-  depends_on = [
-    docker_container.traefik,
-    random_string.nginx
-  ]
-
-}
-</code></pre>
-
-<p>Our <code>html/index.html</code>:</p>
-
-<pre><code class="html">&lt;!doctype html&gt;
-&lt;html lang="en"&gt;
-    &lt;head&gt;
-        &lt;meta charset="utf-8"&gt;
-        &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
-
-        &lt;title&gt;Welcome&lt;/title&gt;
-
-        &lt;!-- Fonts --&gt;
-        &lt;link href="https://fonts.googleapis.com/css?family=Nunito:200,600" rel="stylesheet"&gt;
-
-        &lt;!-- Styles --&gt;
-        &lt;style&gt;
-            html, body {
-                background-color: #fff;
-                color: #636b6f;
-                font-family: 'Nunito', sans-serif;
-                font-weight: 200;
-                height: 100vh;
-                margin: 0;
-            }
-
-            .full-height {
-                height: 100vh;
-            }
-
-            .flex-center {
-                align-items: center;
-                display: flex;
-                justify-content: center;
-            }
-
-            .position-ref {
-                position: relative;
-            }
-
-            .top-right {
-                position: absolute;
-                right: 10px;
-                top: 18px;
-            }
-
-            .content {
-                text-align: center;
-            }
-
-            .title {
-                font-size: 84px;
-            }
-
-            .links &gt; a {
-                color: #636b6f;
-                padding: 0 25px;
-                font-size: 13px;
-                font-weight: 600;
-                letter-spacing: .1rem;
-                text-decoration: none;
-                text-transform: uppercase;
-            }
-
-            .m-b-md {
-                margin-bottom: 30px;
-            }
-        &lt;/style&gt;
-    &lt;/head&gt;
-    &lt;body&gt;
-        &lt;div class="flex-center position-ref full-height"&gt;
-            &lt;div class="content"&gt;
-                &lt;div class="title m-b-md"&gt;
-                    Welcome
-                &lt;/div&gt;
-
-                &lt;div class="links"&gt;
-                    &lt;a href="https://ruan.dev" target="_blank"&gt;About Me&lt;/a&gt;
-                &lt;/div&gt;
-            &lt;/div&gt;
-        &lt;/div&gt;
-    &lt;/body&gt;
-&lt;/html&gt;
-</code></pre>
-
-<p>Our <code>configs/nginx.conf</code>:</p>
-
-<pre><code>user  nginx;
-worker_processes  auto;
-error_log  /var/log/nginx/error.log notice;
-pid        /var/run/nginx.pid;
-
-events {
-    worker_connections  1024;
-}
-
-http {
-    include       /etc/nginx/mime.types;
-    default_type  application/octet-stream;
-
-    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-                      '$status $body_bytes_sent "$http_referer" '
-                      '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log  /var/log/nginx/access.log  main;
-    sendfile        on;
-    keepalive_timeout  65;
-
-    include /etc/nginx/conf.d/app.conf;
-}
-</code></pre>
-
-<p>And lastly, our <code>configs/app.conf</code>:</p>
-
-<pre><code>server {
-  listen 80;
-  server_name _;
-
-  location / {
-    root   /usr/share/nginx/html;
-    index  index.html;
-  }
-
-  location /healthz {
-    return 200 'up';
-  }
-}
-</code></pre>
-
-<h2>Deployment</h2>
-
-<p>Once everything is in place, or if you want to clone my repository, you can do that by:</p>
-
-<pre><code>git clone https://github.com/ruanbekker/terraform-docker-container-example
-cd terraform-docker-container-example
-</code></pre>
-
-<p>Then we can initialize terraform by fetching the required plugins:</p>
-
-<pre><code>terraform init
-</code></pre>
-
-<p>Once that completes we can run a plan:</p>
-
-<pre><code>terraform plan
-</code></pre>
-
-<p>And that should output something more or less like:</p>
-
-<pre><code>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with
-the following symbols:
-  + create
-
-Terraform will perform the following actions:
-
-  # docker_container.nginx will be created
-  + resource "docker_container" "nginx" {
-      + attach                = false
-      + bridge                = (known after apply)
-      + command               = (known after apply)
-      + container_logs        = (known after apply)
-      + destroy_grace_seconds = 30
-      + entrypoint            = (known after apply)
-      + env                   = [
-          + "PGID=20",
-          + "PUID=501",
-        ]
-      + exit_code             = (known after apply)
-      + gateway               = (known after apply)
-      + hostname              = (known after apply)
-      + id                    = (known after apply)
-      + image                 = "nginx:stable-alpine"
-      + init                  = (known after apply)
-      + ip_address            = (known after apply)
-      + ip_prefix_length      = (known after apply)
-      + ipc_mode              = (known after apply)
-      + log_driver            = "json-file"
-      + logs                  = false
-      + memory                = 256
-      + must_run              = true
-      + name                  = "nginx"
-      + network_data          = (known after apply)
-      + read_only             = false
-      + remove_volumes        = true
-      + restart               = "unless-stopped"
-      + rm                    = false
-      + security_opts         = (known after apply)
-      + shm_size              = (known after apply)
-      + start                 = true
-      + stdin_open            = false
-      + tty                   = false
-
-      + healthcheck {
-          + interval     = (known after apply)
-          + retries      = (known after apply)
-          + start_period = (known after apply)
-          + test         = (known after apply)
-          + timeout      = (known after apply)
-        }
-
-      + labels {
-          + label = "traefik.docker.network"
-          + value = "docknet"
-        }
-      + labels {
-          + label = "traefik.enable"
-          + value = "true"
-        }
-      + labels {
-          + label = "traefik.frontend.rule"
-          + value = (known after apply)
-        }
-      + labels {
-          + label = "traefik.port"
-          + value = "80"
-        }
-
-      + networks_advanced {
-          + aliases = [
-              + "docknet",
-            ]
-          + name    = "docknet"
-        }
-
-      + volumes {
-          + container_path = "/etc/nginx/conf.d/app.conf"
-          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/app.conf"
-        }
-      + volumes {
-          + container_path = "/etc/nginx/nginx.conf"
-          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/configs/nginx.conf"
-        }
-      + volumes {
-          + container_path = "/usr/share/nginx/html"
-          + host_path      = "/Users/ruan/personal/terraform-playground/docker-containers/html"
-        }
-    }
-
-  # docker_container.traefik will be created
-  + resource "docker_container" "traefik" {
-      + attach                = false
-      + bridge                = (known after apply)
-      + command               = [
-          + "--api",
-          + "--docker",
-          + "--docker.watch",
-          + "--entrypoints=Name:http Address::80",
-          + "--logLevel=INFO",
-        ]
-      + container_logs        = (known after apply)
-      + destroy_grace_seconds = 30
-      + entrypoint            = (known after apply)
-      + env                   = (known after apply)
-      + exit_code             = (known after apply)
-      + gateway               = (known after apply)
-      + hostname              = (known after apply)
-      + id                    = (known after apply)
-      + image                 = "traefik:1.7.14"
-      + init                  = (known after apply)
-      + ip_address            = (known after apply)
-      + ip_prefix_length      = (known after apply)
-      + ipc_mode              = (known after apply)
-      + log_driver            = "json-file"
-      + logs                  = false
-      + memory                = 256
-      + must_run              = true
-      + name                  = "traefik"
-      + network_data          = (known after apply)
-      + read_only             = false
-      + remove_volumes        = true
-      + restart               = "unless-stopped"
-      + rm                    = false
-      + security_opts         = (known after apply)
-      + shm_size              = (known after apply)
-      + start                 = true
-      + stdin_open            = false
-      + tty                   = false
-
-      + healthcheck {
-          + interval     = (known after apply)
-          + retries      = (known after apply)
-          + start_period = (known after apply)
-          + test         = (known after apply)
-          + timeout      = (known after apply)
-        }
-
-      + labels {
-          + label = "traefik.docker.network"
-          + value = "docknet"
-        }
-      + labels {
-          + label = "traefik.enable"
-          + value = "true"
-        }
-      + labels {
-          + label = "traefik.frontend.rule"
-          + value = "Host:traefik.localdns.xyz"
-        }
-      + labels {
-          + label = "traefik.port"
-          + value = "8080"
-        }
-
-      + networks_advanced {
-          + aliases = [
-              + "docknet",
-            ]
-          + name    = "docknet"
-        }
-
-      + ports {
-          + external = 80
-          + internal = 80
-          + ip       = "0.0.0.0"
-          + protocol = "tcp"
-        }
-
-      + volumes {
-          + container_path = "/var/run/docker.sock"
-          + host_path      = "/var/run/docker.sock"
-        }
-    }
-
-  # docker_image.nginx will be created
-  + resource "docker_image" "nginx" {
-      + id          = (known after apply)
-      + latest      = (known after apply)
-      + name        = "nginx:stable-alpine"
-      + output      = (known after apply)
-      + repo_digest = (known after apply)
-    }
-
-  # docker_image.traefik will be created
-  + resource "docker_image" "traefik" {
-      + id          = (known after apply)
-      + latest      = (known after apply)
-      + name        = "traefik:1.7.14"
-      + output      = (known after apply)
-      + repo_digest = (known after apply)
-    }
-
-  # docker_network.nginx will be created
-  + resource "docker_network" "nginx" {
-      + driver      = "bridge"
-      + id          = (known after apply)
-      + internal    = (known after apply)
-      + ipam_driver = "default"
-      + name        = "docknet"
-      + options     = (known after apply)
-      + scope       = (known after apply)
-
-      + ipam_config {
-          + aux_address = (known after apply)
-          + gateway     = (known after apply)
-          + ip_range    = (known after apply)
-          + subnet      = (known after apply)
-        }
-    }
-
-  # random_string.nginx will be created
-  + resource "random_string" "nginx" {
-      + id          = (known after apply)
-      + length      = 8
-      + lower       = true
-      + min_lower   = 0
-      + min_numeric = 0
-      + min_special = 0
-      + min_upper   = 0
-      + number      = true
-      + result      = (known after apply)
-      + special     = false
-      + upper       = false
-    }
-
-Plan: 6 to add, 0 to change, 0 to destroy.
-
-Changes to Outputs:
-  + nginx_container_name   = "nginx"
-  + nginx_url              = (known after apply)
-  + traefik_container_name = "traefik"
-  + traefik_url            = "http://traefik.localdns.xyz/"
-</code></pre>
-
-<p>Which we can see will create 2 containers, traefik and then nginx, map the configs and html in place and also sets the traefik hostname in the labels for our respective containers so that we can reach them via the specific host headers.</p>
-
-<p>The we can deploy our containers:</p>
-
-<pre><code>terraform apply -auto-approve
-</code></pre>
-
-<p>Which will provide us the output detail defined from our <code>outputs.tf</code>:</p>
-
-<pre><code>Apply complete! Resources: 6 added, 0 changed, 0 destroyed.
-
-Outputs:
-
-nginx_container_name = "nginx"
-nginx_url = "http://www.5igjdfq9.localdns.xyz/"
-traefik_container_name = "traefik"
-traefik_url = "http://traefik.localdns.xyz/"
-</code></pre>
-
-<h2>Access our Containers</h2>
-
-<p>We can access our Traefik Dashboard on <a href="http://traefik.localdns.xyz">http://traefik.localdns.xyz</a> and should look something like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/143064031-23e9dbe4-522b-4f11-96f9-f30a2104ee44.png" alt="image" /></p>
-
-<p>And when we access our Nginx container on <a href="http://www.5igjdfq9.localdns.xyz">http://www.5igjdfq9.localdns.xyz</a> it should look more or less like this:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/143064228-88107b75-31fc-41eb-aee0-f26ff976c42a.png" alt="image" /></p>
-
-<p>Running a <code>docker ps</code> will show our running containers:</p>
-
-<pre><code>docker ps
-CONTAINER ID   IMAGE                  COMMAND                  CREATED         STATUS                PORTS                NAMES
-e45158ae8cba   nginx:stable-alpine    "/docker-entrypoint   3 minutes ago   Up 3 minutes          80/tcp               nginx
-ebdbe42a0fcb   traefik:1.7.14         "/traefik --api       3 minutes ago   Up 3 minutes          0.0.0.0:80-&gt;80/tcp   traefik
-</code></pre>
-
-<h2>Cleanup</h2>
-
-<p>We can delete our containers by running:</p>
-
-<pre><code>terraform destroy -auto-approve
 </code></pre>
 
 <h2>Thank You</h2>

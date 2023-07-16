@@ -387,6 +387,9 @@ mysql>
 The terraform mysql provider:
 - https://registry.terraform.io/providers/petoju/mysql/latest/docs
 
+The quick-starts repository:
+- https://github.com/ruanbekker/quick-starts
+
 ## Thank You
 
 Thanks for reading, feel free to check out my [website](https://ruan.dev/), feel free to subscribe to my [newsletter](http://digests.ruanbekker.com/?via=ruanbekker-blog) or follow me at [@ruanbekker](https://twitter.com/ruanbekker) on Twitter.

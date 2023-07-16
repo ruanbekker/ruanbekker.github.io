@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-07-15T20:18:35-04:00</updated>
+  <updated>2023-07-16T08:44:29-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,626 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use the MySQL Terraform Provider]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-mysql-terraform-provider/"/>
+    <updated>2023-07-15T20:55:23-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-mysql-terraform-provider</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will provision a MySQL Server with Docker and then use Terraform to provision MySQL Users, Database Schemas and MySQL Grants with the MySQL Terraform Provider.</p>
+
+<h2>About</h2>
+
+<p>Terraform is super powerful and can do a lot of things. And it shines when it provisions Infrastructure. So in a scenario where we use Terraform to provision RDS MySQL Database Instances, we might still want to provision extra MySQL Users, or Database Schemas and the respective MySQL Grants.</p>
+
+<p>Usually you will logon to the database and create them manually with sql syntax. But in this tutorial we want to make use of Docker to provision our MySQL Server and we would like to make use of Terraform to provision the MySQL Database Schemas, Grants and Users.</p>
+
+<p>Instead of using AWS RDS, I will be provisioning a MySQL Server on Docker so that we can keep the costs free, for those who are following along.</p>
+
+<p>We will also go through the steps on how to rotate the database password that we will be provisioning for our user.</p>
+
+<h2>MySQL Server</h2>
+
+<p>First we will provision a MySQL Server on Docker Containers, I have a <code>docker-compose.yaml</code> which is available in my <a href="https://github.com/ruanbekker/quick-starts/blob/main/docker/mysql/docker-compose.yaml">quick-starts</a> github repository:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&quot;3.8&quot;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">mysql</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">mysql:8.0</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">mysql</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3306:3306</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">MYSQL_DATABASE=sample</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">MYSQL_ROOT_PASSWORD=rootpassword</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Once you have saved that in your current working directory, you can start the container with docker compose:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker-compose up -d
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can test the mysql container by logging onto the mysql server with the correct auth:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker <span class="nb">exec</span> -it mysql mysql -u root -prootpassword -e <span class="s1">&#39;show databases;&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This should be more or less the output:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="o">+</span><span class="c1">--------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="k">Database</span>           <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">--------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="n">information_schema</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">mysql</span>              <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">performance_schema</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">sample</span>             <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">sys</span>                <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">--------------------+</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Terraform</h2>
+
+<p>If you don&rsquo;t have Terraform installed, you can install it from their <a href="https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli">documentation</a>.</p>
+
+<p>If you want the source code of this example, its available in my <a href="https://github.com/ruanbekker/quick-starts/tree/main/terraform/mysql/petoju-provider">terraform-mysql/petoju-provider</a> repository. Which you can clone and jump into the <code>terraform/mysql/petoju-provider</code> directory.</p>
+
+<p>First we will define the <code>providers.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform <span class="o">{</span>
+</span><span class='line'>  required_providers <span class="o">{</span>
+</span><span class='line'>    <span class="nv">mysql</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>      <span class="nb">source</span> <span class="o">=</span> <span class="s2">&quot;petoju/mysql&quot;</span>
+</span><span class='line'>      <span class="nv">version</span> <span class="o">=</span> <span class="s2">&quot;3.0.37&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>provider <span class="s2">&quot;mysql&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nb">alias</span>    <span class="o">=</span> <span class="s2">&quot;local&quot;</span>
+</span><span class='line'>  <span class="nv">endpoint</span> <span class="o">=</span> <span class="s2">&quot;127.0.0.1:3306&quot;</span>
+</span><span class='line'>  <span class="nv">username</span> <span class="o">=</span> <span class="s2">&quot;root&quot;</span>
+</span><span class='line'>  <span class="nv">password</span> <span class="o">=</span> <span class="s2">&quot;rootpassword&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then the <code>main.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>resource <span class="s2">&quot;random_password&quot;</span> <span class="s2">&quot;user_password&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">length</span>           <span class="o">=</span> 24
+</span><span class='line'>  <span class="nv">special</span>          <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'><span class="nb">  </span><span class="nv">min_special</span>      <span class="o">=</span> 2
+</span><span class='line'>  <span class="nv">override_special</span> <span class="o">=</span> <span class="s2">&quot;!#$%^&amp;*()-_=+[]{}&lt;&gt;:?&quot;</span>
+</span><span class='line'>  <span class="nv">keepers</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>    <span class="nv">password_version</span> <span class="o">=</span> var.password_version
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;mysql_database&quot;</span> <span class="s2">&quot;user_db&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">provider</span> <span class="o">=</span> mysql.local
+</span><span class='line'>  <span class="nv">name</span> <span class="o">=</span> var.database_name
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;mysql_user&quot;</span> <span class="s2">&quot;user_id&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">provider</span> <span class="o">=</span> mysql.local
+</span><span class='line'>  <span class="nv">user</span> <span class="o">=</span> var.database_username
+</span><span class='line'>  <span class="nv">plaintext_password</span> <span class="o">=</span> random_password.user_password.result
+</span><span class='line'>  <span class="nv">host</span> <span class="o">=</span> <span class="s2">&quot;%&quot;</span>
+</span><span class='line'>  <span class="nv">tls_option</span> <span class="o">=</span> <span class="s2">&quot;NONE&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;mysql_grant&quot;</span> <span class="s2">&quot;user_id&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">provider</span> <span class="o">=</span> mysql.local
+</span><span class='line'>  <span class="nv">user</span> <span class="o">=</span> var.database_username
+</span><span class='line'>  <span class="nv">host</span> <span class="o">=</span> <span class="s2">&quot;%&quot;</span>
+</span><span class='line'>  <span class="nv">database</span> <span class="o">=</span> var.database_name
+</span><span class='line'>  <span class="nv">privileges</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;SELECT&quot;</span>, <span class="s2">&quot;UPDATE&quot;</span><span class="o">]</span>
+</span><span class='line'>  <span class="nv">depends_on</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>    mysql_user.user_id
+</span><span class='line'>  <span class="o">]</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then the <code>variables.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>variable <span class="s2">&quot;database_name&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">description</span> <span class="o">=</span> <span class="s2">&quot;The name of the database that you want created.&quot;</span>
+</span><span class='line'>  <span class="nb">type</span>        <span class="o">=</span> string
+</span><span class='line'>  <span class="nv">default</span>     <span class="o">=</span> null
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>variable <span class="s2">&quot;database_username&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">description</span> <span class="o">=</span> <span class="s2">&quot;The name of the database username that you want created.&quot;</span>
+</span><span class='line'>  <span class="nb">type</span>        <span class="o">=</span> string
+</span><span class='line'>  <span class="nv">default</span>     <span class="o">=</span> null
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>variable <span class="s2">&quot;password_version&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">description</span> <span class="o">=</span> <span class="s2">&quot;The password rotates when this value gets updated.&quot;</span>
+</span><span class='line'>  <span class="nb">type</span>        <span class="o">=</span> number
+</span><span class='line'>  <span class="nv">default</span>     <span class="o">=</span> 0
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then our <code>outputs.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>output <span class="s2">&quot;user&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> mysql_user.user_id.user
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>output <span class="s2">&quot;password&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">sensitive</span> <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'><span class="nb">  </span><span class="nv">value</span> <span class="o">=</span> random_password.user_password.result
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>terraform.tfvars</code> that defines the values of our variables:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">database_name</span>     <span class="o">=</span> <span class="s2">&quot;foobar&quot;</span>
+</span><span class='line'><span class="nv">database_username</span> <span class="o">=</span> <span class="s2">&quot;ruanb&quot;</span>
+</span><span class='line'><span class="nv">password_version</span>  <span class="o">=</span> 0
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we are ready to run our terraform code, which will ultimately create a database, user and grants. Outputs the encrypted string of your password which was encrypted with your <code>keybase_username</code>.</p>
+
+<p>Initialise Terraform:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform init
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the plan to see what terraform wants to provision:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform plan
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And we can see the following resources will be created:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+</span><span class='line'>  + create
+</span><span class='line'>
+</span><span class='line'>Terraform will perform the following actions:
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># mysql_database.user_db will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;mysql_database&quot;</span> <span class="s2">&quot;user_db&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">default_character_set</span> <span class="o">=</span> <span class="s2">&quot;utf8mb4&quot;</span>
+</span><span class='line'>      + <span class="nv">default_collation</span>     <span class="o">=</span> <span class="s2">&quot;utf8mb4_general_ci&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>                    <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">name</span>                  <span class="o">=</span> <span class="s2">&quot;foobar&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># mysql_grant.user_id will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;mysql_grant&quot;</span> <span class="s2">&quot;user_id&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">database</span>   <span class="o">=</span> <span class="s2">&quot;foobar&quot;</span>
+</span><span class='line'>      + <span class="nv">grant</span>      <span class="o">=</span> <span class="nb">false</span>
+</span><span class='line'>      + <span class="nv">host</span>       <span class="o">=</span> <span class="s2">&quot;%&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>         <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">privileges</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>          + <span class="s2">&quot;SELECT&quot;</span>,
+</span><span class='line'>          + <span class="s2">&quot;UPDATE&quot;</span>,
+</span><span class='line'>        <span class="o">]</span>
+</span><span class='line'>      + <span class="nv">table</span>      <span class="o">=</span> <span class="s2">&quot;*&quot;</span>
+</span><span class='line'>      + <span class="nv">tls_option</span> <span class="o">=</span> <span class="s2">&quot;NONE&quot;</span>
+</span><span class='line'>      + <span class="nv">user</span>       <span class="o">=</span> <span class="s2">&quot;ruanb&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># mysql_user.user_id will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;mysql_user&quot;</span> <span class="s2">&quot;user_id&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">host</span>               <span class="o">=</span> <span class="s2">&quot;%&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>                 <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">plaintext_password</span> <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">tls_option</span>         <span class="o">=</span> <span class="s2">&quot;NONE&quot;</span>
+</span><span class='line'>      + <span class="nv">user</span>               <span class="o">=</span> <span class="s2">&quot;ruanb&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># random_password.user_password will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;random_password&quot;</span> <span class="s2">&quot;user_password&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">bcrypt_hash</span>      <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">id</span>               <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">keepers</span>          <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>          + <span class="s2">&quot;password_version&quot;</span> <span class="o">=</span> <span class="s2">&quot;0&quot;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>      + <span class="nv">length</span>           <span class="o">=</span> 24
+</span><span class='line'>      + <span class="nv">lower</span>            <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'>      + <span class="nv">min_lower</span>        <span class="o">=</span> 0
+</span><span class='line'>      + <span class="nv">min_numeric</span>      <span class="o">=</span> 0
+</span><span class='line'>      + <span class="nv">min_special</span>      <span class="o">=</span> 2
+</span><span class='line'>      + <span class="nv">min_upper</span>        <span class="o">=</span> 0
+</span><span class='line'>      + <span class="nv">number</span>           <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'>      + <span class="nv">numeric</span>          <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'>      + <span class="nv">override_special</span> <span class="o">=</span> <span class="s2">&quot;!#$%^&amp;*()-_=+[]{}&lt;&gt;:?&quot;</span>
+</span><span class='line'>      + <span class="nv">result</span>           <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">special</span>          <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'>      + <span class="nv">upper</span>            <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>Plan: <span class="m">4</span> to add, <span class="m">0</span> to change, <span class="m">0</span> to destroy.
+</span><span class='line'>
+</span><span class='line'>Changes to Outputs:
+</span><span class='line'>  + <span class="nv">password</span> <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>  + <span class="nv">user</span>     <span class="o">=</span> <span class="s2">&quot;ruanb&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Run the apply which will create the database, the user, sets the password and applies the grants:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform apply
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then our returned output should show something like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Apply <span class="nb">complete</span>! Resources: <span class="m">4</span> added, <span class="m">0</span> changed, <span class="m">0</span> destroyed.
+</span><span class='line'>
+</span><span class='line'>Outputs:
+</span><span class='line'>
+</span><span class='line'><span class="nv">password</span> <span class="o">=</span> &lt;sensitive&gt;
+</span><span class='line'><span class="nv">user</span> <span class="o">=</span> <span class="s2">&quot;ruanb&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As our password is set as sensitive, we can access the value with <code>terraform output -raw password</code>, let&rsquo;s assign the password to a variable:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">DBPASS</span><span class="o">=</span><span class="k">$(</span>terraform output -raw password<span class="k">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we can exec into the mysql container and logon to the mysql server with our new credentials:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker <span class="nb">exec</span> -it mysql mysql -u ruanb -p<span class="nv">$DBPASS</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And we can see we are logged onto the mysql server:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Welcome to the MySQL monitor.  Commands end with <span class="p">;</span> or <span class="se">\g</span>.
+</span><span class='line'>Your MySQL connection id is 14
+</span><span class='line'>Server version: 8.0.33 MySQL Community Server - GPL
+</span><span class='line'>
+</span><span class='line'>mysql&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we run <code>show databases;</code> we should see the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+</pre></td><td class='code'><pre><code class='sql'><span class='line'><span class="n">mysql</span><span class="o">&gt;</span> <span class="k">show</span> <span class="n">databases</span><span class="p">;</span>
+</span><span class='line'><span class="o">+</span><span class="c1">--------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="k">Database</span>           <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">--------------------+</span>
+</span><span class='line'><span class="o">|</span> <span class="n">foobar</span>             <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">information_schema</span> <span class="o">|</span>
+</span><span class='line'><span class="o">|</span> <span class="n">performance_schema</span> <span class="o">|</span>
+</span><span class='line'><span class="o">+</span><span class="c1">--------------------+</span>
+</span><span class='line'><span class="mi">3</span> <span class="k">rows</span> <span class="k">in</span> <span class="k">set</span> <span class="p">(</span><span class="mi">0</span><span class="p">.</span><span class="mi">03</span> <span class="n">sec</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we want to rotate the mysql password for the user, we can update the <code>password_version</code> variable either in our <code>terraform.tfvars</code> or via the cli. Let&rsquo;s pass the variable in the cli and do a <code>terraform plan</code> to verify the changes:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform plan -var <span class="nv">password_version</span><span class="o">=</span>1
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And due to our value for the random resource keepers parameter being updated, it will trigger the value of our password to be changed, and that will let terraform update our mysql user&rsquo;s password:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+</span><span class='line'>  ~ update in-place
+</span><span class='line'>-/+ destroy and <span class="k">then</span> create replacement
+</span><span class='line'>
+</span><span class='line'>Terraform will perform the following actions:
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># mysql_user.user_id will be updated in-place</span>
+</span><span class='line'>  ~ resource <span class="s2">&quot;mysql_user&quot;</span> <span class="s2">&quot;user_id&quot;</span> <span class="o">{</span>
+</span><span class='line'>        <span class="nv">id</span>                 <span class="o">=</span> <span class="s2">&quot;ruanb@%&quot;</span>
+</span><span class='line'>      ~ <span class="nv">plaintext_password</span> <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>        <span class="c"># (5 unchanged attributes hidden)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># random_password.user_password must be replaced</span>
+</span><span class='line'>-/+ resource <span class="s2">&quot;random_password&quot;</span> <span class="s2">&quot;user_password&quot;</span> <span class="o">{</span>
+</span><span class='line'>      ~ <span class="nv">bcrypt_hash</span>      <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>      ~ <span class="nv">id</span>               <span class="o">=</span> <span class="s2">&quot;none&quot;</span> -&gt; <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      ~ <span class="nv">keepers</span>          <span class="o">=</span> <span class="o">{</span> <span class="c"># forces replacement</span>
+</span><span class='line'>          ~ <span class="s2">&quot;password_version&quot;</span> <span class="o">=</span> <span class="s2">&quot;0&quot;</span> -&gt; <span class="s2">&quot;1&quot;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>      ~ <span class="nv">result</span>           <span class="o">=</span> <span class="o">(</span>sensitive value<span class="o">)</span>
+</span><span class='line'>        <span class="c"># (11 unchanged attributes hidden)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>Plan: <span class="m">1</span> to add, <span class="m">1</span> to change, <span class="m">1</span> to destroy.
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Let&rsquo;s go ahead by updating our password:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform apply -var <span class="nv">password_version</span><span class="o">=</span><span class="m">1</span> -auto-approve
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>To validate that the password has changed, we can try to logon to mysql by using the password variable that was created initially:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker <span class="nb">exec</span> -it mysql mysql -u ruanb -p<span class="nv">$DBPASS</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And as you can see authentication failed:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mysql: <span class="o">[</span>Warning<span class="o">]</span> Using a password on the <span class="nb">command </span>line interface can be insecure.
+</span><span class='line'>ERROR <span class="m">1045</span> <span class="o">(</span>28000<span class="o">)</span>: Access denied <span class="k">for</span> user <span class="s1">&#39;ruanb&#39;</span>@<span class="s1">&#39;localhost&#39;</span> <span class="o">(</span>using password: YES<span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Set the new password to the variable again:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">DBPASS</span><span class="o">=</span><span class="k">$(</span>terraform output -raw password<span class="k">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then try to logon again:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker <span class="nb">exec</span> -it mysql mysql -u ruanb -p<span class="nv">$DBPASS</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And we can see we are logged on again:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Welcome to the MySQL monitor.  Commands end with <span class="p">;</span> or <span class="se">\g</span>.
+</span><span class='line'>Your MySQL connection id is 22
+</span><span class='line'>Server version: 8.0.33 MySQL Community Server - GPL
+</span><span class='line'>
+</span><span class='line'>mysql&gt;
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Resources</h2>
+
+<p>The terraform mysql provider:
+- <a href="https://registry.terraform.io/providers/petoju/mysql/latest/docs">https://registry.terraform.io/providers/petoju/mysql/latest/docs</a></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Use the AWS Terraform Provider]]></title>
@@ -6227,331 +6847,6 @@ ight be used to deploy something simple such as a deployment or something comple
 <p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
 
 <p><a href="https://github.com/ruanbekker/cheatsheets" target="_blank"><img alt="ruanbekker-cheatsheets" src="https://user-images.githubusercontent.com/567298/169162832-ef3019de-bc49-4d6c-b2a6-8ac17c457d24.png"></a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Prometheus Relabel Config Examples]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/05/30/prometheus-relabel-config-examples/"/>
-    <updated>2022-05-30T03:01:01-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/05/30/prometheus-relabel-config-examples</id>
-    <content type="html"><![CDATA[<p>This is a quick demonstration on how to use prometheus relabel configs, when you have scenarios for when example, you want to use a part of your hostname and assign it to a prometheus label.</p>
-
-<h2>Prometheus Relabling</h2>
-
-<p>Using a standard prometheus config to scrape two targets:
-- <code>ip-192-168-64-29.multipass:9100</code>
-- <code>ip-192-168-64-30.multipass:9100</code></p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>global:
-</span><span class='line'>  scrape_interval:     15s
-</span><span class='line'>  evaluation_interval: 15s
-</span><span class='line'>  external_labels:
-</span><span class='line'>    cluster: 'local'
-</span><span class='line'>
-</span><span class='line'>scrape_configs:
-</span><span class='line'>  - job_name: 'prometheus'
-</span><span class='line'>    scrape_interval: 15s
-</span><span class='line'>    static_configs:
-</span><span class='line'>    - targets: ['localhost:9090']
-</span><span class='line'>
-</span><span class='line'>  - job_name: 'multipass-nodes'
-</span><span class='line'>    static_configs:
-</span><span class='line'>    - targets: ['ip-192-168-64-29.multipass:9100']
-</span><span class='line'>      labels:
-</span><span class='line'>        test: 1
-</span><span class='line'>    - targets: ['ip-192-168-64-30.multipass:9100']
-</span><span class='line'>      labels:
-</span><span class='line'>        test: 1</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The Result:</p>
-
-<p><img width="924" alt="image" src="https://user-images.githubusercontent.com/567298/170823370-f2c6b3a3-68a8-4f5a-ad43-2f1b832c95e0.png"></p>
-
-<p>When we want to relabel one of the source the prometheus <a href="https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/#internal-labels">internal labels</a>, <code>__address__</code> which will be the given target including the port, then we apply regex: <code>(.*)</code> to catch everything from the source label, and since there is only one group we use the <code>replacement</code> as <code>${1}-randomtext</code> and use that value to apply it as the value of the given <code>target_label</code> which in this case is for <code>randomlabel</code>, which will be in this case:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'>global:
-</span><span class='line'>  scrape_interval:     15s
-</span><span class='line'>  evaluation_interval: 15s
-</span><span class='line'>  external_labels:
-</span><span class='line'>    cluster: 'local'
-</span><span class='line'>
-</span><span class='line'>scrape_configs:
-</span><span class='line'>  - job_name: 'prometheus'
-</span><span class='line'>    scrape_interval: 15s
-</span><span class='line'>    static_configs:
-</span><span class='line'>    - targets: ['localhost:9090']
-</span><span class='line'>
-</span><span class='line'>  - job_name: 'multipass-nodes'
-</span><span class='line'>    static_configs:
-</span><span class='line'>    - targets: ['ip-192-168-64-29.multipass:9100']
-</span><span class='line'>      labels:
-</span><span class='line'>        test: 3
-</span><span class='line'>    - targets: ['ip-192-168-64-30.multipass:9100']
-</span><span class='line'>      labels:
-</span><span class='line'>        test: 3
-</span><span class='line'>    relabel_configs:
-</span><span class='line'>    - source_labels: [__address__]
-</span><span class='line'>      regex: '(.+)'
-</span><span class='line'>      replacement: '${1}-randomtext'
-</span><span class='line'>      target_label: randomlabel</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The Result:</p>
-
-<p><img width="1107" alt="image" src="https://user-images.githubusercontent.com/567298/170824588-44a79c3d-5131-4311-bcca-f5137d6acdad.png"></p>
-
-<p>In this case we want to relabel the <code>__address__</code> and apply the value to the <code>instance</code> label, but we want to exclude the <code>:9100</code> from the <code>__address__</code> label:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-</pre></td><td class='code'><pre><code class=''><span class='line'># Config: https://github.com/prometheus/prometheus/blob/release-2.36/config/testdata/conf.good.yml
-</span><span class='line'>global:
-</span><span class='line'>  scrape_interval:     15s
-</span><span class='line'>  evaluation_interval: 15s
-</span><span class='line'>  external_labels:
-</span><span class='line'>    cluster: 'local'
-</span><span class='line'>
-</span><span class='line'>scrape_configs:
-</span><span class='line'>  - job_name: 'prometheus'
-</span><span class='line'>    scrape_interval: 15s
-</span><span class='line'>    static_configs:
-</span><span class='line'>    - targets: ['localhost:9090']
-</span><span class='line'>
-</span><span class='line'>  - job_name: 'multipass-nodes'
-</span><span class='line'>    static_configs:
-</span><span class='line'>    - targets: ['ip-192-168-64-29.multipass:9100']
-</span><span class='line'>      labels:
-</span><span class='line'>        test: 4
-</span><span class='line'>    - targets: ['ip-192-168-64-30.multipass:9100']
-</span><span class='line'>      labels:
-</span><span class='line'>        test: 4
-</span><span class='line'>    relabel_configs:
-</span><span class='line'>    - source_labels: [__address__]
-</span><span class='line'>      separator: ':'
-</span><span class='line'>      regex: '(.*):(.*)'
-</span><span class='line'>      replacement: '${1}'
-</span><span class='line'>      target_label: instance</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The Result:</p>
-
-<p><img width="950" alt="image" src="https://user-images.githubusercontent.com/567298/170824806-45f0f243-5fe7-4635-9e9a-335616a322da.png"></p>
-
-<h2>AWS EC2 SD Configs</h2>
-
-<p>On AWS EC2 you can make use of the <a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config">ec2_sd_config</a> where you can make use of EC2 Tags, to set the values of your tags to prometheus label values.</p>
-
-<p>In this scenario, on my EC2 instances I have 3 tags:
-- Key: PrometheusScrape, Value: Enabled
-- Key: Name, Value: pdn-server-1
-- Key: Environment, Value: dev</p>
-
-<p>In our config, we only apply a node-exporter scrape config to instances which are tagged <code>PrometheusScrape=Enabled</code>, then we use the <code>Name</code> tag, and assign it&rsquo;s value to the <code>instance</code> tag, and the similarly we assign the <code>Environment</code> tag value to the <code>environment</code> promtheus label value.</p>
-
-<p>Because this prometheus instance resides in the same VPC, I am using the <code>__meta_ec2_private_ip</code> which is the private ip address of the EC2 instance to assign it to the address where it needs to scrape the node exporter metrics endpoint:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">scrape_configs</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">job_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">node-exporter</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">scrape_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">15s</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">ec2_sd_configs</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">region</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">eu-west-1</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">9100</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">filters</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">tag:PrometheusScrape</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">values</span><span class="p-Indicator">:</span>
-</span><span class='line'>            <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">Enabled</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">relabel_configs</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">__meta_ec2_private_ip</span><span class="p-Indicator">]</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">replacement</span><span class="p-Indicator">:</span> <span class="s">&#39;${1}:9100&#39;</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">__address__</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">__meta_ec2_tag_Name</span><span class="p-Indicator">]</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">instance</span>
-</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">__meta_ec2_tag_Environment</span><span class="p-Indicator">]</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">environment</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You will need a EC2 Ready Only instance role (or access keys on the configuration) in order for prometheus to read the EC2 tags on your account.</p>
-
-<p>See their <a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config">documentation</a> for more info.</p>
-
-<h2>Stack</h2>
-
-<p>The docker-compose used:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.8&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">prometheus</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">prom/prometheus</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="s">&#39;prometheus&#39;</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">user</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">root</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">restart</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">unless-stopped</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./prometheus.yml:/etc/prometheus/prometheus.yml</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">prometheus-data:/prometheus</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--config.file=/etc/prometheus/prometheus.yml&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--storage.tsdb.path=/prometheus&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--storage.tsdb.retention=14d&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--web.console.libraries=/etc/prometheus/console_libraries&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--web.console.templates=/etc/prometheus/consoles&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&#39;--web.external-url=http://prometheus.127.0.0.1.nip.io&#39;</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">9090:9090</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">public</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="s">&quot;json-file&quot;</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">options</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">max-size</span><span class="p-Indicator">:</span> <span class="s">&quot;1m&quot;</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">public</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">public</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">prometheus-data</span><span class="p-Indicator">:</span> <span class="p-Indicator">{}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>References</h2>
-
-<p>Usful docs:</p>
-
-<ul>
-<li><a href="https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/#internal-labels">https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/#internal-labels</a></li>
-<li><a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config">https://prometheus.io/docs/prometheus/latest/configuration/configuration/#ec2_sd_config</a></li>
-<li><a href="https://regexr.com/">https://regexr.com/</a></li>
-</ul>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
 ]]></content>
   </entry>
   

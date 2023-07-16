@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Devops | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/devops/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-07-15T20:18:35-04:00</updated>
+  <updated>2023-07-16T08:44:29-04:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,377 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use the MySQL Terraform Provider]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-mysql-terraform-provider/"/>
+    <updated>2023-07-15T20:55:23-04:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-mysql-terraform-provider</id>
+    <content type="html"><![CDATA[<p>In this tutorial we will provision a MySQL Server with Docker and then use Terraform to provision MySQL Users, Database Schemas and MySQL Grants with the MySQL Terraform Provider.</p>
+
+<h2>About</h2>
+
+<p>Terraform is super powerful and can do a lot of things. And it shines when it provisions Infrastructure. So in a scenario where we use Terraform to provision RDS MySQL Database Instances, we might still want to provision extra MySQL Users, or Database Schemas and the respective MySQL Grants.</p>
+
+<p>Usually you will logon to the database and create them manually with sql syntax. But in this tutorial we want to make use of Docker to provision our MySQL Server and we would like to make use of Terraform to provision the MySQL Database Schemas, Grants and Users.</p>
+
+<p>Instead of using AWS RDS, I will be provisioning a MySQL Server on Docker so that we can keep the costs free, for those who are following along.</p>
+
+<p>We will also go through the steps on how to rotate the database password that we will be provisioning for our user.</p>
+
+<h2>MySQL Server</h2>
+
+<p>First we will provision a MySQL Server on Docker Containers, I have a <code>docker-compose.yaml</code> which is available in my <a href="https://github.com/ruanbekker/quick-starts/blob/main/docker/mysql/docker-compose.yaml">quick-starts</a> github repository:</p>
+
+<pre><code class="yaml">version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    ports:
+      - 3306:3306
+    environment:
+      - MYSQL_DATABASE=sample
+      - MYSQL_ROOT_PASSWORD=rootpassword
+</code></pre>
+
+<p>Once you have saved that in your current working directory, you can start the container with docker compose:</p>
+
+<pre><code class="bash">docker-compose up -d
+</code></pre>
+
+<p>You can test the mysql container by logging onto the mysql server with the correct auth:</p>
+
+<pre><code class="bash">docker exec -it mysql mysql -u root -prootpassword -e 'show databases;'
+</code></pre>
+
+<p>This should be more or less the output:</p>
+
+<pre><code class="sql">+--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sample             |
+| sys                |
++--------------------+
+</code></pre>
+
+<h2>Terraform</h2>
+
+<p>If you don&rsquo;t have Terraform installed, you can install it from their <a href="https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli">documentation</a>.</p>
+
+<p>If you want the source code of this example, its available in my <a href="https://github.com/ruanbekker/quick-starts/tree/main/terraform/mysql/petoju-provider">terraform-mysql/petoju-provider</a> repository. Which you can clone and jump into the <code>terraform/mysql/petoju-provider</code> directory.</p>
+
+<p>First we will define the <code>providers.tf</code>:</p>
+
+<pre><code class="bash">terraform {
+  required_providers {
+    mysql = {
+      source = "petoju/mysql"
+      version = "3.0.37"
+    }
+  }
+}
+
+provider "mysql" {
+  alias    = "local"
+  endpoint = "127.0.0.1:3306"
+  username = "root"
+  password = "rootpassword"
+}
+</code></pre>
+
+<p>Then the <code>main.tf</code>:</p>
+
+<pre><code class="bash">resource "random_password" "user_password" {
+  length           = 24
+  special          = true
+  min_special      = 2
+  override_special = "!#$%^&amp;*()-_=+[]{}&lt;&gt;:?"
+  keepers = {
+    password_version = var.password_version
+  }
+}
+
+resource "mysql_database" "user_db" {
+  provider = mysql.local
+  name = var.database_name
+}
+
+resource "mysql_user" "user_id" {
+  provider = mysql.local
+  user = var.database_username
+  plaintext_password = random_password.user_password.result
+  host = "%"
+  tls_option = "NONE"
+}
+
+resource "mysql_grant" "user_id" {
+  provider = mysql.local
+  user = var.database_username
+  host = "%"
+  database = var.database_name
+  privileges = ["SELECT", "UPDATE"]
+  depends_on = [
+    mysql_user.user_id
+  ]
+}
+</code></pre>
+
+<p>Then the <code>variables.tf</code>:</p>
+
+<pre><code class="bash">variable "database_name" {
+  description = "The name of the database that you want created."
+  type        = string
+  default     = null
+}
+
+variable "database_username" {
+  description = "The name of the database username that you want created."
+  type        = string
+  default     = null
+}
+
+variable "password_version" {
+  description = "The password rotates when this value gets updated."
+  type        = number
+  default     = 0
+}
+</code></pre>
+
+<p>Then our <code>outputs.tf</code>:</p>
+
+<pre><code class="bash">output "user" {
+  value = mysql_user.user_id.user
+}
+
+output "password" {
+  sensitive = true
+  value = random_password.user_password.result
+}
+</code></pre>
+
+<p>Our <code>terraform.tfvars</code> that defines the values of our variables:</p>
+
+<pre><code class="bash">database_name     = "foobar"
+database_username = "ruanb"
+password_version  = 0
+</code></pre>
+
+<p>Now we are ready to run our terraform code, which will ultimately create a database, user and grants. Outputs the encrypted string of your password which was encrypted with your <code>keybase_username</code>.</p>
+
+<p>Initialise Terraform:</p>
+
+<pre><code class="bash">terraform init
+</code></pre>
+
+<p>Run the plan to see what terraform wants to provision:</p>
+
+<pre><code class="bash">terraform plan
+</code></pre>
+
+<p>And we can see the following resources will be created:</p>
+
+<pre><code class="bash">Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # mysql_database.user_db will be created
+  + resource "mysql_database" "user_db" {
+      + default_character_set = "utf8mb4"
+      + default_collation     = "utf8mb4_general_ci"
+      + id                    = (known after apply)
+      + name                  = "foobar"
+    }
+
+  # mysql_grant.user_id will be created
+  + resource "mysql_grant" "user_id" {
+      + database   = "foobar"
+      + grant      = false
+      + host       = "%"
+      + id         = (known after apply)
+      + privileges = [
+          + "SELECT",
+          + "UPDATE",
+        ]
+      + table      = "*"
+      + tls_option = "NONE"
+      + user       = "ruanb"
+    }
+
+  # mysql_user.user_id will be created
+  + resource "mysql_user" "user_id" {
+      + host               = "%"
+      + id                 = (known after apply)
+      + plaintext_password = (sensitive value)
+      + tls_option         = "NONE"
+      + user               = "ruanb"
+    }
+
+  # random_password.user_password will be created
+  + resource "random_password" "user_password" {
+      + bcrypt_hash      = (sensitive value)
+      + id               = (known after apply)
+      + keepers          = {
+          + "password_version" = "0"
+        }
+      + length           = 24
+      + lower            = true
+      + min_lower        = 0
+      + min_numeric      = 0
+      + min_special      = 2
+      + min_upper        = 0
+      + number           = true
+      + numeric          = true
+      + override_special = "!#$%^&amp;*()-_=+[]{}&lt;&gt;:?"
+      + result           = (sensitive value)
+      + special          = true
+      + upper            = true
+    }
+
+Plan: 4 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + password = (sensitive value)
+  + user     = "ruanb"
+</code></pre>
+
+<p>Run the apply which will create the database, the user, sets the password and applies the grants:</p>
+
+<pre><code class="bash">terraform apply
+</code></pre>
+
+<p>Then our returned output should show something like this:</p>
+
+<pre><code class="bash">Apply complete! Resources: 4 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+password = &lt;sensitive&gt;
+user = "ruanb"
+</code></pre>
+
+<p>As our password is set as sensitive, we can access the value with <code>terraform output -raw password</code>, let&rsquo;s assign the password to a variable:</p>
+
+<pre><code class="bash">DBPASS=$(terraform output -raw password)
+</code></pre>
+
+<p>Then we can exec into the mysql container and logon to the mysql server with our new credentials:</p>
+
+<pre><code class="bash">docker exec -it mysql mysql -u ruanb -p$DBPASS
+</code></pre>
+
+<p>And we can see we are logged onto the mysql server:</p>
+
+<pre><code class="bash">Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 14
+Server version: 8.0.33 MySQL Community Server - GPL
+
+mysql&gt;
+</code></pre>
+
+<p>If we run <code>show databases;</code> we should see the following:</p>
+
+<pre><code class="sql">mysql&gt; show databases;
++--------------------+
+| Database           |
++--------------------+
+| foobar             |
+| information_schema |
+| performance_schema |
++--------------------+
+3 rows in set (0.03 sec)
+</code></pre>
+
+<p>If we want to rotate the mysql password for the user, we can update the <code>password_version</code> variable either in our <code>terraform.tfvars</code> or via the cli. Let&rsquo;s pass the variable in the cli and do a <code>terraform plan</code> to verify the changes:</p>
+
+<pre><code class="bash">terraform plan -var password_version=1
+</code></pre>
+
+<p>And due to our value for the random resource keepers parameter being updated, it will trigger the value of our password to be changed, and that will let terraform update our mysql user&rsquo;s password:</p>
+
+<pre><code class="bash">Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+-/+ destroy and then create replacement
+
+Terraform will perform the following actions:
+
+  # mysql_user.user_id will be updated in-place
+  ~ resource "mysql_user" "user_id" {
+        id                 = "ruanb@%"
+      ~ plaintext_password = (sensitive value)
+        # (5 unchanged attributes hidden)
+    }
+
+  # random_password.user_password must be replaced
+-/+ resource "random_password" "user_password" {
+      ~ bcrypt_hash      = (sensitive value)
+      ~ id               = "none" -&gt; (known after apply)
+      ~ keepers          = { # forces replacement
+          ~ "password_version" = "0" -&gt; "1"
+        }
+      ~ result           = (sensitive value)
+        # (11 unchanged attributes hidden)
+    }
+
+Plan: 1 to add, 1 to change, 1 to destroy.
+</code></pre>
+
+<p>Let&rsquo;s go ahead by updating our password:</p>
+
+<pre><code class="bash">terraform apply -var password_version=1 -auto-approve
+</code></pre>
+
+<p>To validate that the password has changed, we can try to logon to mysql by using the password variable that was created initially:</p>
+
+<pre><code class="bash">docker exec -it mysql mysql -u ruanb -p$DBPASS
+</code></pre>
+
+<p>And as you can see authentication failed:</p>
+
+<pre><code class="bash">mysql: [Warning] Using a password on the command line interface can be insecure.
+ERROR 1045 (28000): Access denied for user 'ruanb'@'localhost' (using password: YES)
+</code></pre>
+
+<p>Set the new password to the variable again:</p>
+
+<pre><code class="bash">DBPASS=$(terraform output -raw password)
+</code></pre>
+
+<p>Then try to logon again:</p>
+
+<pre><code class="bash">docker exec -it mysql mysql -u ruanb -p$DBPASS
+</code></pre>
+
+<p>And we can see we are logged on again:</p>
+
+<pre><code class="bash">Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 22
+Server version: 8.0.33 MySQL Community Server - GPL
+
+mysql&gt;
+</code></pre>
+
+<h2>Resources</h2>
+
+<p>The terraform mysql provider:
+- <a href="https://registry.terraform.io/providers/petoju/mysql/latest/docs">https://registry.terraform.io/providers/petoju/mysql/latest/docs</a></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Use the AWS Terraform Provider]]></title>
@@ -1084,122 +1455,6 @@ terraform:apply:
 <li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
 </ul>
 
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Ansible Playbook for Your Macbook Homebrew Packages]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/08/28/ansible-playbook-for-your-macbook-homebrew-packages/"/>
-    <updated>2022-08-28T19:14:54-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/08/28/ansible-playbook-for-your-macbook-homebrew-packages</id>
-    <content type="html"><![CDATA[<p><img src="https://blog.ruanbekker.com/images/ansible-macbook.png" alt="ansible-macbook-homebrew" /></p>
-
-<p>In this tutorial I will demonstrate how to use Ansible for Homebrew Configuration Management. The aim for using Ansible to manage your homebrew packages helps you to have a consistent list of packages on your macbook.</p>
-
-<p>For me personally, when I get a new laptop it&rsquo;s always a mission to get the same packages installed as what I had before, and ansible solves that for us to have all our packages defined in configuration management.</p>
-
-<h2>Install Ansible</h2>
-
-<p>Install ansible with python and pip:</p>
-
-<pre><code class="bash">python3 -m pip install ansible==4.9.0
-</code></pre>
-
-<h2>Ansible Configuration</h2>
-
-<p>Create the <code>ansible.cfg</code> configuration file:</p>
-
-<pre><code>[defaults]
-inventory = inventory.ini
-deprecation_warnings = False
-</code></pre>
-
-<p>Our <code>inventory.ini</code> will define the information about our target host, which will be localhost as we are using ansible to run against our local target which is our macbook:</p>
-
-<pre><code>[localhost]
-my.laptop  ansible_connection=local
-
-[localhost:vars]
-ansible_python_interpreter = /usr/bin/python3
-</code></pre>
-
-<h2>Ansible Playbook</h2>
-
-<p>Our playbook <code>homebrew.yaml</code> will define the tasks to add the homebrew taps, cask packages and homebrew packages. You can change the packages as you desire, but these are the ones that I use:</p>
-
-<pre><code class="yaml">- hosts: localhost
-  name: Macbook Playbook
-  gather_facts: False
-  vars:
-    TFENV_ARCH: amd64
-  tasks:
-    - name: Ensures taps are present via homebrew
-      community.general.homebrew_tap:
-        name: ""
-        state: present
-      with_items:
-        - hashicorp/tap
-
-    - name: Ensures packages are present via homebrew cask
-      community.general.homebrew_cask:
-        name: ""
-        state: present
-        install_options: 'appdir=/Applications'
-      with_items:
-        - visual-studio-code
-        - multipass
-        - spotify
-
-    - name: Ensures packages are present via homebrew
-      community.general.homebrew:
-        name: ""
-        path: "/Applications"
-        state: present
-      with_items:
-        - openssl
-        - readline
-        - sqlite3
-        - xz
-        - zlib
-        - jq
-        - yq
-        - wget
-        - go
-        - kubernetes-cli
-        - fzf
-        - sshuttle
-        - hugo
-        - helm
-        - kind
-        - awscli
-        - gnupg
-        - kubectx
-        - helm
-        - stern
-        - terraform
-        - tfenv
-        - pyenv 
-        - jsonnet
-      ignore_errors: yes
-      tags:
-        - packages
-</code></pre>
-
-<h2>Deploy Playbook</h2>
-
-<p>Now you can run the playbook using:</p>
-
-<pre><code class="bash">ansible-playbook homebrew.yaml
-</code></pre>
-
-<h2>Source Code</h2>
-
-<p>The code can be found in my github repository:
-- <a href="https://github.com/ruanbekker/ansible-macbook-setup">https://github.com/ruanbekker/ansible-macbook-setup</a></p>
-
-<h2>Thanks</h2>
-
-<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
 ]]></content>
   </entry>
   

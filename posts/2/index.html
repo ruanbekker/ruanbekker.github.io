@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial we will demonstrate how to use KinD (Kubernetes in Docker) to provision local kubernetes clusters for local development. About KinD &hellip;">
+  <meta name="description" content="In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki. About We will be using Docker Compose and mount the &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,294 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/">Logging With Docker Promtail and Grafana Loki</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2022-11-18T00:42:49-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>18</span><span class='date-suffix'>th</span>, <span class='date-year'>2022</span></span> <span class='time'>12:42 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png" alt="grafana-loki-promtail" /></p>
+
+<p>In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki.</p>
+
+<h2>About</h2>
+
+<p>We will be using Docker Compose and mount the docker socket to Grafana Promtail so that it is aware of all the docker events and configure it that only containers with docker labels <code>logging=promtail</code> needs to be enabled for logging, which will then scrape those logs and send it to Grafana Loki where we will visualize it in Grafana.</p>
+
+<h2>Promtail</h2>
+
+<p>In our promtail configuration <code>config/promtail.yaml</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="c1"># https://grafana.com/docs/loki/latest/clients/promtail/configuration/</span>
+</span><span class='line'><span class="c1"># https://docs.docker.com/engine/api/v1.41/#operation/ContainerList</span>
+</span><span class='line'><span class="l-Scalar-Plain">server</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">http_listen_port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">9080</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">grpc_listen_port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">0</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">positions</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">filename</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/tmp/positions.yaml</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">clients</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://loki:3100/loki/api/v1/push</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">scrape_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">job_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">flog_scrape</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">docker_sd_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">unix:///var/run/docker.sock</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">refresh_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">5s</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">filters</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">label</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">values</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&quot;logging=promtail&quot;</span><span class="p-Indicator">]</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">relabel_configs</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_name&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">regex</span><span class="p-Indicator">:</span> <span class="s">&#39;/(.*)&#39;</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;container&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_log_stream&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;logstream&#39;</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_label_logging_jobname&#39;</span><span class="p-Indicator">]</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;job&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can see we are using the <code>docker_sd_configs</code> provider and filter only docker containers with the docker labels <code>logging=promtail</code> and once we have those logs we relabel our labels to have the container name and we also use docker labels like <code>log_stream</code> and <code>logging_jobname</code> to add labels to our logs.</p>
+
+<h2>Grafana Config</h2>
+
+<p>We would like to auto configure our datasources for Grafana and in <code>config/grafana-datasources.yml</code> we have:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">datasources</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Loki</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">loki</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">access</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">proxy</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://loki:3100</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">editable</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">isDefault</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Docker Compose</h2>
+
+<p>Then lastly we have our <code>docker-compose.yml</code> that wire up all our containers:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.8&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">nginx-app</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-app</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span> <span class="s">&quot;promtail&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging_jobname</span><span class="p-Indicator">:</span> <span class="s">&quot;containerlogs&quot;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">8080:80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">grafana</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">grafana/grafana:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3000:3000</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_ANONYMOUS_ENABLED=true</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_ANONYMOUS_ORG_ROLE=Admin</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_DISABLE_LOGIN_FORM=true</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">loki</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">grafana/loki:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3100:3100</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-config.file=/etc/loki/local-config.yaml</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">promtail</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span>  <span class="l-Scalar-Plain">grafana/promtail:latest</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">promtail</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./config/promtail.yaml:/etc/promtail/docker-config.yaml</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/lib/docker/containers:/var/lib/docker/containers:ro</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/run/docker.sock:/var/run/docker.sock</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-config.file=/etc/promtail/docker-config.yaml</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">depends_on</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">loki</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
+</span><span class='line'>
+</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">app</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see with our nginx container we define our labels:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'>  <span class="l-Scalar-Plain">nginx-app</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-app</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span> <span class="s">&quot;promtail&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">logging_jobname</span><span class="p-Indicator">:</span> <span class="s">&quot;containerlogs&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Which uses <code>logging: "promtail"</code> to let promtail know this log container&rsquo;s log to be scraped and <code>logging_jobname: "containerlogs"</code> which will assign containerlogs to the job label.</p>
+
+<h2>Start the stack</h2>
+
+<p>If you are following along all this configuration is available in my github repository <a href="https://github.com/ruanbekker/docker-promtail-loki">https://github.com/ruanbekker/docker-promtail-loki</a> .</p>
+
+<p>Once you have everything in place you can start it with:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker-compose up -d
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Access nginx on <a href="http://localhost:8080">http://localhost:8080</a></p>
+
+<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/202505252-3cbc2d03-d1d2-48e6-bea7-5db54233b9a2.png"></p>
+
+<p>Then navigate to grafana on <a href="http://localhost:3000">http://localhost:3000</a> and select explore on the left and select the container:</p>
+
+<p><img width="560" alt="image" src="https://user-images.githubusercontent.com/567298/202504989-e05a08a2-eb2f-41a1-85f4-9a11a8affd7c.png"></p>
+
+<p>And you will see the logs:</p>
+
+<p><img width="1425" alt="image" src="https://user-images.githubusercontent.com/567298/202505099-c47b76cc-3090-4eb9-8459-db659d0aac18.png"></p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -2370,173 +2658,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2022/05/31/python-flask-forms-with-jinja-templating/">Python Flask Forms With Jinja Templating</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2022-05-31T02:39:30-04:00'><span class='date'><span class='date-month'>May</span> <span class='date-day'>31</span><span class='date-suffix'>st</span>, <span class='date-year'>2022</span></span> <span class='time'>2:39 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/171112630-7fd74a3a-d216-4b4c-85a2-8d9de6428f45.png" alt="ruanbekker-blog" /></p>
-
-<p>In this tutorial, we will demonstrate how to use <a href="https://flask.palletsprojects.com/en/2.1.x/">Python Flask</a> and <code>render_template</code> to use <a href="https://jinja.palletsprojects.com/en/3.1.x/">Jinja Templating</a> with our Form. The example is just a ui that accepts a firstname, lastname and email address and when we submit the form data, it renders on a table.</p>
-
-<h2>Install Flask</h2>
-
-<p>Create a virtual environment and install python flask</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>python3 -m pip install virtualenv
-</span><span class='line'>python3 -m virtualenv -p python3 .venv
-</span><span class='line'><span class="nb">source</span> .venv/bin/activate
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>The Code</h2>
-
-<p>First we will create our application code in <code>app.py</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">render_template</span><span class="p">,</span> <span class="n">request</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">app_version</span> <span class="o">=</span> <span class="s">&#39;1.1.0&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">root</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s">&#39;form.html&#39;</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="nd">@app.route</span><span class="p">(</span><span class="s">&#39;/result&#39;</span><span class="p">,</span><span class="n">methods</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;POST&#39;</span><span class="p">,</span> <span class="s">&#39;GET&#39;</span><span class="p">])</span>
-</span><span class='line'><span class="k">def</span> <span class="nf">result</span><span class="p">():</span>
-</span><span class='line'>    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">==</span> <span class="s">&#39;POST&#39;</span><span class="p">:</span>
-</span><span class='line'>        <span class="n">result</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span>
-</span><span class='line'>        <span class="n">json_result</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
-</span><span class='line'>        <span class="k">print</span><span class="p">(</span><span class="n">json_result</span><span class="p">)</span>
-</span><span class='line'>        <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s">&quot;result.html&quot;</span><span class="p">,</span> <span class="n">result</span><span class="o">=</span><span class="n">result</span><span class="p">,</span> <span class="n">app_version</span><span class="o">=</span><span class="n">app_version</span><span class="p">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span> <span class="o">=</span> <span class="bp">True</span><span class="p">)</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see our first route <code>/</code> will render the template in <code>form.html</code>. Our second route <code>/result</code> a couple of things are happening:</p>
-
-<ul>
-<li>If we received a POST method, we will capture the form data</li>
-<li>We are then casting it to a dictionary data type</li>
-<li>Print the results out of our form data (for debugging)</li>
-<li>Then we are passing the result object and the app_version variable to our template where it will be parsed.</li>
-</ul>
-
-
-<p>When using <code>render_template</code> all html files resides under the <code>templates</code> directory, so let&rsquo;s first create our <code>base.html</code> file that we will use as a starting point in <code>templates/base.html</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">mkdir</span> <span class="n">templates</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then in your <code>templates/base.html</code>:</p>
-
-<script src="https://gist.github.com/ruanbekker/4d6b3e91b629795b3429a15f5db72972.js"></script>
-
-
-<p>In our <code>templates/form.html</code> we have our form template, and you can see we are referencing our <code>base.html</code> in our template to include the first bit:</p>
-
-<script src="https://gist.github.com/ruanbekker/f9e0c78d12987e19862486e446378ed7.js"></script>
-
-
-<p>Then our last template <code>templates/result.html</code> is used when we click on submit, when the form data is displayed in our table:</p>
-
-<script src="https://gist.github.com/ruanbekker/ad40ae4c59a81e8c089e7df2d50c605a.js"></script>
-
-
-<p>So our directory structure should look like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>├── app.py
-</span><span class='line'>└── templates
-</span><span class='line'>    ├── base.html
-</span><span class='line'>    ├── form.html
-</span><span class='line'>    └── result.html
-</span><span class='line'>
-</span><span class='line'><span class="m">1</span> directory, <span class="m">4</span> files
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then run the server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>python app.py
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Screenshots</h2>
-
-<p>It should look like the following when you access <a href="http://localhost:5000/">http://localhost:5000/</a></p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/171111587-915935a6-1557-4039-bbd0-d1d95070c2ae.png" alt="python-flask-forms" /></p>
-
-<p>After entering your form data, select &ldquo;Submit&rdquo;, then you should see the following:</p>
-
-<p><img src="https://user-images.githubusercontent.com/567298/171111868-9f8974d2-90cc-45c9-b930-da2d6ec96cbf.png" alt="python-flask-forms" /></p>
-
-<p>So you can see that our request data was parsed through the template and our app version variable as well.</p>
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, if you like my content, check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
-
-<p><a href="https://github.com/ruanbekker/cheatsheets" target="_blank"><img alt="ruanbekker-cheatsheets" src="https://user-images.githubusercontent.com/567298/169162832-ef3019de-bc49-4d6c-b2a6-8ac17c457d24.png"></a></p>
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/3">&larr; Older</a>
@@ -2610,6 +2731,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/08/03/creating-a-python-lambda-function-with-terraform-on-aws/">Creating a Python Lambda Function With Terraform on AWS</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/07/15/how-to-use-the-mysql-terraform-provider/">How to Use the MySQL Terraform Provider</a>
       </li>
     
@@ -2623,10 +2748,6 @@
     
       <li class="post">
         <a href="/blog/2023/05/26/how-to-run-a-amd64-bit-linux-vm-on-a-mac-m1/">How to Run a AMD64 Bit Linux VM on a Mac M1</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2023/05/17/running-a-multi-broker-kafka-cluster-on-docker/">Running a Multi-Broker Kafka Cluster on Docker</a>
       </li>
     
   </ul>

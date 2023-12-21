@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial we will provision a MySQL Server with Docker and then use Terraform to provision MySQL Users, Database Schemas and MySQL Grants with &hellip;">
+  <meta name="description" content="In this tutorial I will explain how to deploy a AWS Lambda Function with Terraform using the Python runtime. It will include the permissions it needs &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,1030 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2023/08/03/creating-a-python-lambda-function-with-terraform-on-aws/">Creating a Python Lambda Function With Terraform on AWS</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2023-08-03T11:29:35-04:00'><span class='date'><span class='date-month'>Aug</span> <span class='date-day'>3</span><span class='date-suffix'>rd</span>, <span class='date-year'>2023</span></span> <span class='time'>11:29 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial I will explain how to deploy a AWS Lambda Function with Terraform using the Python runtime. It will include the permissions it needs to write its logs to AWS CloudWatch as well as to get information from the AWS API&rsquo;s as a boilerplate for you to expand on it.</p>
+
+<p>We will also use CloudWatch Events to trigger this lambda function every two hours.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>First you will need to have <a href="https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli">Terraform</a> installed as well as authentication for Terraform to interact with your AWS account, I have written a post about it and you can follow that on &ldquo;<a href="https://blog.ruanbekker.com/blog/2023/07/15/how-to-use-the-aws-terraform-provider/">How to use the AWS Terraform Provider</a>&rdquo;.</p>
+
+<h2>Project Structure</h2>
+
+<p>The following code will be available on my github repository, but if you would like to follow along we will create everything step by step.</p>
+
+<p>First create the project directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mkdir -p ~/workspace/aws-lambda-terraform
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then change into the directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nb">cd</span> ~/workspace/aws-lambda-terraform
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>First we want to create our modules directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mkdir -p modules/lambda-function
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then our environment directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mkdir -p environment/test
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>We will also create the directory for our function code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mkdir -p modules/lambda-function/functions
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And we can create the file for our python function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>touch modules/lambda-function/functions/demo.py
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now we will create our files inside our modules directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>touch modules/lambda-function/<span class="o">{</span>main,versions,outputs,variables<span class="o">}</span>.tf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the files inside our environments directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>touch environment/test/<span class="o">{</span>main,provider,output<span class="o">}</span>.tf
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then in summary our project structure should look more or less like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>tree .
+</span><span class='line'>.
+</span><span class='line'>├── environment
+</span><span class='line'>│   └── <span class="nb">test</span>
+</span><span class='line'>│       ├── main.tf
+</span><span class='line'>│       ├── output.tf
+</span><span class='line'>│       └── provider.tf
+</span><span class='line'>└── modules
+</span><span class='line'>    └── lambda-function
+</span><span class='line'>        ├── functions
+</span><span class='line'>        │   └── demo.py
+</span><span class='line'>        ├── main.tf
+</span><span class='line'>        ├── outputs.tf
+</span><span class='line'>        ├── variables.tf
+</span><span class='line'>        └── versions.tf
+</span><span class='line'>
+</span><span class='line'><span class="m">5</span> directories, <span class="m">8</span> files
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Terraform Code</h2>
+
+<p>We will first start populating the modules bit, and start with <code>modules/lambda-function/main.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+<span class='line-number'>91</span>
+<span class='line-number'>92</span>
+<span class='line-number'>93</span>
+<span class='line-number'>94</span>
+<span class='line-number'>95</span>
+<span class='line-number'>96</span>
+<span class='line-number'>97</span>
+<span class='line-number'>98</span>
+<span class='line-number'>99</span>
+<span class='line-number'>100</span>
+<span class='line-number'>101</span>
+<span class='line-number'>102</span>
+<span class='line-number'>103</span>
+<span class='line-number'>104</span>
+<span class='line-number'>105</span>
+<span class='line-number'>106</span>
+<span class='line-number'>107</span>
+<span class='line-number'>108</span>
+<span class='line-number'>109</span>
+<span class='line-number'>110</span>
+<span class='line-number'>111</span>
+<span class='line-number'>112</span>
+<span class='line-number'>113</span>
+<span class='line-number'>114</span>
+<span class='line-number'>115</span>
+<span class='line-number'>116</span>
+<span class='line-number'>117</span>
+<span class='line-number'>118</span>
+<span class='line-number'>119</span>
+<span class='line-number'>120</span>
+<span class='line-number'>121</span>
+<span class='line-number'>122</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>data <span class="s2">&quot;aws_iam_policy_document&quot;</span> <span class="s2">&quot;lambda&quot;</span> <span class="o">{</span>
+</span><span class='line'>  statement <span class="o">{</span>
+</span><span class='line'>    <span class="nv">actions</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;sts:AssumeRole&quot;</span><span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>    principals <span class="o">{</span>
+</span><span class='line'>      <span class="nb">type</span>        <span class="o">=</span> <span class="s2">&quot;Service&quot;</span>
+</span><span class='line'>      <span class="nv">identifiers</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;lambda.amazonaws.com&quot;</span><span class="o">]</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>data <span class="s2">&quot;aws_iam_policy_document&quot;</span> <span class="s2">&quot;lambda_execution&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span> <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>
+</span><span class='line'>  statement <span class="o">{</span>
+</span><span class='line'>    <span class="nv">sid</span>     <span class="o">=</span> <span class="s2">&quot;GetCallerIdentity&quot;</span>
+</span><span class='line'>    <span class="nv">effect</span>  <span class="o">=</span> <span class="s2">&quot;Allow&quot;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nv">actions</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>      <span class="s2">&quot;sts:GetCallerIdentity&quot;</span>
+</span><span class='line'>    <span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nv">resources</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;*&quot;</span><span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  statement <span class="o">{</span>
+</span><span class='line'>    <span class="nv">sid</span>     <span class="o">=</span> <span class="s2">&quot;DescribeFunctionsInRegion&quot;</span>
+</span><span class='line'>    <span class="nv">effect</span>  <span class="o">=</span> <span class="s2">&quot;Allow&quot;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nv">actions</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>      <span class="s2">&quot;lambda:GetFunction&quot;</span>
+</span><span class='line'>    <span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nv">resources</span> <span class="o">=</span> <span class="o">[</span><span class="s2">&quot;*&quot;</span><span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'>    condition <span class="o">{</span>
+</span><span class='line'>      <span class="nb">test</span>     <span class="o">=</span> <span class="s2">&quot;StringEquals&quot;</span>
+</span><span class='line'>      <span class="nv">variable</span> <span class="o">=</span> <span class="s2">&quot;aws:RequestedRegion&quot;</span>
+</span><span class='line'>      <span class="nv">values</span> <span class="o">=</span> <span class="o">[</span>var.aws_region<span class="o">]</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_iam_role_policy&quot;</span> <span class="s2">&quot;lambda_execution_policy&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>  <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">name</span>   <span class="o">=</span> <span class="s2">&quot;${var.project_name}-lambda-function-execution-policy&quot;</span>
+</span><span class='line'>  <span class="nv">role</span>   <span class="o">=</span> aws_iam_role.lambda_role<span class="o">[</span>count.index<span class="o">]</span>.id
+</span><span class='line'>  <span class="nv">policy</span> <span class="o">=</span> data.aws_iam_policy_document.lambda_execution<span class="o">[</span>count.index<span class="o">]</span>.json
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>data <span class="s2">&quot;archive_file&quot;</span> <span class="s2">&quot;lambda_zip&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nb">type</span>        <span class="o">=</span> <span class="s2">&quot;zip&quot;</span>
+</span><span class='line'>  <span class="nv">source_file</span> <span class="o">=</span> <span class="s2">&quot;${path.module}/functions/demo.py&quot;</span>
+</span><span class='line'>  <span class="nv">output_path</span> <span class="o">=</span> <span class="s2">&quot;${path.module}/lambda-archives/package.zip&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_iam_role&quot;</span> <span class="s2">&quot;lambda_role&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>              <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">name</span>               <span class="o">=</span> <span class="s2">&quot;${var.project_name}-lambda-function-role&quot;</span>
+</span><span class='line'>  <span class="nv">assume_role_policy</span> <span class="o">=</span> data.aws_iam_policy_document.lambda.json
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_lambda_function&quot;</span> <span class="s2">&quot;lambda&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>            <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">filename</span>         <span class="o">=</span> data.archive_file.lambda_zip.output_path
+</span><span class='line'>  <span class="nv">function_name</span>    <span class="o">=</span> <span class="s2">&quot;${var.project_name}-lambda-function&quot;</span>
+</span><span class='line'>  <span class="nv">role</span>             <span class="o">=</span> aws_iam_role.lambda_role<span class="o">[</span>count.index<span class="o">]</span>.arn
+</span><span class='line'>  <span class="nv">handler</span>          <span class="o">=</span> <span class="s2">&quot;demo.lambda_handler&quot;</span>
+</span><span class='line'>  <span class="nv">source_code_hash</span> <span class="o">=</span> filebase64sha256<span class="o">(</span>data.archive_file.lambda_zip.output_path<span class="o">)</span>
+</span><span class='line'>  <span class="nv">runtime</span>          <span class="o">=</span> <span class="s2">&quot;python3.8&quot;</span>
+</span><span class='line'>  <span class="nv">timeout</span>          <span class="o">=</span> 30
+</span><span class='line'>
+</span><span class='line'>  environment <span class="o">{</span>
+</span><span class='line'>    <span class="nv">variables</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>      <span class="nv">PROJECT_NAME</span>  <span class="o">=</span> var.project_name
+</span><span class='line'>      <span class="nv">FUNCTION_NAME</span> <span class="o">=</span> <span class="s2">&quot;${var.project_name}-lambda-function&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="nv">depends_on</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>    data.archive_file.lambda_zip
+</span><span class='line'>  <span class="o">]</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_cloudwatch_event_rule&quot;</span> <span class="s2">&quot;every_two_hours&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>               <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">name</span>                <span class="o">=</span> <span class="s2">&quot;${var.project_name}-every-two-hours&quot;</span>
+</span><span class='line'>  <span class="nv">description</span>         <span class="o">=</span> <span class="s2">&quot;Fires every 2 hours&quot;</span>
+</span><span class='line'>  <span class="nv">schedule_expression</span> <span class="o">=</span> <span class="s2">&quot;rate(2 hours)&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_lambda_permission&quot;</span> <span class="s2">&quot;allow_cloudwatch&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>         <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">statement_id</span>  <span class="o">=</span> <span class="s2">&quot;AllowExecutionFromCloudWatch&quot;</span>
+</span><span class='line'>  <span class="nv">action</span>        <span class="o">=</span> <span class="s2">&quot;lambda:InvokeFunction&quot;</span>
+</span><span class='line'>  <span class="nv">function_name</span> <span class="o">=</span> aws_lambda_function.lambda<span class="o">[</span>count.index<span class="o">]</span>.function_name
+</span><span class='line'>  <span class="nv">principal</span>     <span class="o">=</span> <span class="s2">&quot;events.amazonaws.com&quot;</span>
+</span><span class='line'>  <span class="nv">source_arn</span>    <span class="o">=</span> aws_cloudwatch_event_rule.every_two_hours<span class="o">[</span>count.index<span class="o">]</span>.arn
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_cloudwatch_event_target&quot;</span> <span class="s2">&quot;cloudwatch_event&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>     <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">rule</span>      <span class="o">=</span> aws_cloudwatch_event_rule.every_two_hours<span class="o">[</span>count.index<span class="o">]</span>.name
+</span><span class='line'>  <span class="nv">target_id</span> <span class="o">=</span> <span class="s2">&quot;${var.project_name}-snapshot-retention-target&quot;</span>
+</span><span class='line'>  <span class="nv">arn</span>       <span class="o">=</span> aws_lambda_function.lambda<span class="o">[</span>count.index<span class="o">]</span>.arn
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>// CloudWatch Logs
+</span><span class='line'>resource <span class="s2">&quot;aws_cloudwatch_log_group&quot;</span> <span class="s2">&quot;cloudwatch_log_group&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>     <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">name</span>      <span class="o">=</span> <span class="s2">&quot;/aws/lambda/${aws_lambda_function.lambda[count.index].function_name}&quot;</span>
+</span><span class='line'>  <span class="nv">retention_in_days</span> <span class="o">=</span> 5
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>resource <span class="s2">&quot;aws_iam_role_policy_attachment&quot;</span> <span class="s2">&quot;lambda_exec_policy&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">count</span>      <span class="o">=</span> var.logs_enabled ? <span class="m">1</span> : 0
+</span><span class='line'>  <span class="nv">role</span>       <span class="o">=</span> aws_iam_role.lambda_role<span class="o">[</span>count.index<span class="o">]</span>.name
+</span><span class='line'>  <span class="nv">policy_arn</span> <span class="o">=</span> <span class="s2">&quot;arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The next one will be the <code>modules/lambda-function/variables.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>variable <span class="s2">&quot;aws_region&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;eu-west-1&quot;</span>
+</span><span class='line'>  <span class="nb">type</span>    <span class="o">=</span> string
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>variable <span class="s2">&quot;project_name&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="s2">&quot;example&quot;</span>
+</span><span class='line'>  <span class="nb">type</span>    <span class="o">=</span> string
+</span><span class='line'><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>variable <span class="s2">&quot;logs_enabled&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">default</span> <span class="o">=</span> <span class="nb">false</span>
+</span><span class='line'><span class="nb">  type</span>    <span class="o">=</span> bool
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then define the modules output in <code>modules/lambda-function/outputs.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>output <span class="s2">&quot;arn_string&quot;</span> <span class="o">{</span>
+</span><span class='line'>  <span class="nv">value</span> <span class="o">=</span> aws_lambda_function.lambda<span class="o">[</span>*<span class="o">]</span>.arn
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we define our python function code in <code>modules/lambda-function/functions/demo.py</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">os</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">json</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">logging</span>
+</span><span class='line'><span class="kn">import</span> <span class="nn">boto3</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">()</span>
+</span><span class='line'><span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+</span><span class='line'>    <span class="n">client</span> <span class="o">=</span> <span class="n">boto3</span><span class="o">.</span><span class="n">client</span><span class="p">(</span><span class="s">&#39;lambda&#39;</span><span class="p">)</span>
+</span><span class='line'>    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_function</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">FunctionName</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;FUNCTION_NAME&#39;</span><span class="p">]</span>
+</span><span class='line'>    <span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">return</span> <span class="p">{</span>
+</span><span class='line'>        <span class="s">&#39;statusCode&#39;</span> <span class="p">:</span> <span class="mi">200</span><span class="p">,</span>
+</span><span class='line'>        <span class="s">&#39;body&#39;</span><span class="p">:</span> <span class="n">response</span>
+</span><span class='line'>    <span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>For our environment we want to specify the source as our module in <code>environment/test/main.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">module</span> <span class="s">&quot;myfunction&quot;</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">source</span>       <span class="o">=</span> <span class="s">&quot;../../modules/lambda-function&quot;</span>
+</span><span class='line'>  <span class="n">project_name</span> <span class="o">=</span> <span class="s">&quot;test&quot;</span>
+</span><span class='line'>  <span class="n">logs_enabled</span> <span class="o">=</span> <span class="n">true</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our outputs in <code>environment/test/output.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">output</span> <span class="s">&quot;arn_string&quot;</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">value</span> <span class="o">=</span> <span class="n">module</span><span class="o">.</span><span class="n">myfunction</span><span class="o">.</span><span class="n">arn_string</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And since we are using AWS, we need to define our providers and the profile that we will use to authenticate against AWS, in my case, im using the default profile in <code>environment/test/provider.tf</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="n">terraform</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">required_providers</span> <span class="p">{</span>
+</span><span class='line'>    <span class="n">aws</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class='line'>      <span class="n">source</span> <span class="o">=</span> <span class="s">&quot;hashicorp/aws&quot;</span>
+</span><span class='line'>      <span class="n">version</span> <span class="o">=</span> <span class="s">&quot;4.23.0&quot;</span>
+</span><span class='line'>    <span class="p">}</span>
+</span><span class='line'>  <span class="p">}</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">provider</span> <span class="s">&quot;aws&quot;</span> <span class="p">{</span>
+</span><span class='line'>  <span class="n">region</span>                   <span class="o">=</span> <span class="s">&quot;eu-west-1&quot;</span>
+</span><span class='line'>  <span class="n">profile</span>                  <span class="o">=</span> <span class="s">&quot;default&quot;</span>
+</span><span class='line'>  <span class="n">shared_credentials_files</span> <span class="o">=</span> <span class="p">[</span><span class="s">&quot;~/.aws/credentials&quot;</span><span class="p">]</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Terraform Plan</h2>
+
+<p>Now that we have defined our terraform code we can run:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform plan
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And it should return something more or less like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+<span class='line-number'>63</span>
+<span class='line-number'>64</span>
+<span class='line-number'>65</span>
+<span class='line-number'>66</span>
+<span class='line-number'>67</span>
+<span class='line-number'>68</span>
+<span class='line-number'>69</span>
+<span class='line-number'>70</span>
+<span class='line-number'>71</span>
+<span class='line-number'>72</span>
+<span class='line-number'>73</span>
+<span class='line-number'>74</span>
+<span class='line-number'>75</span>
+<span class='line-number'>76</span>
+<span class='line-number'>77</span>
+<span class='line-number'>78</span>
+<span class='line-number'>79</span>
+<span class='line-number'>80</span>
+<span class='line-number'>81</span>
+<span class='line-number'>82</span>
+<span class='line-number'>83</span>
+<span class='line-number'>84</span>
+<span class='line-number'>85</span>
+<span class='line-number'>86</span>
+<span class='line-number'>87</span>
+<span class='line-number'>88</span>
+<span class='line-number'>89</span>
+<span class='line-number'>90</span>
+<span class='line-number'>91</span>
+<span class='line-number'>92</span>
+<span class='line-number'>93</span>
+<span class='line-number'>94</span>
+<span class='line-number'>95</span>
+<span class='line-number'>96</span>
+<span class='line-number'>97</span>
+<span class='line-number'>98</span>
+<span class='line-number'>99</span>
+<span class='line-number'>100</span>
+<span class='line-number'>101</span>
+<span class='line-number'>102</span>
+<span class='line-number'>103</span>
+<span class='line-number'>104</span>
+<span class='line-number'>105</span>
+<span class='line-number'>106</span>
+<span class='line-number'>107</span>
+<span class='line-number'>108</span>
+<span class='line-number'>109</span>
+<span class='line-number'>110</span>
+<span class='line-number'>111</span>
+<span class='line-number'>112</span>
+<span class='line-number'>113</span>
+<span class='line-number'>114</span>
+<span class='line-number'>115</span>
+<span class='line-number'>116</span>
+<span class='line-number'>117</span>
+<span class='line-number'>118</span>
+<span class='line-number'>119</span>
+<span class='line-number'>120</span>
+<span class='line-number'>121</span>
+<span class='line-number'>122</span>
+<span class='line-number'>123</span>
+<span class='line-number'>124</span>
+<span class='line-number'>125</span>
+<span class='line-number'>126</span>
+<span class='line-number'>127</span>
+<span class='line-number'>128</span>
+<span class='line-number'>129</span>
+<span class='line-number'>130</span>
+<span class='line-number'>131</span>
+<span class='line-number'>132</span>
+<span class='line-number'>133</span>
+<span class='line-number'>134</span>
+<span class='line-number'>135</span>
+<span class='line-number'>136</span>
+<span class='line-number'>137</span>
+<span class='line-number'>138</span>
+<span class='line-number'>139</span>
+<span class='line-number'>140</span>
+<span class='line-number'>141</span>
+<span class='line-number'>142</span>
+<span class='line-number'>143</span>
+<span class='line-number'>144</span>
+<span class='line-number'>145</span>
+<span class='line-number'>146</span>
+<span class='line-number'>147</span>
+<span class='line-number'>148</span>
+<span class='line-number'>149</span>
+<span class='line-number'>150</span>
+<span class='line-number'>151</span>
+<span class='line-number'>152</span>
+<span class='line-number'>153</span>
+<span class='line-number'>154</span>
+<span class='line-number'>155</span>
+<span class='line-number'>156</span>
+<span class='line-number'>157</span>
+<span class='line-number'>158</span>
+<span class='line-number'>159</span>
+<span class='line-number'>160</span>
+<span class='line-number'>161</span>
+<span class='line-number'>162</span>
+<span class='line-number'>163</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+</span><span class='line'>  + create
+</span><span class='line'>
+</span><span class='line'>Terraform will perform the following actions:
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_cloudwatch_event_rule.every_two_hours[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_cloudwatch_event_rule&quot;</span> <span class="s2">&quot;every_two_hours&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">arn</span>                 <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">description</span>         <span class="o">=</span> <span class="s2">&quot;Fires every 2 hours&quot;</span>
+</span><span class='line'>      + <span class="nv">event_bus_name</span>      <span class="o">=</span> <span class="s2">&quot;default&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>                  <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">is_enabled</span>          <span class="o">=</span> <span class="nb">true</span>
+</span><span class='line'>      + <span class="nv">name</span>                <span class="o">=</span> <span class="s2">&quot;test-every-two-hours&quot;</span>
+</span><span class='line'>      + <span class="nv">name_prefix</span>         <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">schedule_expression</span> <span class="o">=</span> <span class="s2">&quot;rate(2 hours)&quot;</span>
+</span><span class='line'>      + <span class="nv">tags_all</span>            <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_cloudwatch_event_target.cloudwatch_event[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_cloudwatch_event_target&quot;</span> <span class="s2">&quot;cloudwatch_event&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">arn</span>            <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">event_bus_name</span> <span class="o">=</span> <span class="s2">&quot;default&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>             <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">rule</span>           <span class="o">=</span> <span class="s2">&quot;test-every-two-hours&quot;</span>
+</span><span class='line'>      + <span class="nv">target_id</span>      <span class="o">=</span> <span class="s2">&quot;test-snapshot-retention-target&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_cloudwatch_log_group.cloudwatch_log_group[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_cloudwatch_log_group&quot;</span> <span class="s2">&quot;cloudwatch_log_group&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">arn</span>               <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">id</span>                <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">name</span>              <span class="o">=</span> <span class="s2">&quot;/aws/lambda/test-lambda-function&quot;</span>
+</span><span class='line'>      + <span class="nv">retention_in_days</span> <span class="o">=</span> 5
+</span><span class='line'>      + <span class="nv">tags_all</span>          <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_iam_role.lambda_role[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_iam_role&quot;</span> <span class="s2">&quot;lambda_role&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">arn</span>                   <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">assume_role_policy</span>    <span class="o">=</span> jsonencode<span class="o">(</span>
+</span><span class='line'>            <span class="o">{</span>
+</span><span class='line'>              + <span class="nv">Statement</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>                  + <span class="o">{</span>
+</span><span class='line'>                      + <span class="nv">Action</span>   <span class="o">=</span> <span class="s2">&quot;sts:GetCallerIdentity&quot;</span>
+</span><span class='line'>                      + <span class="nv">Effect</span>   <span class="o">=</span> <span class="s2">&quot;Allow&quot;</span>
+</span><span class='line'>                      + <span class="nv">Resource</span> <span class="o">=</span> <span class="s2">&quot;*&quot;</span>
+</span><span class='line'>                      + <span class="nv">Sid</span>      <span class="o">=</span> <span class="s2">&quot;GetCallerIdentity&quot;</span>
+</span><span class='line'>                    <span class="o">}</span>,
+</span><span class='line'>                  + <span class="o">{</span>
+</span><span class='line'>                      + <span class="nv">Action</span>    <span class="o">=</span> <span class="s2">&quot;lambda:GetFunction&quot;</span>
+</span><span class='line'>                      + <span class="nv">Condition</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>                          + <span class="nv">StringEquals</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>                              + <span class="s2">&quot;aws:RequestedRegion&quot;</span> <span class="o">=</span> <span class="s2">&quot;eu-west-1&quot;</span>
+</span><span class='line'>                            <span class="o">}</span>
+</span><span class='line'>                        <span class="o">}</span>
+</span><span class='line'>                      + <span class="nv">Effect</span>    <span class="o">=</span> <span class="s2">&quot;Allow&quot;</span>
+</span><span class='line'>                      + <span class="nv">Resource</span>  <span class="o">=</span> <span class="s2">&quot;*&quot;</span>
+</span><span class='line'>                      + <span class="nv">Sid</span>       <span class="o">=</span> <span class="s2">&quot;DescribeFunctionsInRegion&quot;</span>
+</span><span class='line'>                    <span class="o">}</span>,
+</span><span class='line'>                <span class="o">]</span>
+</span><span class='line'>              + <span class="nv">Version</span>   <span class="o">=</span> <span class="s2">&quot;2012-10-17&quot;</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>        <span class="o">)</span>
+</span><span class='line'>      + <span class="nv">create_date</span>           <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">force_detach_policies</span> <span class="o">=</span> <span class="nb">false</span>
+</span><span class='line'>      + <span class="nv">id</span>                    <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">managed_policy_arns</span>   <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">max_session_duration</span>  <span class="o">=</span> 3600
+</span><span class='line'>      + <span class="nv">name</span>                  <span class="o">=</span> <span class="s2">&quot;test-lambda-function-role&quot;</span>
+</span><span class='line'>      + <span class="nv">name_prefix</span>           <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">path</span>                  <span class="o">=</span> <span class="s2">&quot;/&quot;</span>
+</span><span class='line'>      + <span class="nv">tags_all</span>              <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">unique_id</span>             <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_iam_role_policy.lambda_execution_policy[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_iam_role_policy&quot;</span> <span class="s2">&quot;lambda_execution_policy&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">id</span>     <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">name</span>   <span class="o">=</span> <span class="s2">&quot;test-lambda-function-execution-policy&quot;</span>
+</span><span class='line'>      + <span class="nv">policy</span> <span class="o">=</span> jsonencode<span class="o">(</span>
+</span><span class='line'>            <span class="o">{</span>
+</span><span class='line'>              + <span class="nv">Statement</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>                  + <span class="o">{</span>
+</span><span class='line'>                      + <span class="nv">Action</span>   <span class="o">=</span> <span class="s2">&quot;sts:GetCallerIdentity&quot;</span>
+</span><span class='line'>                      + <span class="nv">Effect</span>   <span class="o">=</span> <span class="s2">&quot;Allow&quot;</span>
+</span><span class='line'>                      + <span class="nv">Resource</span> <span class="o">=</span> <span class="s2">&quot;*&quot;</span>
+</span><span class='line'>                      + <span class="nv">Sid</span>      <span class="o">=</span> <span class="s2">&quot;GetCallerIdentity&quot;</span>
+</span><span class='line'>                    <span class="o">}</span>,
+</span><span class='line'>                  + <span class="o">{</span>
+</span><span class='line'>                      + <span class="nv">Action</span>    <span class="o">=</span> <span class="s2">&quot;lambda:GetFunction&quot;</span>
+</span><span class='line'>                      + <span class="nv">Condition</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>                          + <span class="nv">StringEquals</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>                              + <span class="s2">&quot;aws:RequestedRegion&quot;</span> <span class="o">=</span> <span class="s2">&quot;eu-west-1&quot;</span>
+</span><span class='line'>                            <span class="o">}</span>
+</span><span class='line'>                        <span class="o">}</span>
+</span><span class='line'>                      + <span class="nv">Effect</span>    <span class="o">=</span> <span class="s2">&quot;Allow&quot;</span>
+</span><span class='line'>                      + <span class="nv">Resource</span>  <span class="o">=</span> <span class="s2">&quot;*&quot;</span>
+</span><span class='line'>                      + <span class="nv">Sid</span>       <span class="o">=</span> <span class="s2">&quot;DescribeFunctionsInRegion&quot;</span>
+</span><span class='line'>                    <span class="o">}</span>,
+</span><span class='line'>                <span class="o">]</span>
+</span><span class='line'>              + <span class="nv">Version</span>   <span class="o">=</span> <span class="s2">&quot;2012-10-17&quot;</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>        <span class="o">)</span>
+</span><span class='line'>      + <span class="nv">role</span>   <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_iam_role_policy_attachment.lambda_exec_policy[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_iam_role_policy_attachment&quot;</span> <span class="s2">&quot;lambda_exec_policy&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">id</span>         <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">policy_arn</span> <span class="o">=</span> <span class="s2">&quot;arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole&quot;</span>
+</span><span class='line'>      + <span class="nv">role</span>       <span class="o">=</span> <span class="s2">&quot;test-lambda-function-role&quot;</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_lambda_function.lambda[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_lambda_function&quot;</span> <span class="s2">&quot;lambda&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">architectures</span>                  <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">arn</span>                            <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">filename</span>                       <span class="o">=</span> <span class="s2">&quot;../../modules/lambda-function/lambda-archives/package.zip&quot;</span>
+</span><span class='line'>      + <span class="nv">function_name</span>                  <span class="o">=</span> <span class="s2">&quot;test-lambda-function&quot;</span>
+</span><span class='line'>      + <span class="nv">handler</span>                        <span class="o">=</span> <span class="s2">&quot;demo.lambda_handler&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>                             <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">invoke_arn</span>                     <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">last_modified</span>                  <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">memory_size</span>                    <span class="o">=</span> 128
+</span><span class='line'>      + <span class="nv">package_type</span>                   <span class="o">=</span> <span class="s2">&quot;Zip&quot;</span>
+</span><span class='line'>      + <span class="nv">publish</span>                        <span class="o">=</span> <span class="nb">false</span>
+</span><span class='line'>      + <span class="nv">qualified_arn</span>                  <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">reserved_concurrent_executions</span> <span class="o">=</span> -1
+</span><span class='line'>      + <span class="nv">role</span>                           <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">runtime</span>                        <span class="o">=</span> <span class="s2">&quot;python3.8&quot;</span>
+</span><span class='line'>      + <span class="nv">signing_job_arn</span>                <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">signing_profile_version_arn</span>    <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">source_code_hash</span>               <span class="o">=</span> <span class="s2">&quot;MI7FD/KHgxRFh7cmPjzxg+w494pmyRGgQIr9Ls8Yups=&quot;</span>
+</span><span class='line'>      + <span class="nv">source_code_size</span>               <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">tags_all</span>                       <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">timeout</span>                        <span class="o">=</span> 30
+</span><span class='line'>      + <span class="nv">version</span>                        <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>
+</span><span class='line'>      + environment <span class="o">{</span>
+</span><span class='line'>          + <span class="nv">variables</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>              + <span class="s2">&quot;FUNCTION_NAME&quot;</span> <span class="o">=</span> <span class="s2">&quot;test-lambda-function&quot;</span>
+</span><span class='line'>              + <span class="s2">&quot;PROJECT_NAME&quot;</span>  <span class="o">=</span> <span class="s2">&quot;test&quot;</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_lambda_permission.allow_cloudwatch[0] will be created</span>
+</span><span class='line'>  + resource <span class="s2">&quot;aws_lambda_permission&quot;</span> <span class="s2">&quot;allow_cloudwatch&quot;</span> <span class="o">{</span>
+</span><span class='line'>      + <span class="nv">action</span>              <span class="o">=</span> <span class="s2">&quot;lambda:InvokeFunction&quot;</span>
+</span><span class='line'>      + <span class="nv">function_name</span>       <span class="o">=</span> <span class="s2">&quot;test-lambda-function&quot;</span>
+</span><span class='line'>      + <span class="nv">id</span>                  <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">principal</span>           <span class="o">=</span> <span class="s2">&quot;events.amazonaws.com&quot;</span>
+</span><span class='line'>      + <span class="nv">source_arn</span>          <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      + <span class="nv">statement_id</span>        <span class="o">=</span> <span class="s2">&quot;AllowExecutionFromCloudWatch&quot;</span>
+</span><span class='line'>      + <span class="nv">statement_id_prefix</span> <span class="o">=</span> <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>Plan: <span class="m">8</span> to add, <span class="m">0</span> to change, <span class="m">0</span> to destroy.
+</span><span class='line'>
+</span><span class='line'>Changes to Outputs:
+</span><span class='line'>  + <span class="nv">arn_string</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>      + <span class="o">(</span>known after apply<span class="o">)</span>,
+</span><span class='line'>    <span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Create Resources</h2>
+
+<p>If you are happy with the plan you can go ahead and run:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform apply
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Which will create the resources in AWS. Upon creation we should see something like this:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Apply <span class="nb">complete</span>! Resources: <span class="m">0</span> added, <span class="m">1</span> changed, <span class="m">0</span> destroyed.
+</span><span class='line'>
+</span><span class='line'>Outputs:
+</span><span class='line'>
+</span><span class='line'><span class="nv">arn_string</span> <span class="o">=</span> <span class="o">[</span>
+</span><span class='line'>  <span class="s2">&quot;arn:aws:lambda:eu-west-1:000000000000:function:test-lambda-function&quot;</span>,
+</span><span class='line'><span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since we have our aws cli configured with a profile we can also test our lambda function:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>aws --profile default lambda invoke --function-name <span class="nb">test</span>-lambda-function --cli-binary-format raw-in-base64-out --payload <span class="s1">&#39;{&quot;name&quot;: &quot;ruan&quot;}&#39;</span> out.log
+</span><span class='line'><span class="o">{</span>
+</span><span class='line'>    <span class="s2">&quot;StatusCode&quot;</span>: 200,
+</span><span class='line'>    <span class="s2">&quot;ExecutedVersion&quot;</span>: <span class="s2">&quot;$LATEST&quot;</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And the response from the invocation can be seen in the file we defined:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat out.log
+</span><span class='line'><span class="o">{</span><span class="s2">&quot;statusCode&quot;</span>: 200, <span class="s2">&quot;body&quot;</span>: <span class="o">{</span><span class="s2">&quot;ResponseMetadata&quot;</span>: <span class="o">{</span><span class="s2">&quot;RequestId&quot;</span>: <span class="s2">&quot;5171x&quot;</span>, <span class="s2">&quot;HTTPStatusCode&quot;</span>: 200, <span class="s2">&quot;HTTPHeaders&quot;</span>: <span class="o">{</span><span class="s2">&quot;date&quot;</span>: <span class="s2">&quot;Thu, 21 Dec 2023 06:34:13 GMT&quot;</span>, <span class="s2">&quot;content-type&quot;</span>: <span class="s2">&quot;application/json&quot;</span>, <span class="s2">&quot;content-length&quot;</span>: <span class="s2">&quot;3517&quot;</span>, <span class="s2">&quot;connection&quot;</span>: <span class="s2">&quot;keep-alive&quot;</span>, <span class="s2">&quot;x-amzn-requestid&quot;</span>: <span class="s2">&quot;5171x&quot;</span><span class="o">}</span>, <span class="s2">&quot;RetryAttempts&quot;</span>: 0<span class="o">}</span>, <span class="s2">&quot;Configuration&quot;</span>: <span class="o">{</span><span class="s2">&quot;FunctionName&quot;</span>: <span class="s2">&quot;test-lambda-function&quot;</span>, <span class="s2">&quot;FunctionArn&quot;</span>: <span class="s2">&quot;arn:aws:lambda:eu-west-1:000000000000:function:test-lambda-function&quot;</span>, <span class="s2">&quot;Runtime&quot;</span>: <span class="s2">&quot;python3.8&quot;</span>, <span class="s2">&quot;Role&quot;</span>: <span class="s2">&quot;arn:aws:iam::000000000000:role/test-lambda-function-role&quot;</span>, <span class="s2">&quot;Handler&quot;</span>: <span class="s2">&quot;demo.lambda_handler&quot;</span>, <span class="s2">&quot;CodeSize&quot;</span>: 401, <span class="s2">&quot;Description&quot;</span>: <span class="s2">&quot;&quot;</span>, <span class="s2">&quot;Timeout&quot;</span>: 30, <span class="s2">&quot;MemorySize&quot;</span>: 128, <span class="s2">&quot;LastModified&quot;</span>: <span class="s2">&quot;2023-12-21T06:26:46.000+0000&quot;</span>, <span class="s2">&quot;CodeSha256&quot;</span>: <span class="s2">&quot;x&quot;</span>, <span class="s2">&quot;Version&quot;</span>: <span class="s2">&quot;$LATEST&quot;</span>, <span class="s2">&quot;Environment&quot;</span>: <span class="o">{</span><span class="s2">&quot;Variables&quot;</span>: <span class="o">{</span><span class="s2">&quot;FUNCTION_NAME&quot;</span>: <span class="s2">&quot;test-lambda-function&quot;</span>, <span class="s2">&quot;PROJECT_NAME&quot;</span>: <span class="s2">&quot;test&quot;</span><span class="o">}}</span>, <span class="s2">&quot;TracingConfig&quot;</span>: <span class="o">{</span><span class="s2">&quot;Mode&quot;</span>: <span class="s2">&quot;PassThrough&quot;</span><span class="o">}</span>, <span class="s2">&quot;RevisionId&quot;</span>: <span class="s2">&quot;7faex&quot;</span>, <span class="s2">&quot;State&quot;</span>: <span class="s2">&quot;Active&quot;</span>, <span class="s2">&quot;LastUpdateStatus&quot;</span>: <span class="s2">&quot;Successful&quot;</span>, <span class="s2">&quot;PackageType&quot;</span>: <span class="s2">&quot;Zip&quot;</span>, <span class="s2">&quot;Architectures&quot;</span>: <span class="o">[</span><span class="s2">&quot;x86_64&quot;</span><span class="o">]</span>, <span class="s2">&quot;EphemeralStorage&quot;</span>: <span class="o">{</span><span class="s2">&quot;Size&quot;</span>: 512<span class="o">}</span>, <span class="s2">&quot;SnapStart&quot;</span>: <span class="o">{</span><span class="s2">&quot;ApplyOn&quot;</span>: <span class="s2">&quot;None&quot;</span>, <span class="s2">&quot;OptimizationStatus&quot;</span>: <span class="s2">&quot;Off&quot;</span><span class="o">}</span>, <span class="s2">&quot;RuntimeVersionConfig&quot;</span>: <span class="o">{</span><span class="s2">&quot;RuntimeVersionArn&quot;</span>: <span class="s2">&quot;arn:aws:lambda:eu-west-1::runtime:x&quot;</span><span class="o">}}</span>, <span class="s2">&quot;Code&quot;</span>: <span class="o">{</span><span class="s2">&quot;RepositoryType&quot;</span>: <span class="s2">&quot;S3&quot;</span>, <span class="s2">&quot;Location&quot;</span>: <span class="s2">&quot;https://awslambda-eu-west-1-tasks.s3.eu-west-1.amazonaws.com/snapshots/x/test-lambda-function-x?queryparameters&quot;</span><span class="o">}}}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Updating Lambda Function Code</h2>
+
+<p>If we want to redeploy our function with updated code, we can change the content of <code>functions/demo.py</code> and then run:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform apply
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Since our terraform code defined that if the source has of the function code changes, it will trigger a redeploy, and from the computed plan we can see that it will redeploy our function code:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+</span><span class='line'>  ~ update in-place
+</span><span class='line'>
+</span><span class='line'>Terraform will perform the following actions:
+</span><span class='line'>
+</span><span class='line'>  <span class="c"># module.myfunction.aws_lambda_function.lambda[0] will be updated in-place</span>
+</span><span class='line'>  ~ resource <span class="s2">&quot;aws_lambda_function&quot;</span> <span class="s2">&quot;lambda&quot;</span> <span class="o">{</span>
+</span><span class='line'>        <span class="nv">id</span>                             <span class="o">=</span> <span class="s2">&quot;test-lambda-function&quot;</span>
+</span><span class='line'>      ~ <span class="nv">last_modified</span>                  <span class="o">=</span> <span class="s2">&quot;2023-12-21T06:26:46.000+0000&quot;</span> -&gt; <span class="o">(</span>known after apply<span class="o">)</span>
+</span><span class='line'>      ~ <span class="nv">source_code_hash</span>               <span class="o">=</span> <span class="s2">&quot;8TLrm4GmTrfAxwfElmIjws1Vf9UDZ6k2w1+VEONJaCQ=&quot;</span> -&gt; <span class="s2">&quot;RIQ62KCcjlcHh5lLCOlrkB7GioBpLY1Y5vN4UZGyN+c=&quot;</span>
+</span><span class='line'>        <span class="nv">tags</span>                           <span class="o">=</span> <span class="o">{}</span>
+</span><span class='line'>        <span class="c"># (18 unchanged attributes hidden)</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="c"># (3 unchanged blocks hidden)</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>Plan: <span class="m">0</span> to add, <span class="m">1</span> to change, <span class="m">0</span> to destroy.
+</span><span class='line'>
+</span><span class='line'>Do you want to perform these actions?
+</span><span class='line'>  Terraform will perform the actions described above.
+</span><span class='line'>  Only <span class="s1">&#39;yes&#39;</span> will be accepted to approve.
+</span><span class='line'>
+</span><span class='line'>  Enter a value:
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>After entering &ldquo;yes&rdquo; we will update our function code</p>
+
+<h2>Discover AWS Console</h2>
+
+<p>If we logon to the AWS Console and head to Lambda we can inspect our function code:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker/assets/567298/2326b074-fa5b-443c-8715-59451293ccb2" alt="image" /></p>
+
+<p>If we manually want to trigger the function, select &ldquo;Test&rdquo;, then enter the &ldquo;Event name&rdquo; with something like &ldquo;testing&rdquo; then click &ldquo;Test&rdquo;:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker/assets/567298/76bcde33-185f-47ed-a70c-4d967df80e92" alt="image" /></p>
+
+<p>If we follow the CloudWatch log link we can view the logs in CloudWatch:</p>
+
+<p><img src="https://github.com/ruanbekker/ruanbekker/assets/567298/f5483602-3144-48ce-98bf-d50f625cdd92" alt="image" /></p>
+
+<h2>Destroy Infrastructure</h2>
+
+<p>If you followed along and would like to destroy the created infrastructure:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>terraform destroy
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
+
+<ul>
+<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
+<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -4639,294 +5663,6 @@ ight be used to deploy something simple such as a deployment or something comple
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2022/11/18/logging-with-docker-promtail-and-grafana-loki/">Logging With Docker Promtail and Grafana Loki</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2022-11-18T00:42:49-05:00'><span class='date'><span class='date-month'>Nov</span> <span class='date-day'>18</span><span class='date-suffix'>th</span>, <span class='date-year'>2022</span></span> <span class='time'>12:42 am</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img src="https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png" alt="grafana-loki-promtail" /></p>
-
-<p>In this post we will use Grafana Promtail to collect all our logs and ship it to Grafana Loki.</p>
-
-<h2>About</h2>
-
-<p>We will be using Docker Compose and mount the docker socket to Grafana Promtail so that it is aware of all the docker events and configure it that only containers with docker labels <code>logging=promtail</code> needs to be enabled for logging, which will then scrape those logs and send it to Grafana Loki where we will visualize it in Grafana.</p>
-
-<h2>Promtail</h2>
-
-<p>In our promtail configuration <code>config/promtail.yaml</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="c1"># https://grafana.com/docs/loki/latest/clients/promtail/configuration/</span>
-</span><span class='line'><span class="c1"># https://docs.docker.com/engine/api/v1.41/#operation/ContainerList</span>
-</span><span class='line'><span class="l-Scalar-Plain">server</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">http_listen_port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">9080</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">grpc_listen_port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">0</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">positions</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">filename</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/tmp/positions.yaml</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">clients</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://loki:3100/loki/api/v1/push</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">scrape_configs</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">job_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">flog_scrape</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">docker_sd_configs</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">unix:///var/run/docker.sock</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">refresh_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">5s</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">filters</span><span class="p-Indicator">:</span>
-</span><span class='line'>          <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">label</span>
-</span><span class='line'>            <span class="l-Scalar-Plain">values</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&quot;logging=promtail&quot;</span><span class="p-Indicator">]</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">relabel_configs</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_name&#39;</span><span class="p-Indicator">]</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">regex</span><span class="p-Indicator">:</span> <span class="s">&#39;/(.*)&#39;</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;container&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_log_stream&#39;</span><span class="p-Indicator">]</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;logstream&#39;</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">source_labels</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;__meta_docker_container_label_logging_jobname&#39;</span><span class="p-Indicator">]</span>
-</span><span class='line'>        <span class="l-Scalar-Plain">target_label</span><span class="p-Indicator">:</span> <span class="s">&#39;job&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>You can see we are using the <code>docker_sd_configs</code> provider and filter only docker containers with the docker labels <code>logging=promtail</code> and once we have those logs we relabel our labels to have the container name and we also use docker labels like <code>log_stream</code> and <code>logging_jobname</code> to add labels to our logs.</p>
-
-<h2>Grafana Config</h2>
-
-<p>We would like to auto configure our datasources for Grafana and in <code>config/grafana-datasources.yml</code> we have:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">datasources</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Loki</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">loki</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">access</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">proxy</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http://loki:3100</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">editable</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">isDefault</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Docker Compose</h2>
-
-<p>Then lastly we have our <code>docker-compose.yml</code> that wire up all our containers:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-<span class='line-number'>36</span>
-<span class='line-number'>37</span>
-<span class='line-number'>38</span>
-<span class='line-number'>39</span>
-<span class='line-number'>40</span>
-<span class='line-number'>41</span>
-<span class='line-number'>42</span>
-<span class='line-number'>43</span>
-<span class='line-number'>44</span>
-<span class='line-number'>45</span>
-<span class='line-number'>46</span>
-<span class='line-number'>47</span>
-<span class='line-number'>48</span>
-<span class='line-number'>49</span>
-<span class='line-number'>50</span>
-<span class='line-number'>51</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="s">&#39;3.8&#39;</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">services</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">nginx-app</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-app</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span> <span class="s">&quot;promtail&quot;</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">logging_jobname</span><span class="p-Indicator">:</span> <span class="s">&quot;containerlogs&quot;</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">8080:80</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="l-Scalar-Plain">grafana</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">grafana/grafana:latest</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3000:3000</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">environment</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_ANONYMOUS_ENABLED=true</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_ANONYMOUS_ORG_ROLE=Admin</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">GF_AUTH_DISABLE_LOGIN_FORM=true</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="l-Scalar-Plain">loki</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">grafana/loki:latest</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">3100:3100</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-config.file=/etc/loki/local-config.yaml</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
-</span><span class='line'>
-</span><span class='line'>  <span class="l-Scalar-Plain">promtail</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span>  <span class="l-Scalar-Plain">grafana/promtail:latest</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">promtail</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">./config/promtail.yaml:/etc/promtail/docker-config.yaml</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/lib/docker/containers:/var/lib/docker/containers:ro</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">/var/run/docker.sock:/var/run/docker.sock</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">-config.file=/etc/promtail/docker-config.yaml</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">depends_on</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">loki</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">app</span>
-</span><span class='line'>
-</span><span class='line'><span class="l-Scalar-Plain">networks</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">app</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>As you can see with our nginx container we define our labels:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'>  <span class="l-Scalar-Plain">nginx-app</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">container_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-app</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span> <span class="s">&quot;promtail&quot;</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">logging_jobname</span><span class="p-Indicator">:</span> <span class="s">&quot;containerlogs&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Which uses <code>logging: "promtail"</code> to let promtail know this log container&rsquo;s log to be scraped and <code>logging_jobname: "containerlogs"</code> which will assign containerlogs to the job label.</p>
-
-<h2>Start the stack</h2>
-
-<p>If you are following along all this configuration is available in my github repository <a href="https://github.com/ruanbekker/docker-promtail-loki">https://github.com/ruanbekker/docker-promtail-loki</a> .</p>
-
-<p>Once you have everything in place you can start it with:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker-compose up -d
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Access nginx on <a href="http://localhost:8080">http://localhost:8080</a></p>
-
-<p><img width="1113" alt="image" src="https://user-images.githubusercontent.com/567298/202505252-3cbc2d03-d1d2-48e6-bea7-5db54233b9a2.png"></p>
-
-<p>Then navigate to grafana on <a href="http://localhost:3000">http://localhost:3000</a> and select explore on the left and select the container:</p>
-
-<p><img width="560" alt="image" src="https://user-images.githubusercontent.com/567298/202504989-e05a08a2-eb2f-41a1-85f4-9a11a8affd7c.png"></p>
-
-<p>And you will see the logs:</p>
-
-<p><img width="1425" alt="image" src="https://user-images.githubusercontent.com/567298/202505099-c47b76cc-3090-4eb9-8459-db659d0aac18.png"></p>
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
-
-<ul>
-<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
-<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/2">&larr; Older</a>
@@ -4998,6 +5734,10 @@ ight be used to deploy something simple such as a deployment or something comple
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/08/03/creating-a-python-lambda-function-with-terraform-on-aws/">Creating a Python Lambda Function With Terraform on AWS</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/07/15/how-to-use-the-mysql-terraform-provider/">How to Use the MySQL Terraform Provider</a>
       </li>
     
@@ -5011,10 +5751,6 @@ ight be used to deploy something simple such as a deployment or something comple
     
       <li class="post">
         <a href="/blog/2023/05/26/how-to-run-a-amd64-bit-linux-vm-on-a-mac-m1/">How to Run a AMD64 Bit Linux VM on a Mac M1</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2023/05/17/running-a-multi-broker-kafka-cluster-on-docker/">Running a Multi-Broker Kafka Cluster on Docker</a>
       </li>
     
   </ul>

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Cloudflare | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/cloudflare/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-12-22T07:58:04-05:00</updated>
+  <updated>2023-12-22T08:05:50-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,338 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use Cert-Manager DNS Challenge With Cloudflare on Kubernetes With Helm]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm/"/>
+    <updated>2023-12-22T08:04:02-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm</id>
+    <content type="html"><![CDATA[<p>In this tutorial, we will be issuing <a href="https://letsencrypt.org/docs/challenge-types/">Let&rsquo;s Encrypt</a> certificates using <a href="https://cert-manager.io/docs/">cert-manager</a> on <a href="https://kubernetes.io/">Kubernetes</a> and we will be using the <a href="https://letsencrypt.org/docs/challenge-types/#dns-01-challenge">DNS Challenge</a> with <a href="https://www.cloudflare.com/en-gb/">Cloudflare</a>.</p>
+
+<p>The reason I am using DNS Challenge instead of HTTP Challenge is because the Kubernetes environment is local on my laptop and there isn&rsquo;t a direct HTTP route into my environment from the internet and I would like to not expose the endpoints to the public internet.</p>
+
+<h2>Summary of what we will be doing</h2>
+
+<p>We would like to have Let&rsquo;s Encrypt Certificates on our web application that will be issued by Cert-Manager using the DNS Challenge from CloudFlare.</p>
+
+<p>Our ingress controller will be ingress-nginx and our endpoints will be private, as they will resolve to private IP addresses, hence the reason why we are using DNS validation instead of HTTP.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>To follow along in this tutorial you will need the following</p>
+
+<ul>
+<li><p><a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/</a></p></li>
+<li><p><a href="https://helm.sh/docs/intro/install/">Helm</a></p></li>
+<li><p><a href="https://kubernetes.io/docs/tasks/tools/">Kubectl</a></p></li>
+<li><p><a href="https://www.cloudflare.com/en-gb/">Cloudflare</a> Account</p></li>
+<li><p>Patience (just kidding, I will try my best to make it easy)</p></li>
+</ul>
+
+
+<h2>Install a Kubernetes Cluster</h2>
+
+<p>If you already have a Kubernetes Cluster, you can skip this step.</p>
+
+<p>Define the <code>kind-config.yaml</code></p>
+
+<pre><code class="yaml">kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+</code></pre>
+
+<p>Then create the cluster with <code>kind</code>:</p>
+
+<pre><code class="bash">kind create cluster --name example --config kind-config.yaml
+</code></pre>
+
+<h2>Nginx Ingress Controller</h2>
+
+<p>First we need to install a ingress controller and I am opting in to use ingress-nginx, so first we need to add the helm repository to our local repositories:</p>
+
+<pre><code class="bash">helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+</code></pre>
+
+<p>Then we need to update our repositories:</p>
+
+<pre><code class="bash">helm repo update
+</code></pre>
+
+<p>Then we can install the helm release:</p>
+
+<pre><code class="bash">helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.kind=DaemonSet \
+  --set controller.hostPort.enabled=true \
+  --set controller.ingressClass=nginx
+</code></pre>
+
+<p>You can view all the default values from their GitHub repository where the chart is hosted:</p>
+
+<ul>
+<li><a href="https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml"><strong>https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml</strong></a></li>
+</ul>
+
+
+<p>Once the release has been deployed, you should see the ingress-nginx pod running under the <code>ingress-nginx</code> namespace:</p>
+
+<pre><code class="bash">kubectl get pods -n ingress-nginx
+</code></pre>
+
+<h2>Cert-Manager</h2>
+
+<p>The next step is to install cert-manager using helm, first add the repository:</p>
+
+<pre><code class="bash">helm repo add jetstack https://charts.jetstack.io
+</code></pre>
+
+<p>Update the repositories:</p>
+
+<pre><code class="bash">helm repo update
+</code></pre>
+
+<p>Then install the cert-manager release:</p>
+
+<pre><code class="bash">helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.13.1 \
+  --set installCRDs=true
+</code></pre>
+
+<h2>Cloudflare API Token</h2>
+
+<p>We need to grant Cert-Manager access to make DNS changes on our Cloudflare account for DNS validation on our behalf, and in order to do that, we need to create a Cloudflare API Token.</p>
+
+<p>As per the <a href="https://cert-manager.io/docs/configuration/acme/dns01/cloudflare/#api-tokens">cert-manager documentation</a>, from your profile select <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a>, create an API Token and select <code>Edit Zone DNS</code> template.</p>
+
+<p>Then select the following:</p>
+
+<ul>
+<li><p>Permissions:</p>
+
+<ul>
+<li><p>Zone: DNS -&gt; Edit</p></li>
+<li><p>Zone: Zone -&gt; Read</p></li>
+</ul>
+</li>
+<li><p>Zone Resources:</p>
+
+<ul>
+<li>Include -&gt; All Zones</li>
+</ul>
+</li>
+</ul>
+
+
+<p><img src="https://gitlab.com/bekker-space/workshops/ingress-nginx/uploads/c19d741352f767a1bfb97ef4fd716364/image.png%20align=" title="left" alt="" /></p>
+
+<p>Then create the token and save the value somewhere safe, as we will be using it in the next step.</p>
+
+<h2>Cert-Manager ClusterIssuer</h2>
+
+<p>First, we need to create a Kubernetes secret with the API Token that we created in the previous step.</p>
+
+<pre><code class="bash">kubectl create secret generic cloudflare-api-key-secret \
+  --from-literal=api-key=[YOUR_CLOUDFLARE_API_KEY]
+</code></pre>
+
+<p>Then create the <code>clusterissuer.yaml</code></p>
+
+<pre><code class="yaml">apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns01-issuer
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com  # your email address for updates
+    privateKeySecretRef:
+      name: letsencrypt-dns01-private-key
+    solvers:
+    - dns01:
+        cloudflare:
+          email: you@example.com # your cloudflare account email address
+          apiTokenSecretRef:
+            name: cloudflare-api-key-secret
+            key: api-key
+</code></pre>
+
+<p>Then create the cluster issuer:</p>
+
+<pre><code class="bash">kubectl apply -f clusterissuer.yaml
+</code></pre>
+
+<h2>Request a Certificate</h2>
+
+<p>Now that we have our <code>ClusterIssuer</code> created, we can request a certificate. In my scenario, I have a domain <code>example.com</code> which is hosted on CloudFlare and I would like to create a wildcard certificate on the sub-domain <code>*.workshop.example.com</code></p>
+
+<p>Certificates are scoped on a namespace level, and ClusterIssuer&rsquo;s are cluster-wide, therefore I am prefixing my certificate with the namespace (just my personal preference).</p>
+
+<pre><code class="yaml">apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: default-workshop-certificate
+  namespace: default
+spec:
+  secretName: default-workshop-example-tls
+  issuerRef:
+    name: letsencrypt-dns01-issuer
+    kind: ClusterIssuer
+  commonName: workshop.example.com
+  dnsNames:
+  - workshop.example.com
+  - '*.workshop.example.com'
+</code></pre>
+
+<p>Before we create the certificate on CloudFlare, I have created private DNS to the names mentioned in the manifest above like the following:</p>
+
+<pre><code class="bash">- workshop.example.com -&gt; A Record -&gt; 10.5.24.254
+- *.workshop.example.com -&gt; CNAME -&gt; workshop.example.com
+</code></pre>
+
+<p>In the DNS configuration mentioned above, to explain why I am creating 2 entries:</p>
+
+<ul>
+<li><p><code>10.2.24.254</code> - This is my LoadBalancer IP Address</p></li>
+<li><p>I have a static DNS entry to the name <code>workshop.example.com</code> so if my LoadBalancer IP Address ever change, I can just change this address</p></li>
+<li><p>I am creating a wildcard DNS entry for <code>*.workshop.example.com</code> and I am creating a CNAME record for it to resolve to <code>workshop.example.com</code> so it will essentially respond to the LoadBalancer IP.</p></li>
+<li><p>So lets say I create <code>test1.workshop.example.com</code> and <code>test2.workshop.example.com</code> then it will resolve to the LoadBalancer IP in <code>workshop.example.com</code> and as mentioned before, if the LoadBalancer IP ever changes, I only have to update the A Record of <code>workshop.example.com</code></p></li>
+</ul>
+
+
+<p>Then after DNS was created, I went ahead and created the certificate:</p>
+
+<pre><code class="bash">kubectl apply -f certificate.yaml
+</code></pre>
+
+<p>You can view the progress by viewing the certificate status by running:</p>
+
+<pre><code class="bash">kubectl get certificate -n default
+</code></pre>
+
+<h2>Specify the Certificate in your Ingress</h2>
+
+<p>Let&rsquo;s deploy a <code>nginx</code> web server deployment and I have concatenated the following in one manifest called <code>deployment.yaml</code>:</p>
+
+<ul>
+<li><p><code>Deployment</code></p></li>
+<li><p><code>Service</code></p></li>
+<li><p><code>Ingress</code></p></li>
+</ul>
+
+
+<pre><code class="yaml">---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-web
+  namespace: default
+  labels:
+    app: nginx-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-web
+  template:
+    metadata:
+      labels:
+        app: nginx-web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.19
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-web-service
+  namespace: default
+  labels:
+    app: nginx-web
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: nginx-web
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-web-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  rules:
+  - host: nginx.workshop.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-web-service
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - nginx.workshop.example.com
+    secretName: default-workshop-example-tls
+</code></pre>
+
+<p>A few important things to notice on the ingress resource:</p>
+
+<ul>
+<li><p><code>host</code> the host needs to match the certificate</p></li>
+<li><p><code>secretName</code> the secret needs to match the secret defined in the certificate</p></li>
+</ul>
+
+
+<p>Then create the deployment:</p>
+
+<pre><code class="bash">kubectl apply -f deployment.yaml
+</code></pre>
+
+<h2>Ensure DNS Challenges are successful</h2>
+
+<p>Ensure that cert-manager can set DNS-01 challenge records correctly, if you encounter issues, you can inspect the cert-manager pod logs.</p>
+
+<p>To view the pods for cert-manager:</p>
+
+<pre><code class="bash">kubectl get pods -n cert-manager
+</code></pre>
+
+<p>Then view the logs using:</p>
+
+<pre><code class="bash">kubectl logs -f pod &lt;pod-id&gt; -n cert-manager
+</code></pre>
+
+<h2>Test</h2>
+
+<p>You can open up a browser and access the ingress on your browser, in my case it would be <code>https://nginx.workshop.example.com</code> and verify that you have a certificate issued from Lets Encrypt.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you enjoy my content please feel free to follow me on <a href="https://twitter.com/ruanbekker"><strong>Twitter -</strong></a> @<a href="@ruanbekker">@ruanbekker</a> or visit me on my <a href="https://ruan.dev/"><strong>website -</strong></a> <a href="http://ruan.dev"><strong>ruan.dev</strong></a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Create DNS Records With Terraform on Cloudflare]]></title>

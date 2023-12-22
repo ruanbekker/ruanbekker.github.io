@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial we will deploy the ingress-nginx controller on kubernetes. Pre-Requisites I will be using kind to run a kubernetes cluster locally, &hellip;">
+  <meta name="description" content="In this tutorial, we will be issuing Let&rsquo;s Encrypt certificates using cert-manager on Kubernetes and we will be using the DNS Challenge with &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,511 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm/">How to Use Cert-Manager DNS Challenge With Cloudflare on Kubernetes With Helm</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2023-12-22T08:04:02-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>22</span><span class='date-suffix'>nd</span>, <span class='date-year'>2023</span></span> <span class='time'>8:04 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial, we will be issuing <a href="https://letsencrypt.org/docs/challenge-types/">Let&rsquo;s Encrypt</a> certificates using <a href="https://cert-manager.io/docs/">cert-manager</a> on <a href="https://kubernetes.io/">Kubernetes</a> and we will be using the <a href="https://letsencrypt.org/docs/challenge-types/#dns-01-challenge">DNS Challenge</a> with <a href="https://www.cloudflare.com/en-gb/">Cloudflare</a>.</p>
+
+<p>The reason I am using DNS Challenge instead of HTTP Challenge is because the Kubernetes environment is local on my laptop and there isn&rsquo;t a direct HTTP route into my environment from the internet and I would like to not expose the endpoints to the public internet.</p>
+
+<h2>Summary of what we will be doing</h2>
+
+<p>We would like to have Let&rsquo;s Encrypt Certificates on our web application that will be issued by Cert-Manager using the DNS Challenge from CloudFlare.</p>
+
+<p>Our ingress controller will be ingress-nginx and our endpoints will be private, as they will resolve to private IP addresses, hence the reason why we are using DNS validation instead of HTTP.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>To follow along in this tutorial you will need the following</p>
+
+<ul>
+<li><p><a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/</a></p></li>
+<li><p><a href="https://helm.sh/docs/intro/install/">Helm</a></p></li>
+<li><p><a href="https://kubernetes.io/docs/tasks/tools/">Kubectl</a></p></li>
+<li><p><a href="https://www.cloudflare.com/en-gb/">Cloudflare</a> Account</p></li>
+<li><p>Patience (just kidding, I will try my best to make it easy)</p></li>
+</ul>
+
+
+<h2>Install a Kubernetes Cluster</h2>
+
+<p>If you already have a Kubernetes Cluster, you can skip this step.</p>
+
+<p>Define the <code>kind-config.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Cluster</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">kind.x-k8s.io/v1alpha4</span>
+</span><span class='line'><span class="l-Scalar-Plain">nodes</span><span class="p-Indicator">:</span>
+</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">role</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">control-plane</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">extraPortMappings</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">hostPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">listenAddress</span><span class="p-Indicator">:</span> <span class="s">&quot;0.0.0.0&quot;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">hostPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the cluster with <code>kind</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kind create cluster --name example --config kind-config.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Nginx Ingress Controller</h2>
+
+<p>First we need to install a ingress controller and I am opting in to use ingress-nginx, so first we need to add the helm repository to our local repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we need to update our repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo update
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we can install the helm release:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx <span class="se">\</span>
+</span><span class='line'>  --namespace ingress-nginx <span class="se">\</span>
+</span><span class='line'>  --create-namespace <span class="se">\</span>
+</span><span class='line'>  --set controller.kind<span class="o">=</span>DaemonSet <span class="se">\</span>
+</span><span class='line'>  --set controller.hostPort.enabled<span class="o">=</span><span class="nb">true</span> <span class="se">\</span>
+</span><span class='line'>  --set controller.ingressClass<span class="o">=</span>nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can view all the default values from their GitHub repository where the chart is hosted:</p>
+
+<ul>
+<li><a href="https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml"><strong>https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml</strong></a></li>
+</ul>
+
+
+<p>Once the release has been deployed, you should see the ingress-nginx pod running under the <code>ingress-nginx</code> namespace:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get pods -n ingress-nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Cert-Manager</h2>
+
+<p>The next step is to install cert-manager using helm, first add the repository:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo add jetstack https://charts.jetstack.io
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Update the repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo update
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then install the cert-manager release:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm upgrade --install cert-manager jetstack/cert-manager <span class="se">\</span>
+</span><span class='line'>  --namespace cert-manager <span class="se">\</span>
+</span><span class='line'>  --create-namespace <span class="se">\</span>
+</span><span class='line'>  --version v1.13.1 <span class="se">\</span>
+</span><span class='line'>  --set <span class="nv">installCRDs</span><span class="o">=</span><span class="nb">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Cloudflare API Token</h2>
+
+<p>We need to grant Cert-Manager access to make DNS changes on our Cloudflare account for DNS validation on our behalf, and in order to do that, we need to create a Cloudflare API Token.</p>
+
+<p>As per the <a href="https://cert-manager.io/docs/configuration/acme/dns01/cloudflare/#api-tokens">cert-manager documentation</a>, from your profile select <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a>, create an API Token and select <code>Edit Zone DNS</code> template.</p>
+
+<p>Then select the following:</p>
+
+<ul>
+<li><p>Permissions:</p>
+
+<ul>
+<li><p>Zone: DNS -&gt; Edit</p></li>
+<li><p>Zone: Zone -&gt; Read</p></li>
+</ul>
+</li>
+<li><p>Zone Resources:</p>
+
+<ul>
+<li>Include -&gt; All Zones</li>
+</ul>
+</li>
+</ul>
+
+
+<p><img src="https://gitlab.com/bekker-space/workshops/ingress-nginx/uploads/c19d741352f767a1bfb97ef4fd716364/image.png%20align=" title="left" alt="" /></p>
+
+<p>Then create the token and save the value somewhere safe, as we will be using it in the next step.</p>
+
+<h2>Cert-Manager ClusterIssuer</h2>
+
+<p>First, we need to create a Kubernetes secret with the API Token that we created in the previous step.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl create secret generic cloudflare-api-key-secret <span class="se">\</span>
+</span><span class='line'>  --from-literal<span class="o">=</span>api-key<span class="o">=[</span>YOUR_CLOUDFLARE_API_KEY<span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the <code>clusterissuer.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">cert-manager.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIssuer</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">letsencrypt-dns01-issuer</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">acme</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">server</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">https://acme-v02.api.letsencrypt.org/directory</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">email</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">you@example.com</span>  <span class="c1"># your email address for updates</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">privateKeySecretRef</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">letsencrypt-dns01-private-key</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">solvers</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">dns01</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">cloudflare</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">email</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">you@example.com</span> <span class="c1"># your cloudflare account email address</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">apiTokenSecretRef</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">cloudflare-api-key-secret</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">key</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">api-key</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the cluster issuer:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl apply -f clusterissuer.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Request a Certificate</h2>
+
+<p>Now that we have our <code>ClusterIssuer</code> created, we can request a certificate. In my scenario, I have a domain <code>example.com</code> which is hosted on CloudFlare and I would like to create a wildcard certificate on the sub-domain <code>*.workshop.example.com</code></p>
+
+<p>Certificates are scoped on a namespace level, and ClusterIssuer&rsquo;s are cluster-wide, therefore I am prefixing my certificate with the namespace (just my personal preference).</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">cert-manager.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Certificate</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default-workshop-certificate</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">secretName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default-workshop-example-tls</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">issuerRef</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">letsencrypt-dns01-issuer</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIssuer</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">commonName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">workshop.example.com</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">dnsNames</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">workshop.example.com</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;*.workshop.example.com&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Before we create the certificate on CloudFlare, I have created private DNS to the names mentioned in the manifest above like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>- workshop.example.com -&gt; A Record -&gt; 10.5.24.254
+</span><span class='line'>- *.workshop.example.com -&gt; CNAME -&gt; workshop.example.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the DNS configuration mentioned above, to explain why I am creating 2 entries:</p>
+
+<ul>
+<li><p><code>10.2.24.254</code> - This is my LoadBalancer IP Address</p></li>
+<li><p>I have a static DNS entry to the name <code>workshop.example.com</code> so if my LoadBalancer IP Address ever change, I can just change this address</p></li>
+<li><p>I am creating a wildcard DNS entry for <code>*.workshop.example.com</code> and I am creating a CNAME record for it to resolve to <code>workshop.example.com</code> so it will essentially respond to the LoadBalancer IP.</p></li>
+<li><p>So lets say I create <code>test1.workshop.example.com</code> and <code>test2.workshop.example.com</code> then it will resolve to the LoadBalancer IP in <code>workshop.example.com</code> and as mentioned before, if the LoadBalancer IP ever changes, I only have to update the A Record of <code>workshop.example.com</code></p></li>
+</ul>
+
+
+<p>Then after DNS was created, I went ahead and created the certificate:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl apply -f certificate.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can view the progress by viewing the certificate status by running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get certificate -n default
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Specify the Certificate in your Ingress</h2>
+
+<p>Let&rsquo;s deploy a <code>nginx</code> web server deployment and I have concatenated the following in one manifest called <code>deployment.yaml</code>:</p>
+
+<ul>
+<li><p><code>Deployment</code></p></li>
+<li><p><code>Service</code></p></li>
+<li><p><code>Ingress</code></p></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">apps/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Deployment</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">2</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">matchLabels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">template</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">containers</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx:1.19</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Service</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web-service</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIP</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">targetPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">networking.k8s.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Ingress</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web-ingress</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">annotations</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">kubernetes.io/ingress.class</span><span class="p-Indicator">:</span> <span class="s">&quot;nginx&quot;</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">rules</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx.workshop.example.com</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">http</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">pathType</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Prefix</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">backend</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">service</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web-service</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span>
+</span><span class='line'>              <span class="l-Scalar-Plain">number</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">tls</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">hosts</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">nginx.workshop.example.com</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">secretName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default-workshop-example-tls</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>A few important things to notice on the ingress resource:</p>
+
+<ul>
+<li><p><code>host</code> the host needs to match the certificate</p></li>
+<li><p><code>secretName</code> the secret needs to match the secret defined in the certificate</p></li>
+</ul>
+
+
+<p>Then create the deployment:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl apply -f deployment.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Ensure DNS Challenges are successful</h2>
+
+<p>Ensure that cert-manager can set DNS-01 challenge records correctly, if you encounter issues, you can inspect the cert-manager pod logs.</p>
+
+<p>To view the pods for cert-manager:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get pods -n cert-manager
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then view the logs using:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl logs -f pod &lt;pod-id&gt; -n cert-manager
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test</h2>
+
+<p>You can open up a browser and access the ingress on your browser, in my case it would be <code>https://nginx.workshop.example.com</code> and verify that you have a certificate issued from Lets Encrypt.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you enjoy my content please feel free to follow me on <a href="https://twitter.com/ruanbekker"><strong>Twitter -</strong></a> @<a href="@ruanbekker">@ruanbekker</a> or visit me on my <a href="https://ruan.dev/"><strong>website -</strong></a> <a href="http://ruan.dev"><strong>ruan.dev</strong></a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -5301,575 +5806,6 @@
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2023/01/24/everything-you-need-to-know-about-helm/">Everything You Need to Know About Helm</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2023-01-24T16:02:22-05:00'><span class='date'><span class='date-month'>Jan</span> <span class='date-day'>24</span><span class='date-suffix'>th</span>, <span class='date-year'>2023</span></span> <span class='time'>4:02 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p><img width="965" alt="image" src="https://user-images.githubusercontent.com/567298/214427983-29601304-9930-40b6-bbc6-e2ce68c04c23.png"></p>
-
-<p>Helm, its one amazing piece of software that I use multiple times per day!</p>
-
-<h2>What is Helm?</h2>
-
-<p>You can think of helm as a package manager for kubernetes, but in fact its much more than that.</p>
-
-<p>Think about it in the following way:</p>
-
-<ul>
-<li>Kubernetes Package Manager</li>
-<li>Way to templatize your applications (this is the part im super excited about)</li>
-<li>Easy way to install applications to your kubernetes cluster</li>
-<li>Easy way to do upgrades to your applications</li>
-<li>Websites such as artifacthub.io provides a nice interface to lookup any application an how to install or upgrade that application.</li>
-</ul>
-
-
-<h2>How does Helm work?</h2>
-
-<p>Helm uses your kubernetes config to connect to your kubernetes cluster. In most cases it utilises the config defined by the <code>KUBECONFIG</code> environment variable, which in most cases points to <code>~/kube/config</code>.</p>
-
-<p>If you want to follow along, you can view the following blog post to provision a kubernetes cluster locally:</p>
-
-<ul>
-<li><a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/</a></li>
-</ul>
-
-
-<p>Once you have provisioned your kubernetes cluster locally, you can proceed to <a href="https://helm.sh/docs/intro/install/">install helm</a>, I will make the assumption that you are using Mac:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>brew install helm
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Once helm has been installed, you can test the installation by listing any helm releases, by running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm list
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Helm Charts</h2>
-
-<p>Helm uses a packaging format called charts, which is a collection of files that describes a related set of kubernetes resources. A sinlge helm chart m
-ight be used to deploy something simple such as a deployment or something complex that deploys a deployment, ingress, horizontal pod autoscaler, etc.</p>
-
-<h2>Using Helm to deploy applications</h2>
-
-<p>So let&rsquo;s assume that we have our kubernetes cluster deployed, and now we are ready to deploy some applications to kubernetes, but we are unsure on how we would do that.</p>
-
-<p>Let&rsquo;s assume we want to install Nginx.</p>
-
-<p>First we would navigate to <a href="https://artifacthub.io">artifacthub.io</a>, which is a repository that holds a bunch of helm charts and the information on how to deploy helm charts to our cluster.</p>
-
-<p>Then we would search for Nginx, which would ultimately let us land on:</p>
-
-<ul>
-<li><a href="https://artifacthub.io/packages/helm/bitnami/nginx">https://artifacthub.io/packages/helm/bitnami/nginx</a></li>
-</ul>
-
-
-<p>On this view, we have super useful information such as how to use this helm chart, the default values, etc.</p>
-
-<p>Now that we have identified the chart that we want to install, we can have a look at their readme, which will indicate how to install the chart:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm repo add my-repo https://charts.bitnami.com/bitnami
-</span><span class='line'><span class="nv">$ </span>helm install my-release my-repo/nginx
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>But before we do that, if we think about it, we add a repository, then before we install a release, we could first find information such as the release versions, etc.</p>
-
-<p>So the way I would do it, is to first add the repository:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm repo add bitnami https://charts.bitnami.com/bitnami
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then since we have added the repository, we can update our repository to ensure that we have the latest release versions:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm repo update
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have updated our local repositories, we want to find the release versions, and we can do that by listing the repository in question. For example, if we don&rsquo;t know the application name, we can search by the repository name:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm search repo bitnami/ --versions
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In this case we will get an output of all the applications that is currently being hosted by Bitnami.</p>
-
-<p>If we know the repository and the release name, we can extend our search by using:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm search repo bitnami/nginx --versions
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In this case we get an output of all the Nginx release versions that is currently hosted by Bitnami.</p>
-
-<h2>Installing a Helm Release</h2>
-
-<p>Now that we have received a response from <code>helm search repo</code>, we can see that we have different release versions, as example:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>NAME                             CHART VERSION   APP VERSION DESCRIPTION
-</span><span class='line'>bitnami/nginx                     13.2.22         1.23.3      NGINX Open Source is a web server that can be a...
-</span><span class='line'>bitnami/nginx                     13.2.21         1.23.3      NGINX Open Source is a web server that can be a...
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>For each helm chart, the chart has default values which means, when we install the helm release it will use the default values which is defined by the helm chart.</p>
-
-<p>We have the concept of overriding the default values with a yaml configuration file we usually refer to <code>values.yaml</code>, that we can define the values that we want to override our default values with.</p>
-
-<p>To get the current default values, we can use <code>helm show values</code>, which will look like the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm show values bitnami/nginx --version 13.2.22
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That will output to standard out, but we can redirect the output to a file using the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm show values bitnami/nginx --version 13.2.22 &gt; nginx-values.yaml
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that we have redirected the output to <code>nginx-values.yaml</code>, we can inspect the default values using <code>cat nginx-values.yaml</code>, and any values that we see that we want to override, we can edit the yaml file and once we are done we can save it.</p>
-
-<p>Now that we have our override values, we can install a release to our kubernetes cluster.</p>
-
-<p>Let&rsquo;s assume we want to install nginx to our cluster under the name <code>my-nginx</code> and we want to deploy it to the namespace called <code>web-servers</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm upgrade --install my-nginx bitnami/nginx --values nginx-values.yaml --namespace web-servers --create-namespace --version 13.2.22
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In the example above, we defined the following:</p>
-
-<ul>
-<li><code>upgrade --install</code>                          - meaning we are installing a release, if already exists, do an upgrade</li>
-<li><code>my-nginx</code>                                   - use the release name <code>my-nginx</code></li>
-<li><code>bitnami/nginx</code>                              - use the repository and chart named nginx</li>
-<li><code>--values nginx-values.yaml</code>                 - define the values file with the overrides</li>
-<li><code>--namespace web-servers --create-namespace</code> - define the namespace where the release will be installed to, and create the namespace if not exists</li>
-<li><code>--version 13.2.22</code>                          - specify the version of the chart to be installed</li>
-</ul>
-
-
-<h2>Information about the release</h2>
-
-<p>We can view information about our release by running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm list -n web-servers
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Creating your own helm charts</h2>
-
-<p>It&rsquo;s very common to create your own helm charts when you follow a common pattern in a microservice architecture or something else, where you only want to override specific values such as the container image, etc.</p>
-
-<p>In this case we can create our own helm chart using:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>mkdir ~/charts
-</span><span class='line'><span class="nv">$ </span><span class="nb">cd</span> ~/charts
-</span><span class='line'><span class="nv">$ </span>helm create my-chart
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This will create a scaffoliding project with the required information that we need to create our own helm chart. If we look at a tree view, it will look like the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>tree .
-</span><span class='line'>.
-</span><span class='line'>└── my-chart
-</span><span class='line'>    ├── Chart.yaml
-</span><span class='line'>    ├── charts
-</span><span class='line'>    ├── templates
-</span><span class='line'>    │   ├── NOTES.txt
-</span><span class='line'>    │   ├── _helpers.tpl
-</span><span class='line'>    │   ├── deployment.yaml
-</span><span class='line'>    │   ├── hpa.yaml
-</span><span class='line'>    │   ├── ingress.yaml
-</span><span class='line'>    │   ├── service.yaml
-</span><span class='line'>    │   ├── serviceaccount.yaml
-</span><span class='line'>    │   └── tests
-</span><span class='line'>    │       └── <span class="nb">test</span>-connection.yaml
-</span><span class='line'>    └── values.yaml
-</span><span class='line'>
-</span><span class='line'><span class="m">4</span> directories, <span class="m">10</span> files
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This example chart can already be used, to see what this chart will produce when running it with helm, we can use the <code>helm template</code> command:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd </span>my-chart
-</span><span class='line'><span class="nv">$ </span>helm template example . --values values.yaml
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The output will be something like the following:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="c1"># Source: my-chart/templates/deployment.yaml</span>
-</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">apps/v1</span>
-</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Deployment</span>
-</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">example-my-chart</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">helm.sh/chart</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-chart-0.1.0</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">app.kubernetes.io/name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-chart</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">app.kubernetes.io/instance</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">example</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">app.kubernetes.io/version</span><span class="p-Indicator">:</span> <span class="s">&quot;1.16.0&quot;</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">app.kubernetes.io/managed-by</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Helm</span>
-</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">template</span><span class="p-Indicator">:</span>
-</span><span class='line'>    <span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
-</span><span class='line'>      <span class="l-Scalar-Plain">containers</span><span class="p-Indicator">:</span>
-</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-chart</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="s">&quot;nginx:1.16.0&quot;</span>
-</span><span class='line'>          <span class="l-Scalar-Plain">...</span>
-</span><span class='line'><span class="nn">---</span>
-</span><span class='line'><span class="nn">...</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In our example it will create a service account, service, deployment, etc.</p>
-
-<p>As you can see the <code>spec.template.spec.containers[].image</code> is set to <code>nginx:1.16.0</code>, and to see how that was computed, we can have a look at <code>templates/deployment.yaml</code>:</p>
-
-<script src="https://gist.github.com/ruanbekker/908dfeef90ef6edf8d2e40dc6c49bebf.js"></script>
-
-
-<p>As you can see in <code>image:</code> section we have <code>.Values.image.repository</code> and <code>.Values.image.tag</code>, and those values are being retrieved from the <code>values.yaml</code> file, and when we look at the <code>values.yaml</code> file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">repository</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">pullPolicy</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">IfNotPresent</span>
-</span><span class='line'>  <span class="c1"># Overrides the image tag whose default is the chart appVersion.</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">tag</span><span class="p-Indicator">:</span> <span class="s">&quot;&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If we want to override the image repository and image tag, we can update the <code>values.yaml</code> file to lets say:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">repository</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">busybox</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">tag</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">latest</span>
-</span><span class='line'>  <span class="l-Scalar-Plain">pullPolicy</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">IfNotPresent</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we run our helm template command again, we can see that the computed values changed to what we want:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm template example . --values values.yaml
-</span><span class='line'>---
-</span><span class='line'><span class="c"># Source: my-chart/templates/deployment.yaml</span>
-</span><span class='line'>apiVersion: apps/v1
-</span><span class='line'>kind: Deployment
-</span><span class='line'>metadata:
-</span><span class='line'>  name: example-my-chart
-</span><span class='line'>spec:
-</span><span class='line'>  replicas: 1
-</span><span class='line'>  template:
-</span><span class='line'>    spec:
-</span><span class='line'>      containers:
-</span><span class='line'>        - name: my-chart
-</span><span class='line'>          image: <span class="s2">&quot;busybox:latest&quot;</span>
-</span><span class='line'>          imagePullPolicy: IfNotPresent
-</span><span class='line'>      ...
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Another way is to use <code>--set</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm template example . --values values.yaml --set image.repository<span class="o">=</span>ruanbekker/containers,image.tag<span class="o">=</span>curl
-</span><span class='line'>spec:
-</span><span class='line'>  template:
-</span><span class='line'>    spec:
-</span><span class='line'>      containers:
-</span><span class='line'>        - name: my-chart
-</span><span class='line'>          image: <span class="s2">&quot;ruanbekker/containers:curl&quot;</span>
-</span><span class='line'>      ...
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The template subcommand provides a great way to debug your charts. To learn more about helm charts, view their <a href="https://helm.sh/docs/topics/charts/">documentation</a>.</p>
-
-<h2>Publish your Helm Chart to ChartMuseum</h2>
-
-<p><a href="https://chartmuseum.com/">ChartMuseum</a> is an open-source Helm Chart Repository server written in Go.</p>
-
-<p>Running chartmuseum demonstration will be done locally on my workstation using Docker. To run the server:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>docker run --rm -it <span class="se">\</span>
-</span><span class='line'>  -p 8080:8080 <span class="se">\</span>
-</span><span class='line'>  -e <span class="nv">DEBUG</span><span class="o">=</span><span class="m">1</span> <span class="se">\</span>
-</span><span class='line'>  -e <span class="nv">STORAGE</span><span class="o">=</span><span class="nb">local</span> <span class="se">\</span>
-</span><span class='line'>  -e <span class="nv">STORAGE_LOCAL_ROOTDIR</span><span class="o">=</span>/charts <span class="se">\</span>
-</span><span class='line'>  -v <span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span>/charts:/charts <span class="se">\</span>
-</span><span class='line'>  ghcr.io/helm/chartmuseum:v0.14.0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that ChartMuseum is running, we will need to install a helm plugin called <code>helm-push</code> which helps to push charts to our chartmusuem repository:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm plugin install https://github.com/chartmuseum/helm-push
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can verify if our plugin was installed:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm plugin list
-</span><span class='line'>NAME      VERSION DESCRIPTION
-</span><span class='line'>cm-push   0.10.3  Push chart package to ChartMuseum
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we add our chartmuseum helm chart repository, which we will call <code>cm-local</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm repo add cm-local http://localhost:8080/
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can list our helm repository:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm repo list
-</span><span class='line'>NAME                  URL
-</span><span class='line'>cm-local              http://localhost:8080/
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now that our helm repository has been added, we can push our helm chart to our helm chart repository. Ensure that we are in our chart repository directory, where the <code>Chart.yaml</code> file should be in our current directory. We need this file as it holds metadata about our chart.</p>
-
-<p>We can view the <code>Chart.yaml</code>:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v2</span>
-</span><span class='line'><span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-chart</span>
-</span><span class='line'><span class="l-Scalar-Plain">description</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">A Helm chart for Kubernetes</span>
-</span><span class='line'><span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">application</span>
-</span><span class='line'><span class="l-Scalar-Plain">version</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">0.1.0</span>
-</span><span class='line'><span class="l-Scalar-Plain">appVersion</span><span class="p-Indicator">:</span> <span class="s">&quot;1.16.0&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Push the helm chart to chartmuseum:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm cm-push . http://localhost:8080/ --version 0.0.1
-</span><span class='line'>Pushing my-chart-0.0.1.tgz to http://localhost:8080/...
-</span><span class='line'>Done.
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we should update our repositories so that we can get the latest changes:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm repo update
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now we can list the charts under our repository:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm search repo cm-local/
-</span><span class='line'>NAME              CHART VERSION   APP VERSION DESCRIPTION
-</span><span class='line'>cm-local/my-chart 0.0.1           1.16.0      A Helm chart <span class="k">for</span> Kubernetes
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>We can now get the values for our helm chart by running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm show values cm-local/my-chart
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>This returns the values yaml that we can use for our chart, so let&rsquo;s say you want to output the values yaml so that we can use to to deploy a release we can do:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm show values cm-local/my-chart &gt; my-values.yaml
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now when we want to deploy a release, we can do:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm upgrade --install my-release cm-local/my-chart --values my-values.yaml --namespace <span class="nb">test</span> --create-namespace --version 0.0.1
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>After the release was deployed, we can list the releases by running:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm list
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And to view the release history:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>helm <span class="nb">history </span>my-release
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources</h2>
-
-<p>Please find the following information with regards to Helm documentation:
-- <a href="https://helm.sh/docs/">helm docs</a>
-- <a href="https://helm.sh/docs/chart_template_guide/">helm cart template guide</a></p>
-
-<p>If you need a kubernetes cluster and you would like to run this locally, find the following documentation in order to do that:
-- <a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">using kind for local kubernetes clusters</a></p>
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
-
-<ul>
-<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
-<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/2">&larr; Older</a>
@@ -5941,6 +5877,10 @@ ight be used to deploy something simple such as a deployment or something comple
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm/">How to Use Cert-Manager DNS Challenge With Cloudflare on Kubernetes With Helm</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/12/22/how-to-deploy-ingress-nginx-controller-on-kubernetes-with-helm/">How to Deploy Ingress-Nginx Controller on Kubernetes With Helm</a>
       </li>
     
@@ -5954,10 +5894,6 @@ ight be used to deploy something simple such as a deployment or something comple
     
       <li class="post">
         <a href="/blog/2023/07/15/how-to-use-the-aws-terraform-provider/">How to Use the AWS Terraform Provider</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2023/06/14/getting-started-with-ferretdb-on-docker/">Getting Started With FerretDB on Docker</a>
       </li>
     
   </ul>

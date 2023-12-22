@@ -4,7 +4,7 @@
   <title><![CDATA[Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-12-22T07:58:04-05:00</updated>
+  <updated>2023-12-22T08:05:50-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,491 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use Cert-Manager DNS Challenge With Cloudflare on Kubernetes With Helm]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm/"/>
+    <updated>2023-12-22T08:04:02-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm</id>
+    <content type="html"><![CDATA[<p>In this tutorial, we will be issuing <a href="https://letsencrypt.org/docs/challenge-types/">Let&rsquo;s Encrypt</a> certificates using <a href="https://cert-manager.io/docs/">cert-manager</a> on <a href="https://kubernetes.io/">Kubernetes</a> and we will be using the <a href="https://letsencrypt.org/docs/challenge-types/#dns-01-challenge">DNS Challenge</a> with <a href="https://www.cloudflare.com/en-gb/">Cloudflare</a>.</p>
+
+<p>The reason I am using DNS Challenge instead of HTTP Challenge is because the Kubernetes environment is local on my laptop and there isn&rsquo;t a direct HTTP route into my environment from the internet and I would like to not expose the endpoints to the public internet.</p>
+
+<h2>Summary of what we will be doing</h2>
+
+<p>We would like to have Let&rsquo;s Encrypt Certificates on our web application that will be issued by Cert-Manager using the DNS Challenge from CloudFlare.</p>
+
+<p>Our ingress controller will be ingress-nginx and our endpoints will be private, as they will resolve to private IP addresses, hence the reason why we are using DNS validation instead of HTTP.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>To follow along in this tutorial you will need the following</p>
+
+<ul>
+<li><p><a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/</a></p></li>
+<li><p><a href="https://helm.sh/docs/intro/install/">Helm</a></p></li>
+<li><p><a href="https://kubernetes.io/docs/tasks/tools/">Kubectl</a></p></li>
+<li><p><a href="https://www.cloudflare.com/en-gb/">Cloudflare</a> Account</p></li>
+<li><p>Patience (just kidding, I will try my best to make it easy)</p></li>
+</ul>
+
+
+<h2>Install a Kubernetes Cluster</h2>
+
+<p>If you already have a Kubernetes Cluster, you can skip this step.</p>
+
+<p>Define the <code>kind-config.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Cluster</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">kind.x-k8s.io/v1alpha4</span>
+</span><span class='line'><span class="l-Scalar-Plain">nodes</span><span class="p-Indicator">:</span>
+</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">role</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">control-plane</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">extraPortMappings</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">hostPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">listenAddress</span><span class="p-Indicator">:</span> <span class="s">&quot;0.0.0.0&quot;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">hostPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the cluster with <code>kind</code>:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kind create cluster --name example --config kind-config.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Nginx Ingress Controller</h2>
+
+<p>First we need to install a ingress controller and I am opting in to use ingress-nginx, so first we need to add the helm repository to our local repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we need to update our repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo update
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then we can install the helm release:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx <span class="se">\</span>
+</span><span class='line'>  --namespace ingress-nginx <span class="se">\</span>
+</span><span class='line'>  --create-namespace <span class="se">\</span>
+</span><span class='line'>  --set controller.kind<span class="o">=</span>DaemonSet <span class="se">\</span>
+</span><span class='line'>  --set controller.hostPort.enabled<span class="o">=</span><span class="nb">true</span> <span class="se">\</span>
+</span><span class='line'>  --set controller.ingressClass<span class="o">=</span>nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can view all the default values from their GitHub repository where the chart is hosted:</p>
+
+<ul>
+<li><a href="https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml"><strong>https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml</strong></a></li>
+</ul>
+
+
+<p>Once the release has been deployed, you should see the ingress-nginx pod running under the <code>ingress-nginx</code> namespace:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get pods -n ingress-nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Cert-Manager</h2>
+
+<p>The next step is to install cert-manager using helm, first add the repository:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo add jetstack https://charts.jetstack.io
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Update the repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo update
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then install the cert-manager release:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm upgrade --install cert-manager jetstack/cert-manager <span class="se">\</span>
+</span><span class='line'>  --namespace cert-manager <span class="se">\</span>
+</span><span class='line'>  --create-namespace <span class="se">\</span>
+</span><span class='line'>  --version v1.13.1 <span class="se">\</span>
+</span><span class='line'>  --set <span class="nv">installCRDs</span><span class="o">=</span><span class="nb">true</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Cloudflare API Token</h2>
+
+<p>We need to grant Cert-Manager access to make DNS changes on our Cloudflare account for DNS validation on our behalf, and in order to do that, we need to create a Cloudflare API Token.</p>
+
+<p>As per the <a href="https://cert-manager.io/docs/configuration/acme/dns01/cloudflare/#api-tokens">cert-manager documentation</a>, from your profile select <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a>, create an API Token and select <code>Edit Zone DNS</code> template.</p>
+
+<p>Then select the following:</p>
+
+<ul>
+<li><p>Permissions:</p>
+
+<ul>
+<li><p>Zone: DNS -&gt; Edit</p></li>
+<li><p>Zone: Zone -&gt; Read</p></li>
+</ul>
+</li>
+<li><p>Zone Resources:</p>
+
+<ul>
+<li>Include -&gt; All Zones</li>
+</ul>
+</li>
+</ul>
+
+
+<p><img src="https://gitlab.com/bekker-space/workshops/ingress-nginx/uploads/c19d741352f767a1bfb97ef4fd716364/image.png%20align=" title="left" alt="" /></p>
+
+<p>Then create the token and save the value somewhere safe, as we will be using it in the next step.</p>
+
+<h2>Cert-Manager ClusterIssuer</h2>
+
+<p>First, we need to create a Kubernetes secret with the API Token that we created in the previous step.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl create secret generic cloudflare-api-key-secret <span class="se">\</span>
+</span><span class='line'>  --from-literal<span class="o">=</span>api-key<span class="o">=[</span>YOUR_CLOUDFLARE_API_KEY<span class="o">]</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the <code>clusterissuer.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">cert-manager.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIssuer</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">letsencrypt-dns01-issuer</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">acme</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">server</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">https://acme-v02.api.letsencrypt.org/directory</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">email</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">you@example.com</span>  <span class="c1"># your email address for updates</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">privateKeySecretRef</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">letsencrypt-dns01-private-key</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">solvers</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">dns01</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">cloudflare</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">email</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">you@example.com</span> <span class="c1"># your cloudflare account email address</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">apiTokenSecretRef</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">cloudflare-api-key-secret</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">key</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">api-key</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then create the cluster issuer:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl apply -f clusterissuer.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Request a Certificate</h2>
+
+<p>Now that we have our <code>ClusterIssuer</code> created, we can request a certificate. In my scenario, I have a domain <code>example.com</code> which is hosted on CloudFlare and I would like to create a wildcard certificate on the sub-domain <code>*.workshop.example.com</code></p>
+
+<p>Certificates are scoped on a namespace level, and ClusterIssuer&rsquo;s are cluster-wide, therefore I am prefixing my certificate with the namespace (just my personal preference).</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">cert-manager.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Certificate</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default-workshop-certificate</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">secretName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default-workshop-example-tls</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">issuerRef</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">letsencrypt-dns01-issuer</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIssuer</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">commonName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">workshop.example.com</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">dnsNames</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">workshop.example.com</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="s">&#39;*.workshop.example.com&#39;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Before we create the certificate on CloudFlare, I have created private DNS to the names mentioned in the manifest above like the following:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>- workshop.example.com -&gt; A Record -&gt; 10.5.24.254
+</span><span class='line'>- *.workshop.example.com -&gt; CNAME -&gt; workshop.example.com
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In the DNS configuration mentioned above, to explain why I am creating 2 entries:</p>
+
+<ul>
+<li><p><code>10.2.24.254</code> - This is my LoadBalancer IP Address</p></li>
+<li><p>I have a static DNS entry to the name <code>workshop.example.com</code> so if my LoadBalancer IP Address ever change, I can just change this address</p></li>
+<li><p>I am creating a wildcard DNS entry for <code>*.workshop.example.com</code> and I am creating a CNAME record for it to resolve to <code>workshop.example.com</code> so it will essentially respond to the LoadBalancer IP.</p></li>
+<li><p>So lets say I create <code>test1.workshop.example.com</code> and <code>test2.workshop.example.com</code> then it will resolve to the LoadBalancer IP in <code>workshop.example.com</code> and as mentioned before, if the LoadBalancer IP ever changes, I only have to update the A Record of <code>workshop.example.com</code></p></li>
+</ul>
+
+
+<p>Then after DNS was created, I went ahead and created the certificate:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl apply -f certificate.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can view the progress by viewing the certificate status by running:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get certificate -n default
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Specify the Certificate in your Ingress</h2>
+
+<p>Let&rsquo;s deploy a <code>nginx</code> web server deployment and I have concatenated the following in one manifest called <code>deployment.yaml</code>:</p>
+
+<ul>
+<li><p><code>Deployment</code></p></li>
+<li><p><code>Service</code></p></li>
+<li><p><code>Ingress</code></p></li>
+</ul>
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">apps/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Deployment</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">2</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">matchLabels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">template</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">containers</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx:1.19</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Service</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web-service</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIP</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">targetPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web</span>
+</span><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">networking.k8s.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Ingress</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web-ingress</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">annotations</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">kubernetes.io/ingress.class</span><span class="p-Indicator">:</span> <span class="s">&quot;nginx&quot;</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">rules</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx.workshop.example.com</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">http</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">pathType</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Prefix</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">backend</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">service</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx-web-service</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span>
+</span><span class='line'>              <span class="l-Scalar-Plain">number</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">tls</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">hosts</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">nginx.workshop.example.com</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">secretName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default-workshop-example-tls</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>A few important things to notice on the ingress resource:</p>
+
+<ul>
+<li><p><code>host</code> the host needs to match the certificate</p></li>
+<li><p><code>secretName</code> the secret needs to match the secret defined in the certificate</p></li>
+</ul>
+
+
+<p>Then create the deployment:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl apply -f deployment.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Ensure DNS Challenges are successful</h2>
+
+<p>Ensure that cert-manager can set DNS-01 challenge records correctly, if you encounter issues, you can inspect the cert-manager pod logs.</p>
+
+<p>To view the pods for cert-manager:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get pods -n cert-manager
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then view the logs using:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl logs -f pod &lt;pod-id&gt; -n cert-manager
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Test</h2>
+
+<p>You can open up a browser and access the ingress on your browser, in my case it would be <code>https://nginx.workshop.example.com</code> and verify that you have a certificate issued from Lets Encrypt.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you enjoy my content please feel free to follow me on <a href="https://twitter.com/ruanbekker"><strong>Twitter -</strong></a> @<a href="@ruanbekker">@ruanbekker</a> or visit me on my <a href="https://ruan.dev/"><strong>website -</strong></a> <a href="http://ruan.dev"><strong>ruan.dev</strong></a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Deploy Ingress-Nginx Controller on Kubernetes With Helm]]></title>
@@ -7853,72 +8338,6 @@ ight be used to deploy something simple such as a deployment or something comple
 <h2>Thank You</h2>
 
 <p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[How to Read and Write Json Data With Python]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2022/06/14/how-to-read-and-write-json-data-with-python/"/>
-    <updated>2022-06-14T19:02:53-04:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2022/06/14/how-to-read-and-write-json-data-with-python</id>
-    <content type="html"><![CDATA[<p>This is a short tutorial on how to use python to write and read files.</p>
-
-<h2>Example</h2>
-
-<p>To write the following json data:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;ruan&quot;</span><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>To a file named <code>/tmp/data.json</code>, we will be using this code:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'>
-</span><span class='line'><span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="s">&quot;name&quot;</span><span class="p">:</span> <span class="s">&quot;ruan&quot;</span><span class="p">}</span>
-</span><span class='line'><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;data.json&#39;</span><span class="p">,</span> <span class="s">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we execute that code, we will find the data inside that file:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span>cat /tmp/data.json
-</span><span class='line'><span class="o">{</span><span class="s2">&quot;name&quot;</span>: <span class="s2">&quot;ruan&quot;</span><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And if we want to use python to read the data:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">json</span>
-</span><span class='line'>
-</span><span class='line'><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s">&#39;data.json&#39;</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span class='line'>    <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When we execute that code, we will see:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span><span class="err">&#39;name&#39;:</span> <span class="err">&#39;ruan&#39;</span><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, feel free to check out my <strong><a href="https://ruan.dev">website</a></strong>, read my <strong><a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a></strong> or follow me at <strong><a href="https://twitter.com/ruanbekker">@ruanbekker</a></strong> on Twitter.</p>
 ]]></content>
   </entry>
   

@@ -4,7 +4,7 @@
   <title><![CDATA[Category: Devops | Ruan Bekker's Blog]]></title>
   <link href="https://blog.ruanbekker.com/blog/categories/devops/atom.xml" rel="self"/>
   <link href="https://blog.ruanbekker.com/"/>
-  <updated>2023-12-22T07:58:04-05:00</updated>
+  <updated>2023-12-22T08:05:50-05:00</updated>
   <id>https://blog.ruanbekker.com/</id>
   <author>
     <name><![CDATA[Ruan]]></name>
@@ -12,6 +12,338 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Use Cert-Manager DNS Challenge With Cloudflare on Kubernetes With Helm]]></title>
+    <link href="https://blog.ruanbekker.com/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm/"/>
+    <updated>2023-12-22T08:04:02-05:00</updated>
+    <id>https://blog.ruanbekker.com/blog/2023/12/22/how-to-use-cert-manager-dns-challenge-with-cloudflare-on-kubernetes-with-helm</id>
+    <content type="html"><![CDATA[<p>In this tutorial, we will be issuing <a href="https://letsencrypt.org/docs/challenge-types/">Let&rsquo;s Encrypt</a> certificates using <a href="https://cert-manager.io/docs/">cert-manager</a> on <a href="https://kubernetes.io/">Kubernetes</a> and we will be using the <a href="https://letsencrypt.org/docs/challenge-types/#dns-01-challenge">DNS Challenge</a> with <a href="https://www.cloudflare.com/en-gb/">Cloudflare</a>.</p>
+
+<p>The reason I am using DNS Challenge instead of HTTP Challenge is because the Kubernetes environment is local on my laptop and there isn&rsquo;t a direct HTTP route into my environment from the internet and I would like to not expose the endpoints to the public internet.</p>
+
+<h2>Summary of what we will be doing</h2>
+
+<p>We would like to have Let&rsquo;s Encrypt Certificates on our web application that will be issued by Cert-Manager using the DNS Challenge from CloudFlare.</p>
+
+<p>Our ingress controller will be ingress-nginx and our endpoints will be private, as they will resolve to private IP addresses, hence the reason why we are using DNS validation instead of HTTP.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>To follow along in this tutorial you will need the following</p>
+
+<ul>
+<li><p><a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/</a></p></li>
+<li><p><a href="https://helm.sh/docs/intro/install/">Helm</a></p></li>
+<li><p><a href="https://kubernetes.io/docs/tasks/tools/">Kubectl</a></p></li>
+<li><p><a href="https://www.cloudflare.com/en-gb/">Cloudflare</a> Account</p></li>
+<li><p>Patience (just kidding, I will try my best to make it easy)</p></li>
+</ul>
+
+
+<h2>Install a Kubernetes Cluster</h2>
+
+<p>If you already have a Kubernetes Cluster, you can skip this step.</p>
+
+<p>Define the <code>kind-config.yaml</code></p>
+
+<pre><code class="yaml">kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+</code></pre>
+
+<p>Then create the cluster with <code>kind</code>:</p>
+
+<pre><code class="bash">kind create cluster --name example --config kind-config.yaml
+</code></pre>
+
+<h2>Nginx Ingress Controller</h2>
+
+<p>First we need to install a ingress controller and I am opting in to use ingress-nginx, so first we need to add the helm repository to our local repositories:</p>
+
+<pre><code class="bash">helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+</code></pre>
+
+<p>Then we need to update our repositories:</p>
+
+<pre><code class="bash">helm repo update
+</code></pre>
+
+<p>Then we can install the helm release:</p>
+
+<pre><code class="bash">helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.kind=DaemonSet \
+  --set controller.hostPort.enabled=true \
+  --set controller.ingressClass=nginx
+</code></pre>
+
+<p>You can view all the default values from their GitHub repository where the chart is hosted:</p>
+
+<ul>
+<li><a href="https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml"><strong>https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml</strong></a></li>
+</ul>
+
+
+<p>Once the release has been deployed, you should see the ingress-nginx pod running under the <code>ingress-nginx</code> namespace:</p>
+
+<pre><code class="bash">kubectl get pods -n ingress-nginx
+</code></pre>
+
+<h2>Cert-Manager</h2>
+
+<p>The next step is to install cert-manager using helm, first add the repository:</p>
+
+<pre><code class="bash">helm repo add jetstack https://charts.jetstack.io
+</code></pre>
+
+<p>Update the repositories:</p>
+
+<pre><code class="bash">helm repo update
+</code></pre>
+
+<p>Then install the cert-manager release:</p>
+
+<pre><code class="bash">helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.13.1 \
+  --set installCRDs=true
+</code></pre>
+
+<h2>Cloudflare API Token</h2>
+
+<p>We need to grant Cert-Manager access to make DNS changes on our Cloudflare account for DNS validation on our behalf, and in order to do that, we need to create a Cloudflare API Token.</p>
+
+<p>As per the <a href="https://cert-manager.io/docs/configuration/acme/dns01/cloudflare/#api-tokens">cert-manager documentation</a>, from your profile select <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a>, create an API Token and select <code>Edit Zone DNS</code> template.</p>
+
+<p>Then select the following:</p>
+
+<ul>
+<li><p>Permissions:</p>
+
+<ul>
+<li><p>Zone: DNS -&gt; Edit</p></li>
+<li><p>Zone: Zone -&gt; Read</p></li>
+</ul>
+</li>
+<li><p>Zone Resources:</p>
+
+<ul>
+<li>Include -&gt; All Zones</li>
+</ul>
+</li>
+</ul>
+
+
+<p><img src="https://gitlab.com/bekker-space/workshops/ingress-nginx/uploads/c19d741352f767a1bfb97ef4fd716364/image.png%20align=" title="left" alt="" /></p>
+
+<p>Then create the token and save the value somewhere safe, as we will be using it in the next step.</p>
+
+<h2>Cert-Manager ClusterIssuer</h2>
+
+<p>First, we need to create a Kubernetes secret with the API Token that we created in the previous step.</p>
+
+<pre><code class="bash">kubectl create secret generic cloudflare-api-key-secret \
+  --from-literal=api-key=[YOUR_CLOUDFLARE_API_KEY]
+</code></pre>
+
+<p>Then create the <code>clusterissuer.yaml</code></p>
+
+<pre><code class="yaml">apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns01-issuer
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com  # your email address for updates
+    privateKeySecretRef:
+      name: letsencrypt-dns01-private-key
+    solvers:
+    - dns01:
+        cloudflare:
+          email: you@example.com # your cloudflare account email address
+          apiTokenSecretRef:
+            name: cloudflare-api-key-secret
+            key: api-key
+</code></pre>
+
+<p>Then create the cluster issuer:</p>
+
+<pre><code class="bash">kubectl apply -f clusterissuer.yaml
+</code></pre>
+
+<h2>Request a Certificate</h2>
+
+<p>Now that we have our <code>ClusterIssuer</code> created, we can request a certificate. In my scenario, I have a domain <code>example.com</code> which is hosted on CloudFlare and I would like to create a wildcard certificate on the sub-domain <code>*.workshop.example.com</code></p>
+
+<p>Certificates are scoped on a namespace level, and ClusterIssuer&rsquo;s are cluster-wide, therefore I am prefixing my certificate with the namespace (just my personal preference).</p>
+
+<pre><code class="yaml">apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: default-workshop-certificate
+  namespace: default
+spec:
+  secretName: default-workshop-example-tls
+  issuerRef:
+    name: letsencrypt-dns01-issuer
+    kind: ClusterIssuer
+  commonName: workshop.example.com
+  dnsNames:
+  - workshop.example.com
+  - '*.workshop.example.com'
+</code></pre>
+
+<p>Before we create the certificate on CloudFlare, I have created private DNS to the names mentioned in the manifest above like the following:</p>
+
+<pre><code class="bash">- workshop.example.com -&gt; A Record -&gt; 10.5.24.254
+- *.workshop.example.com -&gt; CNAME -&gt; workshop.example.com
+</code></pre>
+
+<p>In the DNS configuration mentioned above, to explain why I am creating 2 entries:</p>
+
+<ul>
+<li><p><code>10.2.24.254</code> - This is my LoadBalancer IP Address</p></li>
+<li><p>I have a static DNS entry to the name <code>workshop.example.com</code> so if my LoadBalancer IP Address ever change, I can just change this address</p></li>
+<li><p>I am creating a wildcard DNS entry for <code>*.workshop.example.com</code> and I am creating a CNAME record for it to resolve to <code>workshop.example.com</code> so it will essentially respond to the LoadBalancer IP.</p></li>
+<li><p>So lets say I create <code>test1.workshop.example.com</code> and <code>test2.workshop.example.com</code> then it will resolve to the LoadBalancer IP in <code>workshop.example.com</code> and as mentioned before, if the LoadBalancer IP ever changes, I only have to update the A Record of <code>workshop.example.com</code></p></li>
+</ul>
+
+
+<p>Then after DNS was created, I went ahead and created the certificate:</p>
+
+<pre><code class="bash">kubectl apply -f certificate.yaml
+</code></pre>
+
+<p>You can view the progress by viewing the certificate status by running:</p>
+
+<pre><code class="bash">kubectl get certificate -n default
+</code></pre>
+
+<h2>Specify the Certificate in your Ingress</h2>
+
+<p>Let&rsquo;s deploy a <code>nginx</code> web server deployment and I have concatenated the following in one manifest called <code>deployment.yaml</code>:</p>
+
+<ul>
+<li><p><code>Deployment</code></p></li>
+<li><p><code>Service</code></p></li>
+<li><p><code>Ingress</code></p></li>
+</ul>
+
+
+<pre><code class="yaml">---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-web
+  namespace: default
+  labels:
+    app: nginx-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-web
+  template:
+    metadata:
+      labels:
+        app: nginx-web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.19
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-web-service
+  namespace: default
+  labels:
+    app: nginx-web
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: nginx-web
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-web-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  rules:
+  - host: nginx.workshop.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-web-service
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - nginx.workshop.example.com
+    secretName: default-workshop-example-tls
+</code></pre>
+
+<p>A few important things to notice on the ingress resource:</p>
+
+<ul>
+<li><p><code>host</code> the host needs to match the certificate</p></li>
+<li><p><code>secretName</code> the secret needs to match the secret defined in the certificate</p></li>
+</ul>
+
+
+<p>Then create the deployment:</p>
+
+<pre><code class="bash">kubectl apply -f deployment.yaml
+</code></pre>
+
+<h2>Ensure DNS Challenges are successful</h2>
+
+<p>Ensure that cert-manager can set DNS-01 challenge records correctly, if you encounter issues, you can inspect the cert-manager pod logs.</p>
+
+<p>To view the pods for cert-manager:</p>
+
+<pre><code class="bash">kubectl get pods -n cert-manager
+</code></pre>
+
+<p>Then view the logs using:</p>
+
+<pre><code class="bash">kubectl logs -f pod &lt;pod-id&gt; -n cert-manager
+</code></pre>
+
+<h2>Test</h2>
+
+<p>You can open up a browser and access the ingress on your browser, in my case it would be <code>https://nginx.workshop.example.com</code> and verify that you have a certificate issued from Lets Encrypt.</p>
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you enjoy my content please feel free to follow me on <a href="https://twitter.com/ruanbekker"><strong>Twitter -</strong></a> @<a href="@ruanbekker">@ruanbekker</a> or visit me on my <a href="https://ruan.dev/"><strong>website -</strong></a> <a href="http://ruan.dev"><strong>ruan.dev</strong></a></p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Deploy Ingress-Nginx Controller on Kubernetes With Helm]]></title>
@@ -1484,518 +1816,6 @@ Destroy complete! Resources: 1 destroyed.
 <p>I hope you enjoyed this post, I will be posting more terraform related content.</p>
 
 <p>Should you want to reach out to me, you can follow me on Twitter at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> or check out my website at <a href="https://ruan.dev">https://ruan.dev</a></p>
-]]></content>
-  </entry>
-  
-  <entry>
-    <title type="html"><![CDATA[Manage Helm Releases With Terraform]]></title>
-    <link href="https://blog.ruanbekker.com/blog/2023/03/09/manage-helm-releases-with-terraform/"/>
-    <updated>2023-03-09T16:15:47-05:00</updated>
-    <id>https://blog.ruanbekker.com/blog/2023/03/09/manage-helm-releases-with-terraform</id>
-    <content type="html"><![CDATA[<p><img src="https://user-images.githubusercontent.com/567298/224163430-34e18f11-2182-4d2b-b7ab-f4683c187719.png" alt="helm-releases-with-terraform" /></p>
-
-<p>In this post we will use terraform to deploy a helm release to kubernetes.</p>
-
-<h2>Kubernetes</h2>
-
-<p>For this demonstration I will be using <a href="https://kind.sigs.k8s.io/">kind</a> to deploy a local Kubernetes cluster to the operating system that I am running this on, which will be Ubuntu Linux. For a more in-depth tutorial on Kind, you can see my post on <a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">Kind for Local Kubernetes Clusters</a>.</p>
-
-<h2>Installing the Pre-Requirements</h2>
-
-<p>We will be installing terraform, docker, kind and kubectl on Linux.</p>
-
-<p>Install terraform:</p>
-
-<pre><code class="bash">wget https://releases.hashicorp.com/terraform/1.3.0/terraform_1.3.0_linux_amd64.zip
-unzip terraform_1.3.0_linux_amd64.zip
-rm terraform_1.3.0_linux_amd64.zip
-mv terraform /usr/bin/terraform
-</code></pre>
-
-<p>Verify that terraform has been installed:</p>
-
-<pre><code class="bash">terraform -version
-</code></pre>
-
-<p>Which in my case returns:</p>
-
-<pre><code class="bash">Terraform v1.3.0
-on linux_amd64
-</code></pre>
-
-<p>Install Docker on Linux (be careful to curl pipe bash - trust the scripts that you are running):</p>
-
-<pre><code class="bash">curl https://get.docker.com | bash
-</code></pre>
-
-<p>Then running <code>docker ps</code> should return:</p>
-
-<pre><code class="bash">CONTAINER ID   IMAGE        COMMAND         CREATED          STATUS          PORTS       NAMES
-</code></pre>
-
-<p>Install kind on Linux:</p>
-
-<pre><code class="bash">apt update
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
-chmod +x ./kind
-sudo mv ./kind /usr/local/bin/kind
-</code></pre>
-
-<p>Then to verify that kind was installed with <code>kind --version</code> should return:</p>
-
-<pre><code class="bash">kind version 0.17.0
-</code></pre>
-
-<p>Create a kubernetes cluster using kind:</p>
-
-<pre><code class="bash">kind create cluster --name rbkr --image kindest/node:v1.24.0
-</code></pre>
-
-<p>Now install <a href="https://kubernetes.io/docs/tasks/tools/">kubectl</a>:</p>
-
-<pre><code class="bash">curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-</code></pre>
-
-<p>Then to verify that kubectl was installed:</p>
-
-<pre><code class="bash">kubectl version --client
-</code></pre>
-
-<p>Which in my case returns:</p>
-
-<pre><code class="bash">Client Version: version.Info{Major:"1", Minor:"26", GitVersion:"v1.26.1", GitCommit:"8f94681cd294aa8cfd3407b8191f6c70214973a4", GitTreeState:"clean", BuildDate:"2023-01-18T15:58:16Z", GoVersion:"go1.19.5", Compiler:"gc", Platform:"linux/amd64"}
-Kustomize Version: v4.5.7
-</code></pre>
-
-<p>Now we can test if kubectl can communicate with the kubernetes api server:</p>
-
-<pre><code class="bash">kubectl get nodes
-</code></pre>
-
-<p>In my case it returns:</p>
-
-<pre><code class="bash">NAME                 STATUS   ROLES           AGE     VERSION
-rbkr-control-plane   Ready    control-plane   6m20s   v1.24.0
-</code></pre>
-
-<h2>Terraform</h2>
-
-<p>Now that our pre-requirements are sorted we can configure terraform to communicate with kubernetes. For that to happen, we need to consult the <a href="https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs">terraform kubernetes provider</a>&rsquo;s documentation.</p>
-
-<p>As per their documentation they provide us with this snippet:</p>
-
-<pre><code>terraform {
-  required_providers {
-    kubernetes = {
-      source = "hashicorp/kubernetes"
-      version = "2.18.0"
-    }
-  }
-}
-
-provider "kubernetes" {
-  # Configuration options
-}
-</code></pre>
-
-<p>And from their <a href="https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs">main</a> page, it gives us a couple of options to configure the provider and the easiest is probably to read the <code>~/.kube/config</code> configuration file.</p>
-
-<p>But in cases where you have multiple configurations in your kube config file, this might not be ideal, and I like to be precise, so I will extract the client certificate, client key and cluster ca certificate and endpoint from our <code>~/.kube/config</code> file.</p>
-
-<p>If we run <code>cat ~/.kube/config</code> we will see something like this:</p>
-
-<pre><code class="yaml">apiVersion: v1
-clusters:
-- cluster:
-    certificate-authority-data: LS0tLS1CRU......FURS0tLS0tCg==
-    server: https://127.0.0.1:40305
-  name: kind-rbkr
-contexts:
-- context:
-    cluster: kind-rbkr
-    user: kind-rbkr
-  name: kind-rbkr
-current-context: kind-rbkr
-kind: Config
-preferences: {}
-users:
-- name: kind-rbkr
-  user:
-    client-certificate-data: LS0tLS1CRX......FURS0tLS0tCg==
-    client-key-data: LS0tLS1CRUejhKWUk2N2.....S0tCg==
-</code></pre>
-
-<p>First we will create a directory for our certificates:</p>
-
-<pre><code class="bash">mkdir ~/certs
-</code></pre>
-
-<p>I have truncated my kube config for readability, but for our first file <code>certs/client-cert.pem</code> we will copy the value of <code>client-certificate-data:</code>, which will look something like this:</p>
-
-<pre><code class="bash">cat certs/client-cert.pem
-LS0tLS1CRX......FURS0tLS0tCg==
-</code></pre>
-
-<p>Then we will copy the contents of <code>client-key-data:</code> into <code>certs/client-key.pem</code> and then lastly the content of <code>certificate-authority-data:</code> into <code>certs/cluster-ca-cert.pem</code>.</p>
-
-<p>So then we should have the following files inside our <code>certs/</code> directory:</p>
-
-<pre><code class="bash">tree certs/
-certs/
-├── client-cert.pem
-├── client-key.pem
-└── cluster-ca-cert.pem
-
-0 directories, 3 files
-</code></pre>
-
-<p>Now make them read only:</p>
-
-<pre><code class="bash">chmod 400 ~/certs/*
-</code></pre>
-
-<p>Now that we have that we can start writing our terraform configuration. In <code>providers.tf</code>:</p>
-
-<pre><code>terraform {
-  required_providers {
-    kubernetes = {
-      source = "hashicorp/kubernetes"
-      version = "2.18.0"
-    }
-  }
-}
-
-provider "kubernetes" {
-  host                   = "https://127.0.0.1:40305"
-  client_certificate     = base64decode(file("~/certs/client-cert.pem"))
-  client_key             = base64decode(file("~/certs/client-key.pem"))
-  cluster_ca_certificate = base64decode(file("~/certs/cluster-ca-cert.pem"))
-}
-</code></pre>
-
-<p>Your host might look different to mine, but you can find your host endpoint in <code>~/.kube/config</code>.</p>
-
-<p>For a simple test we can list all our namespaces to ensure that our configuration is working. In a file called <code>namespaces.tf</code>, we can populate the following:</p>
-
-<pre><code>data "kubernetes_all_namespaces" "allns" {}
-
-output "all-ns" {
-  value = data.kubernetes_all_namespaces.allns.namespaces
-}
-</code></pre>
-
-<p>Now we need to initialize terraform so that it can download the providers:</p>
-
-<pre><code class="bash">terraform init
-</code></pre>
-
-<p>Then we can run a plan which will reveal our namespaces:</p>
-
-<pre><code class="bash">terraform plan
-
-data.kubernetes_all_namespaces.allns: Reading...
-data.kubernetes_all_namespaces.allns: Read complete after 0s [id=a0ff7e83ffd7b2d9953abcac9f14370e842bdc8f126db1b65a18fd09faa3347b]
-
-Changes to Outputs:
-  + all-ns = [
-      + "default",
-      + "kube-node-lease",
-      + "kube-public",
-      + "kube-system",
-      + "local-path-storage",
-    ]
-</code></pre>
-
-<p>We can now remove our <code>namespaces.tf</code> as our test worked:</p>
-
-<pre><code class="bash">rm namespaces.tf
-</code></pre>
-
-<h2>Helm Releases with Terraform</h2>
-
-<p>We will need two things, we need to consult the <a href="https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release">terraform helm release provider</a> documentation and we also need to consult the helm chart documentation which we are interested in.</p>
-
-<p>In my previous post I wrote about <a href="https://blog.ruanbekker.com/blog/2023/01/24/everything-you-need-to-know-about-helm/">Everything you need to know about Helm</a> and I used the <a href="https://artifacthub.io/packages/helm/bitnami/nginx">Bitnami Nginx Helm Chart</a>, so we will use that one again.</p>
-
-<p>As we are working with helm releases, we need to configure the helm provider, I will just extend my configuration from my previous provider config in <code>providers.tf</code>:</p>
-
-<pre><code>terraform {
-  required_providers {
-    kubernetes = {
-      source = "hashicorp/kubernetes"
-      version = "2.18.0"
-    }
-    helm = {
-      source = "hashicorp/helm"
-      version = "2.9.0"
-    }
-  }
-}
-
-provider "kubernetes" {
-  host                   = "https://127.0.0.1:40305"
-  client_certificate     = base64decode(file("~/certs/client-cert.pem"))
-  client_key             = base64decode(file("~/certs/client-key.pem"))
-  cluster_ca_certificate = base64decode(file("~/certs/cluster-ca-cert.pem"))
-}
-
-provider "helm" {
-  kubernetes {
-    host                   = "https://127.0.0.1:40305"
-    client_certificate     = base64decode(file("~/certs/client-cert.pem"))
-    client_key             = base64decode(file("~/certs/client-key.pem"))
-    cluster_ca_certificate = base64decode(file("~/certs/cluster-ca-cert.pem"))
-  }
-}
-</code></pre>
-
-<p>We will create three terraform files:</p>
-
-<pre><code class="bash">touch {main,outputs,variables}.tf
-</code></pre>
-
-<p>And our values yaml in <code>helm-chart/nginx/values.yaml</code>:</p>
-
-<pre><code class="bash">mkdir -p helm-chart/nginx
-</code></pre>
-
-<p>Then you can copy the values file from <a href="https://artifacthub.io/packages/helm/bitnami/nginx?modal=values">https://artifacthub.io/packages/helm/bitnami/nginx?modal=values</a> into <code>helm-chart/nginx/values.yaml</code>.</p>
-
-<p>In our <code>main.tf</code> I will use two ways to override values in our <code>values.yaml</code> using <code>set</code> and <code>templatefile</code>. The reason for the templatefile, is when we want to fetch a value and want to replace the content with our values file, it could be used when we retrieve a value from a data source as an example. In my example im just using a variable.</p>
-
-<p>We will have the following:</p>
-
-<pre><code>resource "helm_release" "nginx" {
-  name             = var.release_name
-  version          = var.chart_version
-  namespace        = var.namespace
-  create_namespace = var.create_namespace
-  chart            = var.chart_name
-  repository       = var.chart_repository_url
-  dependency_update = true
-  reuse_values      = true
-  force_update      = true
-  atomic              = var.atomic
-
-  set {
-    name  = "image.tag"
-    value = "1.23.3-debian-11-r3"
-  }
-
-  set {
-    name  = "service.type"
-    value = "ClusterIP"
-  }
-
-  values = [
-    templatefile("${path.module}/helm-chart/nginx/values.yaml", {
-      NAME_OVERRIDE   = var.release_name
-    }
-  )]
-
-}
-</code></pre>
-
-<p>As you can see we are referencing a <code>NAME_OVERRIDE</code> in our <code>values.yaml</code>, I have cleaned up the values file to the following:</p>
-
-<pre><code class="yaml">nameOverride: "${NAME_OVERRIDE}"
-
-## ref: https://hub.docker.com/r/bitnami/nginx/tags/
-image:
-  registry: docker.io
-  repository: bitnami/nginx
-  tag: 1.23.3-debian-11-r3
-</code></pre>
-
-<p>The <code>NAME_OVERRIDE</code> must be in a <code>${}</code> format.</p>
-
-<p>In our <code>variables.tf</code> we will have the following:</p>
-
-<pre><code>variable "release_name" {
-  type        = string
-  default     = "nginx"
-  description = "The name of our release."
-}
-
-variable "chart_repository_url" {
-  type        = string
-  default     = "https://charts.bitnami.com/bitnami"
-  description = "The chart repository url."
-}
-
-variable "chart_name" {
-  type        = string
-  default     = "nginx"
-  description = "The name of of our chart that we want to install from the repository."
-}
-
-variable "chart_version" {
-  type        = string
-  default     = "13.2.20"
-  description = "The version of our chart."
-}
-
-variable "namespace" {
-  type        = string
-  default     = "apps"
-  description = "The namespace where our release should be deployed into."
-}
-
-variable "create_namespace" {
-  type        = bool
-  default     = true
-  description = "If it should create the namespace if it doesnt exist."
-}
-
-variable "atomic" {
-  type        = bool
-  default     = false
-  description = "If it should wait until release is deployed."
-}
-</code></pre>
-
-<p>And lastly our <code>outputs.tf</code>:</p>
-
-<pre><code>output "metadata" {
-  value = helm_release.nginx.metadata
-}
-</code></pre>
-
-<p>Now that we have all our configuration ready, we can initialize terraform:</p>
-
-<pre><code class="bash">terraform init
-</code></pre>
-
-<p>Then we can run a plan to see what terraform wants to deploy:</p>
-
-<pre><code class="bash">terraform plan
-</code></pre>
-
-<p>The plan output shows the following:</p>
-
-<pre><code class="bash">Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
-  + create
-
-Terraform will perform the following actions:
-
-  # helm_release.nginx will be created
-  + resource "helm_release" "nginx" {
-      + atomic                     = false
-      + chart                      = "nginx"
-      + cleanup_on_fail            = false
-      + create_namespace           = true
-      + dependency_update          = false
-      + disable_crd_hooks          = false
-      + disable_openapi_validation = false
-      + disable_webhooks           = false
-      + force_update               = false
-      + id                         = (known after apply)
-      + lint                       = false
-      + manifest                   = (known after apply)
-      + max_history                = 0
-      + metadata                   = (known after apply)
-      + name                       = "nginx"
-      + namespace                  = "apps"
-      + pass_credentials           = false
-      + recreate_pods              = false
-      + render_subchart_notes      = true
-      + replace                    = false
-      + repository                 = "https://charts.bitnami.com/bitnami"
-      + reset_values               = false
-      + reuse_values               = false
-      + skip_crds                  = false
-      + status                     = "deployed"
-      + timeout                    = 300
-      + values                     = [
-          + &lt;&lt;-EOT
-                nameOverride: "nginx"
-
-                ## ref: https://hub.docker.com/r/bitnami/nginx/tags/
-                image:
-                  registry: docker.io
-                  repository: bitnami/nginx
-                  tag: 1.23.3-debian-11-r3
-            EOT,
-        ]
-      + verify                     = false
-      + version                    = "13.2.20"
-      + wait                       = false
-      + wait_for_jobs              = false
-
-      + set {
-          + name  = "image.tag"
-          + value = "1.23.3-debian-11-r3"
-        }
-    }
-
-Plan: 1 to add, 0 to change, 0 to destroy.
-
-Changes to Outputs:
-  + metadata = (known after apply)
-</code></pre>
-
-<p>Once we are happy with our plan, we can run a apply:</p>
-
-<pre><code class="bash">terraform apply 
-
-Plan: 1 to add, 0 to change, 0 to destroy.
-
-Changes to Outputs:
-  + metadata = (known after apply)
-
-Do you want to perform these actions?
-  Terraform will perform the actions described above.
-  Only 'yes' will be accepted to approve.
-
-  Enter a value: yes
-
-helm_release.nginx: Creating...
-helm_release.nginx: Still creating... [10s elapsed]
-
-metadata = tolist([
-  {
-    "app_version" = "1.23.3"
-    "chart" = "nginx"
-    "name" = "nginx"
-    "namespace" = "apps"
-    "revision" = 1
-    "values" = "{\"image\":{\"registry\":\"docker.io\",\"repository\":\"bitnami/nginx\",\"tag\":\"1.23.3-debian-11-r3\"},\"nameOverride\":\"nginx\"}"
-    "version" = "13.2.20"
-  },
-])
-</code></pre>
-
-<p>Then we can verify if the pod is running:</p>
-
-<pre><code class="bash">kubectl get pods -n apps
-NAME                    READY   STATUS    RESTARTS   AGE
-nginx-59bdc6465-xdbfh   1/1     Running   0          2m35s
-</code></pre>
-
-<h2>Importing Helm Releases into Terraform State</h2>
-
-<p>If you have an existing helm release that was deployed with helm and you want to transfer the ownership to terraform, you first need to write the terraform code, then import the resources into terraform state using:</p>
-
-<pre><code class="bash">terraform import helm_release.nginx apps/nginx
-</code></pre>
-
-<p>Where the last argument is <code>&lt;namespace&gt;/&lt;release-name&gt;</code>. Once that is imported you can run terraform plan and apply.</p>
-
-<p>If you want to discover all helm releases managed by helm you can use:</p>
-
-<pre><code class="bash">kubectl get all -A -l app.kubernetes.io/managed-by=Helm
-</code></pre>
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
-
-<ul>
-<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
-<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
-</ul>
-
 ]]></content>
   </entry>
   

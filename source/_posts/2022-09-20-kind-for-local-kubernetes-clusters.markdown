@@ -11,6 +11,8 @@ categories: ["kubernetes", "kind", "docker"]
 
 In this tutorial we will demonstrate how to use KinD (Kubernetes in Docker) to provision local kubernetes clusters for local development.
 
+*Updated at*: _2023-12-22_
+
 ## About
 
 KinD uses container images to run as "nodes", so spinning up and tearing down clusters becomes really easy or running multiple or different versions, is as easy as pointing to a different container image. 
@@ -39,14 +41,14 @@ kind version
 Create the cluster with command line arguments, such as cluster name, the container image:
 
 ```bash
-kind create cluster --name cluster-1 --image kindest/node:v1.24.0
+kind create cluster --name cluster-1 --image kindest/node:v1.26.6
 ```
 
 And the output will look something like this:
 
 ```bash
 Creating cluster "cluster-1" ...
- ✓ Ensuring node image (kindest/node:v1.24.0) 🖼
+ ✓ Ensuring node image (kindest/node:v1.26.6) 🖼
  ✓ Preparing nodes 📦
  ✓ Writing configuration 📜
  ✓ Starting control-plane 🕹️
@@ -58,6 +60,18 @@ You can now use your cluster with:
 kubectl cluster-info --context kind-cluster-1
 
 Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+```
+
+Then you can interact with the cluster using:
+
+```bash
+kubectl get nodes --context kind-cluster-1
+```
+
+Then delete the cluster using:
+
+```bash
+kind delete cluster --name kind-cluster-1
 ```
 
 I **highly recommend** installing [kubectx](https://github.com/ahmetb/kubectx), which makes it easy to switch between kubernetes contexts.
@@ -72,9 +86,9 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  image: kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e
+  image: kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb
 - role: worker
-  image: kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e
+  image: kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb
 ```
 
 Then create the cluster and point the config:
@@ -109,8 +123,8 @@ View nodes:
 kubectl get nodes -o wide
 
 NAME                         STATUS   ROLES           AGE     VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE       KERNEL-VERSION      CONTAINER-RUNTIME
-kind-cluster-control-plane   Ready    control-plane   2m11s   v1.24.0   172.20.0.5    <none>        Ubuntu 21.10   5.10.104-linuxkit   containerd://1.6.4
-kind-cluster-worker          Ready    <none>          108s    v1.24.0   172.20.0.4    <none>        Ubuntu 21.10   5.10.104-linuxkit   containerd://1.6.4
+kind-cluster-control-plane   Ready    control-plane   2m11s   v1.26.6   172.20.0.5    <none>        Ubuntu 21.10   5.10.104-linuxkit   containerd://1.6.4
+kind-cluster-worker          Ready    <none>          108s    v1.26.6   172.20.0.4    <none>        Ubuntu 21.10   5.10.104-linuxkit   containerd://1.6.4
 ```
 
 ## Deploy Sample Application
@@ -231,6 +245,36 @@ Delete a cluster:
 
 ```bash
 kind delete cluster --name kind-cluster
+```
+
+## Additional Configs
+
+If you want more configuration options, you can look at their documentation:
+
+- https://kind.sigs.k8s.io/docs/user/configuration/
+
+But one more example that I like using, is to define the port mappings:
+
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+    listenAddress: "0.0.0.0"
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
 ```
 
 ## Extras

@@ -16,7 +16,7 @@ First you will need to have [Terraform](https://developer.hashicorp.com/terrafor
 
 ## Project Structure
 
-The following code will be available on my github repository, but if you would like to follow along we will create everything step by step.
+The following code will be available on my [github repository](https://github.com/ruanbekker/terraformfiles/tree/master/modules/aws-lambda-function), but if you would like to follow along we will create everything step by step.
 
 First create the project directory:
 
@@ -580,6 +580,12 @@ If you followed along and would like to destroy the created infrastructure:
 ```bash
 terraform destroy
 ```
+
+## Resources
+
+Terraform Examples
+
+- https://github.com/ruanbekker/terraformfiles/tree/master/modules/aws-lambda-function
 
 ## Thank You
 

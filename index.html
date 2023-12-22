@@ -9,7 +9,7 @@
   <meta name="author" content="Ruan">
 
   
-  <meta name="description" content="In this tutorial I will explain how to deploy a AWS Lambda Function with Terraform using the Python runtime. It will include the permissions it needs &hellip;">
+  <meta name="description" content="In this tutorial we will deploy the ingress-nginx controller on kubernetes. Pre-Requisites I will be using kind to run a kubernetes cluster locally, &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -111,6 +111,350 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2023/12/22/how-to-deploy-ingress-nginx-controller-on-kubernetes-with-helm/">How to Deploy Ingress-Nginx Controller on Kubernetes With Helm</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2023-12-22T07:56:22-05:00'><span class='date'><span class='date-month'>Dec</span> <span class='date-day'>22</span><span class='date-suffix'>nd</span>, <span class='date-year'>2023</span></span> <span class='time'>7:56 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>In this tutorial we will deploy the <a href="https://github.com/kubernetes/ingress-nginx">ingress-nginx</a> controller on kubernetes.</p>
+
+<h2>Pre-Requisites</h2>
+
+<p>I will be using kind to run a kubernetes cluster locally, if you want to follow along, have a look at my previous post on how to install <a href="https://kubernetes.io/docs/tasks/tools/">kubectl</a> and kind and the basic usage of kind:</p>
+
+<ul>
+<li><a href="https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/">https://blog.ruanbekker.com/blog/2022/09/20/kind-for-local-kubernetes-clusters/</a></li>
+</ul>
+
+
+<p>You will also need <a href="https://helm.sh/docs/intro/install/">helm</a> to deploy the ingress-nginx release from their helm charts, you can see their documentation on how to install it:</p>
+
+<ul>
+<li><a href="https://helm.sh/docs/intro/install/">https://helm.sh/docs/intro/install/</a></li>
+</ul>
+
+
+<h2>Create the Kubernetes Cluster</h2>
+
+<p>First we will define the kind configuration which will expose port 80 locally in a file name <code>kind-config.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Cluster</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">kind.x-k8s.io/v1alpha4</span>
+</span><span class='line'><span class="l-Scalar-Plain">nodes</span><span class="p-Indicator">:</span>
+</span><span class='line'><span class="p-Indicator">-</span> <span class="l-Scalar-Plain">role</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">control-plane</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">kindest/node:v1.25.11@sha256:227fa11ce74ea76a0474eeefb84cb75d8dad1b08638371ecf0e86259b35be0c8</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">extraPortMappings</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">hostPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">listenAddress</span><span class="p-Indicator">:</span> <span class="s">&quot;0.0.0.0&quot;</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">hostPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">443</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">kubeadmConfigPatches</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="p-Indicator">|</span>
+</span><span class='line'>    <span class="no">kind: InitConfiguration</span>
+</span><span class='line'>    <span class="no">nodeRegistration:</span>
+</span><span class='line'>      <span class="no">kubeletExtraArgs:</span>
+</span><span class='line'>        <span class="no">node-labels: &quot;ingress-ready=true&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then go ahead and create the kubernetes cluster:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kind create cluster --name workshop --config kind-config.yaml
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Install ingress-nginx using Helm</h2>
+
+<p>Install the ingress-nginx helm chart, by first adding the repository:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then update your local repositories:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm repo update
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Then install the helm release, and set a couple of overrides.</p>
+
+<p>The reason we use NodePort is because our kubernetes cluster runs on docker containers, and from our kind config we have exposed port 80 locally, we are using the NodePort service so that we can make an HTTP request to port 80 to traverse to the port of the service:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx <span class="se">\</span>
+</span><span class='line'>  --namespace ingress-nginx --create-namespace <span class="se">\</span>
+</span><span class='line'>  --set controller.kind<span class="o">=</span>DaemonSet <span class="se">\</span>
+</span><span class='line'>  --set controller.hostPort.enabled<span class="o">=</span><span class="nb">true</span> <span class="se">\</span>
+</span><span class='line'>  --set controller.ingressClass<span class="o">=</span>nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>You can view all the default values from their GitHub repository where the chart is hosted:</p>
+
+<ul>
+<li><a href="https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml">https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml</a></li>
+</ul>
+
+
+<p>Once the release has been deployed, you should see the ingress-nginx pod running under the <code>ingress-nginx</code> namespace:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl get pods -n ingress-nginx
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Deploy a Web Application</h2>
+
+<p>We will create 3 files:</p>
+
+<ul>
+<li><p><code>example/deployment.yaml</code></p></li>
+<li><p><code>example/service.yaml</code></p></li>
+<li><p><code>example/ingress.yaml</code></p></li>
+</ul>
+
+
+<p>Create the example directory:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>mkdir example
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>example/deployment.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">apps/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Deployment</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">replicas</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">2</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">matchLabels</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">template</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">labels</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">containers</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ruanbekker/web-center-name-v2</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">containerPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">5000</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">env</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">APP_TITLE</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">value</span><span class="p-Indicator">:</span> <span class="s">&quot;Runs</span><span class="nv"> </span><span class="s">on</span><span class="nv"> </span><span class="s">Kind&quot;</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">resources</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">requests</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">memory</span><span class="p-Indicator">:</span> <span class="s">&quot;64Mi&quot;</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">cpu</span><span class="p-Indicator">:</span> <span class="s">&quot;250m&quot;</span>
+</span><span class='line'>          <span class="l-Scalar-Plain">limits</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">memory</span><span class="p-Indicator">:</span> <span class="s">&quot;256Mi&quot;</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">cpu</span><span class="p-Indicator">:</span> <span class="s">&quot;1000m&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>example/service.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="nn">---</span>
+</span><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Service</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ClusterIP</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">selector</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">app</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">ports</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">http</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">protocol</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">TCP</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">targetPort</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">5000</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Our <code>example/ingress.yaml</code></p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">networking.k8s.io/v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Ingress</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">ingressClassName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">nginx</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">rules</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">host</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">example.127.0.0.1.nip.io</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">http</span><span class="p-Indicator">:</span>
+</span><span class='line'>        <span class="l-Scalar-Plain">paths</span><span class="p-Indicator">:</span>
+</span><span class='line'>          <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">pathType</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Prefix</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">backend</span><span class="p-Indicator">:</span>
+</span><span class='line'>              <span class="l-Scalar-Plain">service</span><span class="p-Indicator">:</span>
+</span><span class='line'>                <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">webapp</span>
+</span><span class='line'>                <span class="l-Scalar-Plain">port</span><span class="p-Indicator">:</span>
+</span><span class='line'>                  <span class="l-Scalar-Plain">number</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">80</span>
+</span><span class='line'>            <span class="l-Scalar-Plain">path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>In summary, we are creating a deployment with a pod that listens on port 5000, and then we are creating a service with port 80 that will forward its connections to the container port of 5000.</p>
+
+<p>Then we define our ingress that will match our hostname and forward its connections to our service on port 80, and also notice that we are defining our ingress class name, which we have set in our helm values.</p>
+
+<p>Deploy this example with kubectl:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectly apply -f example/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Now you can access the web application at <a href="http://example.127.0.0.1.nip.io">http://example.127.0.0.1.nip.io</a></p>
+
+<h2>Teardown</h2>
+
+<p>You can delete the resources that we&rsquo;ve created using:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kubectl delete -f example/
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Delete the cluster using:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>kind delete cluster --name workshop
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Thank You</h2>
+
+<p>Thanks for reading, if you enjoy my content please feel free to follow me on <a href="https://twitter.com/ruanbekker"><strong>Twitter - @ruanbekker</strong></a> or visit me on my <a href="https://ruan.dev/"><strong>website -</strong></a> <a href="http://ruan.dev"><strong>ruan.dev</strong></a></p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -5526,152 +5870,6 @@ ight be used to deploy something simple such as a deployment or something comple
 
     </article>
   
-  
-    <article>
-      
-  <header>
-    
-      <h1 class="entry-title"><a href="/blog/2023/01/14/getting-started-with-wiremock/">Getting Started With Wiremock</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2023-01-14T17:03:12-05:00'><span class='date'><span class='date-month'>Jan</span> <span class='date-day'>14</span><span class='date-suffix'>th</span>, <span class='date-year'>2023</span></span> <span class='time'>5:03 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>In this tutorial we will use docker to run an instance of wiremock to setup a mock api for us to test our api&rsquo;s.</p>
-
-<h2>Wiremock</h2>
-
-<p><a href="https://wiremock.org/">Wiremock</a> is a tool for building mock API&rsquo;s which enables us to build stable development environments.</p>
-
-<h2>Docker and Wiremock</h2>
-
-<p>Run a wiremock instance with docker:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>docker run -it --rm -p 8080:8080 --name wiremock wiremock/wiremock:2.34.0
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then our wiremock instance will be exposed on port 8080 locally, which we can use to make a request against to create a api mapping:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl -XPOST -H <span class="s2">&quot;Content-Type: application/json&quot;</span> <span class="se">\</span>
-</span><span class='line'>  http://localhost:8080/__admin/mappings
-</span><span class='line'>  -d <span class="s1">&#39;{&quot;request&quot;: {&quot;url&quot;: &quot;/testapi&quot;,&quot;method&quot;: &quot;GET&quot;}, &quot;response&quot;: {&quot;status&quot;: 200, &quot;body&quot;: &quot;{\&quot;result\&quot;: \&quot;ok\&quot;</span>
-</span><span class='line'><span class="s1">}&quot;, &quot;headers&quot;: {&quot;Content-Type&quot;: &quot;application/json&quot;}}}&#39;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>The response should be something like this:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
-</span><span class='line'>    <span class="nt">&quot;id&quot;</span> <span class="p">:</span> <span class="s2">&quot;223a2c0a-8b43-42dc-8ba6-fe973da1e420&quot;</span><span class="p">,</span>
-</span><span class='line'>    <span class="nt">&quot;request&quot;</span> <span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>      <span class="nt">&quot;url&quot;</span> <span class="p">:</span> <span class="s2">&quot;/testapi&quot;</span><span class="p">,</span>
-</span><span class='line'>      <span class="nt">&quot;method&quot;</span> <span class="p">:</span> <span class="s2">&quot;GET&quot;</span>
-</span><span class='line'>    <span class="p">},</span>
-</span><span class='line'>    <span class="nt">&quot;response&quot;</span> <span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>      <span class="nt">&quot;status&quot;</span> <span class="p">:</span> <span class="mi">200</span><span class="p">,</span>
-</span><span class='line'>      <span class="nt">&quot;body&quot;</span> <span class="p">:</span> <span class="s2">&quot;{\&quot;result\&quot;: \&quot;ok\&quot;}&quot;</span><span class="p">,</span>
-</span><span class='line'>      <span class="nt">&quot;headers&quot;</span> <span class="p">:</span> <span class="p">{</span>
-</span><span class='line'>        <span class="nt">&quot;Content-Type&quot;</span> <span class="p">:</span> <span class="s2">&quot;application/json&quot;</span>
-</span><span class='line'>      <span class="p">}</span>
-</span><span class='line'>    <span class="p">},</span>
-</span><span class='line'>    <span class="nt">&quot;uuid&quot;</span> <span class="p">:</span> <span class="s2">&quot;223a2c0a-8b43-42dc-8ba6-fe973da1e420&quot;</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Test Wiremock</h2>
-
-<p>If we make a GET request against our API:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl http://localhost:8080/testapi
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Our response should be:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-</pre></td><td class='code'><pre><code class='json'><span class='line'><span class="p">{</span>
-</span><span class='line'>  <span class="nt">&quot;result&quot;</span><span class="p">:</span> <span class="s2">&quot;ok&quot;</span>
-</span><span class='line'><span class="p">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Export Wiremock Mappings</h2>
-
-<p>We can export our mappings to a local file named <code>stubs.json</code> with:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl -s http://localhost:8080/__admin/mappings --output stubs.json
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Import Wiremock Mappings</h2>
-
-<p>We can import our mappings from our <code>stubs.json</code> file with:</p>
-
-<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-</pre></td><td class='code'><pre><code class='bash'><span class='line'>curl -XPOST -v --data-binary @stubs.json http://localhost:8080/__admin/mappings/import
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Resources</h2>
-
-<ul>
-<li><a href="https://wiremock.org/docs/docker/">https://wiremock.org/docs/docker/</a></li>
-<li><a href="https://github.com/WireMock-Net/WireMock.Net/wiki/Admin-API-Reference">https://github.com/WireMock-Net/WireMock.Net/wiki/Admin-API-Reference</a></li>
-</ul>
-
-
-<h2>Thank You</h2>
-
-<p>Thanks for reading, feel free to check out my <a href="https://ruan.dev/">website</a>, feel free to subscribe to my <a href="http://digests.ruanbekker.com/?via=ruanbekker-blog">newsletter</a> or follow me at <a href="https://twitter.com/ruanbekker">@ruanbekker</a> on Twitter.</p>
-
-<ul>
-<li>Linktree: <a href="https://go.ruan.dev/links">https://go.ruan.dev/links</a></li>
-<li>Patreon: <a href="https://go.ruan.dev/patreon">https://go.ruan.dev/patreon</a></li>
-</ul>
-
-</div>
-  
-  
-
-
-    </article>
-  
   <div class="pagination">
     
       <a class="prev" href="/posts/2">&larr; Older</a>
@@ -5743,6 +5941,10 @@ ight be used to deploy something simple such as a deployment or something comple
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2023/12/22/how-to-deploy-ingress-nginx-controller-on-kubernetes-with-helm/">How to Deploy Ingress-Nginx Controller on Kubernetes With Helm</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2023/08/03/creating-a-python-lambda-function-with-terraform-on-aws/">Creating a Python Lambda Function With Terraform on AWS</a>
       </li>
     
@@ -5756,10 +5958,6 @@ ight be used to deploy something simple such as a deployment or something comple
     
       <li class="post">
         <a href="/blog/2023/06/14/getting-started-with-ferretdb-on-docker/">Getting Started With FerretDB on Docker</a>
-      </li>
-    
-      <li class="post">
-        <a href="/blog/2023/05/26/how-to-run-a-amd64-bit-linux-vm-on-a-mac-m1/">How to Run a AMD64 Bit Linux VM on a Mac M1</a>
       </li>
     
   </ul>

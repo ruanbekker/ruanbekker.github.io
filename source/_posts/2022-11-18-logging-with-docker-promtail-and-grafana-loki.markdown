@@ -4,6 +4,7 @@ title: "Logging with Docker Promtail and Grafana Loki"
 date: 2022-11-18 00:42:49 -0500
 comments: true
 categories: ["docker", "grafana", "loki", "promtail"]
+redirect: true
 ---
 
 ![grafana-loki-promtail](https://user-images.githubusercontent.com/567298/202631247-4ee94f01-b34a-471f-b428-6aba80b31e8c.png)

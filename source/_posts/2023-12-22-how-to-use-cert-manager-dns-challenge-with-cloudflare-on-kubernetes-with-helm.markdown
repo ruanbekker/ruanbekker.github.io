@@ -4,6 +4,7 @@ title: "How to use Cert-Manager DNS Challenge with Cloudflare on Kubernetes with
 date: 2023-12-22 08:04:02 -0500
 comments: true
 categories: ["kubernetes", "cloudflare", "cert-manager", "devops"] 
+dont_redirect: true
 ---
 
 In this tutorial, we will be issuing [Let's Encrypt](https://letsencrypt.org/docs/challenge-types/) certificates using [cert-manager](https://cert-manager.io/docs/) on [Kubernetes](https://kubernetes.io/) and we will be using the [DNS Challenge](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge) with [Cloudflare](https://www.cloudflare.com/en-gb/).

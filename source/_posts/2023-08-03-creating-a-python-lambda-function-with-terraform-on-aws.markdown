@@ -4,6 +4,7 @@ title: "Creating a Python Lambda Function with Terraform on AWS"
 date: 2023-08-03 11:29:35 -0400
 comments: true
 categories: ["aws", "terraform", "devops", "python"]
+dont_redirect: true
 ---
 
 In this tutorial I will explain how to deploy a AWS Lambda Function with Terraform using the Python runtime. It will include the permissions it needs to write its logs to AWS CloudWatch as well as to get information from the AWS API's as a boilerplate for you to expand on it.

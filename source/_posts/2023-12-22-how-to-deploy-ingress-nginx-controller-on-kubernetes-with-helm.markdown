@@ -4,6 +4,7 @@ title: "How to deploy Ingress-Nginx Controller on Kubernetes with Helm"
 date: 2023-12-22 07:56:22 -0500
 comments: true
 categories: ["kubernetes", "nginx", "devops"] 
+dont_redirect: true
 ---
 
 In this tutorial we will deploy the [ingress-nginx](https://github.com/kubernetes/ingress-nginx) controller on kubernetes.
